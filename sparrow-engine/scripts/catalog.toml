@@ -1,0 +1,300 @@
+# Sparrow Model Zoo — catalog (single source of truth)
+#
+# This file is THE authoritative list of models in the zoo. The downloader
+# (download_models.sh), the README model table, and sibling projects
+# (sparrow-data, sparrow-ops) all read THIS file rather than hardcoding model
+# lists. Add a model = add one [[model]] block here.
+#
+# Taxonomy: domain (camera_trap | acoustics | overhead | general) x
+#           task (detector | classifier | encoder | cascade).
+# `format` distinguishes what the artifact is:
+#   onnx    — desktop model, loadable by spe / server / Python (ONNX Runtime).
+#   tflite  — mobile-only variant, loaded by sparrow-engine-mobile, NOT desktop.
+#   cascade — a small pipeline descriptor referencing other models (no weights).
+# `download_models.sh` fetches ONLY `format = "onnx"` models by default; tflite
+# and cascade artifacts are fetched on demand (named explicitly or via --all).
+#
+# Zenodo stores per-model ZIPs named "<domain>__<task>__<id>.zip" (Zenodo has no
+# real folders; the "__" delimiter groups them when the file list is sorted).
+# Each ZIP unpacks to "<id>/" so the engine resolves models by flat id under the
+# models dir.
+#
+# Versioning policy: latest-version-only for internal dev iterations; flagship
+# families (MegaDetector) keep ALL versions. Superseded versions are dropped
+# from new bundles but remain on their original immutable DOI.
+#
+# `alias` lists prior ids a model was known by, so consumers pinned to an old
+# name still resolve (e.g. MDV5a was "Species_Net_MDV5a" before v0.10.0).
+
+schema_version = "1.0"
+
+[zenodo]
+record = "21084702"
+concept_doi = "10.5281/zenodo.20348978"
+version = "0.10.0"
+
+# ============================ Camera Trap — Detector ============================
+
+[[model]]
+id = "MDV5a"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v5a"
+status = "active"
+alias = ["Species_Net_MDV5a"]
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV5a.zip"
+
+[[model]]
+id = "MDV6-yolov10-c"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-yolov10-c.zip"
+
+[[model]]
+id = "MDV6-yolov10-c-tflite"
+domain = "camera_trap"
+task = "detector"
+format = "tflite"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+flavor = "tflite-fp16"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-yolov10-c-tflite.zip"
+
+[[model]]
+id = "MDV6-yolov10-e"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-yolov10-e.zip"
+
+[[model]]
+id = "deepfaune-yolo8s"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["DeepFaune"]
+status = "active"
+license = "AGPL-3.0 AND CC-BY-NC-SA-4.0"
+zip = "camera_trap__detector__deepfaune-yolo8s.zip"
+
+[[model]]
+id = "european_mammals"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__european_mammals.zip"
+
+[[model]]
+id = "north_american_mammals"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__north_american_mammals.zip"
+
+[[model]]
+id = "sub_saharan"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__sub_saharan.zip"
+
+# ============================ Camera Trap — Classifier ==========================
+
+[[model]]
+id = "AI4G-Amazon-V2"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AI4G"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__AI4G-Amazon-V2.zip"
+
+[[model]]
+id = "AI4G-Serengeti"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AI4G"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__AI4G-Serengeti.zip"
+
+[[model]]
+id = "Deepfaune-Europe"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["DeepFaune"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__Deepfaune-Europe.zip"
+
+[[model]]
+id = "Deepfaune-New-England"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["DeepFaune"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__Deepfaune-New-England.zip"
+
+[[model]]
+id = "SpeciesNet-Crop"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["SpeciesNet"]
+status = "active"
+license = "Apache-2.0"
+zip = "camera_trap__classifier__SpeciesNet-Crop.zip"
+
+# ============================ Acoustics — Detector ==============================
+
+[[model]]
+id = "md-audiobirds-v1"
+domain = "acoustics"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "MIT"
+zip = "acoustics__detector__md-audiobirds-v1.zip"
+
+[[model]]
+id = "orca-detector-dclde2026-v3"
+domain = "acoustics"
+task = "detector"
+format = "onnx"
+family = ["DCLDE-orca"]
+version = "v3"
+status = "active"
+license = "MIT"
+zip = "acoustics__detector__orca-detector-dclde2026-v3.zip"
+
+[[model]]
+id = "orca-detector-v3-fp16-tflite"
+domain = "acoustics"
+task = "detector"
+format = "tflite"
+family = ["DCLDE-orca"]
+version = "v3"
+status = "active"
+flavor = "tflite-fp16"
+license = "MIT"
+zip = "acoustics__detector__orca-detector-v3-fp16-tflite.zip"
+
+[[model]]
+id = "orca-detector-v3-int8-tflite"
+domain = "acoustics"
+task = "detector"
+format = "tflite"
+family = ["DCLDE-orca"]
+version = "v3"
+status = "active"
+flavor = "tflite-int8"
+license = "MIT"
+zip = "acoustics__detector__orca-detector-v3-int8-tflite.zip"
+
+# ============================ Acoustics — Classifier ============================
+
+[[model]]
+id = "orca-ecotype-dclde2026-v1"
+domain = "acoustics"
+task = "classifier"
+format = "onnx"
+family = ["DCLDE-orca"]
+version = "v1"
+status = "active"
+license = "MIT"
+zip = "acoustics__classifier__orca-ecotype-dclde2026-v1.zip"
+
+[[model]]
+id = "orca-ecotype-melinput-fp16-tflite"
+domain = "acoustics"
+task = "classifier"
+format = "tflite"
+family = ["DCLDE-orca"]
+status = "active"
+flavor = "tflite-fp16"
+license = "MIT"
+zip = "acoustics__classifier__orca-ecotype-melinput-fp16-tflite.zip"
+
+[[model]]
+id = "orca-ecotype-melinput-int8-tflite"
+domain = "acoustics"
+task = "classifier"
+format = "tflite"
+family = ["DCLDE-orca"]
+status = "active"
+flavor = "tflite-int8"
+license = "MIT"
+zip = "acoustics__classifier__orca-ecotype-melinput-int8-tflite.zip"
+
+[[model]]
+id = "perch-v2"
+domain = "acoustics"
+task = "classifier"
+format = "onnx"
+family = []
+status = "active"
+license = "Apache-2.0"
+zip = "acoustics__classifier__perch-v2.zip"
+
+# ============================ Acoustics — Cascade ===============================
+
+[[model]]
+id = "orca-cascade"
+domain = "acoustics"
+task = "cascade"
+format = "cascade"
+family = ["DCLDE-orca"]
+status = "active"
+license = "MIT"
+zip = "acoustics__cascade__orca-cascade.zip"
+
+# ============================ Overhead — Detector ===============================
+
+[[model]]
+id = "HerdNet_General_Dataset_2022"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "MIT"
+zip = "overhead__detector__HerdNet_General_Dataset_2022.zip"
+
+[[model]]
+id = "OWL"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = []
+status = "active"
+license = "MIT"
+zip = "overhead__detector__OWL.zip"

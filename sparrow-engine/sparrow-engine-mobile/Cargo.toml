@@ -1,0 +1,43 @@
+[package]
+name = "sparrow-engine-mobile"
+version = "0.1.17"
+edition = "2021"
+description = "RP-25 — sparrow-engine mobile pipeline using the LiteRT/TensorFlow Lite backend."
+links = "LiteRt"
+
+[lib]
+name = "sparrow_engine"
+crate-type = ["rlib", "cdylib"]
+
+# `spe-mobile` CLI (peer of `spe`/`spe-gpu`). Built only with `--features cli` so the
+# default cdylib stays lean for FFI consumers (water-sparrow). RP-25-FU-2.
+[[bin]]
+name = "spe-mobile"
+path = "src/bin/spe_mobile.rs"
+required-features = ["cli"]
+
+[features]
+ffi = ["dep:cbindgen", "dep:csbindgen", "dep:serde", "dep:serde_json"]
+cli = ["dep:clap", "dep:serde_json"]
+
+[dependencies]
+sparrow-engine-types = { path = "../sparrow-engine-types" }
+sparrow-engine-core  = { path = "../sparrow-engine-core" }
+ndarray = "0.17"
+# Image decode for the mobile image-detection path (RP-42). Matches the cpu
+# flavor's decoder feature set; jpeg + png only keeps the cdylib lean.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+tracing = { version = "0.1", features = ["log"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { workspace = true, optional = true }
+
+[build-dependencies]
+bindgen = { version = "0.71", default-features = false, features = ["runtime"] }
+cbindgen = { version = "0.27", optional = true }
+csbindgen = { version = "1", optional = true }
+
+[dev-dependencies]
+npyz = "0.8"
+serde_json = { workspace = true }

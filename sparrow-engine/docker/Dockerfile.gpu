@@ -1,0 +1,113 @@
+# Untested -- requires nvidia-docker2 or CDI (NVIDIA Container Device Interface)
+# at runtime. Phase E loads nvjpeg via dlopen, so the builder no longer
+# needs a build-time libnvjpeg copy, symlink, or LIBRARY_PATH.
+
+# Stage 1: Build
+#
+# Phase 3.8 Phase C Wave 4c (2026-05-06): the GPU image links the
+# `sparrow-engine-gpu` engine via `--features gpu`, which pulls in `cudarc`
+# (NVRTC + driver + cuFFT + cuBLAS) and `nvjpeg-sys`. `cudarc 0.19.4`
+# uses `fallback-dynamic-loading` (no CUDA at compile time). Phase E removes
+# nvjpeg from the build-time link path; the runtime CUDA base image provides
+# `libnvjpeg.so.12` for the Rust dlopen loader's SONAME lookup.
+FROM rust:bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+# Phase 3.8 Phase A: sparrow-engine was carved into 4 workspace crates.
+# Phase 3.8 Phase C Wave 4c: sparrow-engine-server is built with
+# `--no-default-features --features gpu` to pull in sparrow-engine-gpu only;
+# sparrow-engine-cpu is omitted from the dep graph for this image. All
+# workspace members still copy in because Cargo workspace resolution
+# requires every member's manifest.
+# Phase 3.8 Phase C Wave 5 fix (2026-05-06): workspace grew to 7 members
+# during Step 1 W1 + `vendor/` for `[patch.crates-io]`. Copy every
+# member + vendor/ so cargo resolves the manifest; only `sparrow-engine-server`
+# is compiled by the RUN below.
+COPY sparrow-engine-types/ sparrow-engine-types/
+COPY sparrow-engine-core/ sparrow-engine-core/
+COPY sparrow-engine-cpu/ sparrow-engine-cpu/
+COPY sparrow-engine-gpu/ sparrow-engine-gpu/
+COPY sparrow-engine-mobile/ sparrow-engine-mobile/
+COPY sparrow-engine-server/ sparrow-engine-server/
+COPY sparrow-engine-cli/ sparrow-engine-cli/
+COPY sparrow-engine-python/ sparrow-engine-python/
+COPY vendor/ vendor/
+
+# Phase F audit-fix round 1 (2026-05-28, B-07): bumped 1.24.2 -> 1.25.1.
+# `gpu-prior-pin-21e9e44` worked with 1.24.2 because at that pin the binary was DT_NEEDED-linked to ORT.
+# Commit 5c86dbf (after the pin) switched `sparrow-engine-gpu/Cargo.toml` to `ort/load-dynamic` + `api-24`.
+# `api-24` targets ORT runtime 1.25.x; against 1.24.2 the server boots and lists models but the first
+# Session creation / CUDA EP option call hits an API field absent in 1.24.2 and silently spins
+# (Lane 3 finding F6 — every model load hangs forever, 0% CPU, no log). Bumping to 1.25.1 aligns the
+# Docker ORT to the Python wheel's `>=1.25.1,<1.26` pin and to the api-24 surface the Rust binding expects.
+# Canonical ORT version source: ./.ort-version. The ARG default below MUST agree with that file
+# (CI check at release.yml § Compare ORT_VERSION enforces). Bump both together when updating ORT.
+ARG ORT_VERSION=1.25.1
+RUN mkdir -p /build/ort-lib && \
+    curl -sL https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz | \
+    tar xz --strip-components=1 -C /build/ort-lib
+
+ENV ORT_LIB_LOCATION=/build/ort-lib/lib
+ENV ORT_PREFER_DYNAMIC_LINK=1
+# Phase 3.8 Phase C Wave 4c: `--no-default-features --features gpu`
+# pins this image to the sparrow-engine-gpu engine flavor (per
+# `docs/design/phase3.8/phase_c/implementation_plan.md` §2.4 + §4 W4c).
+RUN cargo build --release -p sparrow-engine-server --no-default-features --features gpu
+
+# Stage 2: Runtime with CUDA
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+# RP-24 §4 item 3: the CUDA runtime image's NVIDIA container license chain covers
+# the TensorRT runtime libraries shipped in this image layer. Runtime libs only:
+# ORT's TensorRT EP needs libnvinfer, libnvinfer_plugin, and libnvonnxparser.
+ARG TENSORRT_VERSION=10.7.0.23-1+cuda12.6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libnvinfer10=${TENSORRT_VERSION} \
+    libnvinfer-plugin10=${TENSORRT_VERSION} \
+    libnvonnxparsers10=${TENSORRT_VERSION} \
+    && rm -rf /var/lib/apt/lists/* \
+    && ldconfig
+
+COPY --from=builder /build/target/release/sparrow-engine-server /usr/local/bin/
+COPY --from=builder /build/ort-lib/lib/libonnxruntime.so* /usr/local/lib/
+# Copy CUDA execution provider if present in the ORT release
+COPY --from=builder /build/ort-lib/lib/libonnxruntime_providers_cuda.so* /usr/local/lib/
+COPY --from=builder /build/ort-lib/lib/libonnxruntime_providers_tensorrt.so* /usr/local/lib/
+COPY --from=builder /build/ort-lib/lib/libonnxruntime_providers_shared.so* /usr/local/lib/
+RUN ldconfig
+# Phase F audit-fix round 1 (2026-05-28, B-07 defensive symlink): mirror Dockerfile.cpu's B-06 fix.
+# `sparrow-engine-server` (GPU build) is also `ort/load-dynamic` per sparrow-engine-gpu/Cargo.toml.
+# With `ORT_DYLIB_PATH` unset, the dlopen path is platform-default — on some glibc / ld.so.cache
+# configurations that resolves to bare `libonnxruntime.so`. Adding the unversioned symlink anchored
+# on the ldconfig-managed SONAME `libonnxruntime.so.1` is harmless when the resolver already finds
+# the SONAME directly, and covers the bare-name fallback case. No ENV LD_LIBRARY_PATH workaround.
+# Refs: Phase C Lane 3 finding F6 + Phase F reviewer_review.md B-07.
+RUN ln -sf libonnxruntime.so.1 /usr/local/lib/libonnxruntime.so && ldconfig
+
+RUN groupadd -g 1000 sparrow-engine 2>/dev/null || true && useradd -u 1000 -g 1000 -s /sbin/nologin sparrow-engine 2>/dev/null || true
+# RP-24 §2: Sparrow Web TRT engine-cache. Pre-create + chown so the non-root
+# runtime user can write compiled TensorRT engines. Operators may volume-mount
+# this path (e.g. a named volume in compose) to persist the cache across restarts.
+RUN mkdir -p /var/cache/sparrow-engine/trt && chown -R 1000:1000 /var/cache/sparrow-engine
+USER 1000:1000
+
+# RP-24 OQ-1: preload=all builds every mounted model's TensorRT engine at boot
+# (before the listener binds), so the first request never returns 408 while the
+# ~3-min engine compile runs. The build is one-time per GPU when the cache dir is
+# a persisted volume (see docker-compose.yml). Operators wanting lazy boot can
+# override with SPARROW_ENGINE_PRELOAD= (empty).
+ENV SPARROW_ENGINE_MODEL_DIR=/models \
+    SPARROW_ENGINE_BIND_ADDR=0.0.0.0:8080 \
+    SPARROW_ENGINE_LOG_FORMAT=json \
+    SPARROW_ENGINE_TRT_CACHE_DIR=/var/cache/sparrow-engine/trt \
+    SPARROW_ENGINE_PRELOAD=all \
+    SPARROW_ENGINE_DEVICE=cuda:0
+EXPOSE 8080
+
+# start-period covers a cold-cache first boot: preload compiles the TRT engine(s)
+# before the server binds, so the healthcheck can't pass until the build finishes
+# (~3 min/model cold; fast once the cache volume is warm).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=600s --retries=3 \
+  CMD ["/usr/local/bin/sparrow-engine-server", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/sparrow-engine-server"]
