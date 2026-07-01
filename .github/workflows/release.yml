@@ -1,0 +1,1372 @@
+name: Release sparrow-engine wheels
+
+# RP-11 (Phase C, 2026-05-24): build + publish sparrow-engine / sparrow-engine-gpu
+# Python wheels via maturin.
+#
+# Trigger matrix:
+#   - Tag push `vX.Y.Z` (no hyphen)              -> build + publish to PyPI (production), GPU build only.
+#   - Tag push `vX.Y.Z-<prerelease>` (any -tag)  -> build only (no publish to either index).
+#   - workflow_dispatch (target: testpypi)       -> build + publish to TestPyPI.
+#   - workflow_dispatch (target: build-only)     -> build only, no publish.
+#
+# CPU wheels: 3 platforms (Linux manylinux_2_28 x86_64, macOS arm64, Windows x86_64).
+# macOS x86_64 (Intel Mac) is NOT in the matrix — no ORT 1.25.1 wheel exists for that
+# platform AND the macos-13 GitHub-hosted runner pool has chronic 25+ min queue latency
+# that blocks every release. Intel-Mac users build from source per `docs/install.md`.
+# GPU wheel: Linux x86_64 inside Rocky 8 / glibc 2.28 container (Phase F switch from
+# Ubuntu 24.04 to satisfy manylinux_2_28 policy).
+#
+# Phase H (2026-05-25): GPU prod-PyPI publish ENABLED. Phase E (nvjpeg dlopen) +
+# Phase F (Rocky 8 container + auditwheel hard gate + CUDA runtime preload)
+# made the GPU wheel manylinux_2_28-compliant and runtime-self-contained; the
+# v0.1.3 TestPyPI publish + dev-box E.7-E.10 manual test verified end-to-end
+# install + inference. Tag-version validation step (mirrored from publish-pypi-cpu)
+# guards the prod-PyPI immutability invariant.
+#
+# OIDC trusted-publisher prerequisites (USER action, not automatable):
+#   - prod PyPI: claim `sparrow-engine` + `sparrow-engine-gpu` names; configure
+#     publisher: repo `microsoft/Pytorch-Wildlife`, workflow `release.yml`,
+#     env `pypi`.
+#   - TestPyPI: same names; env `testpypi`.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Publish target'
+        required: true
+        type: choice
+        options:
+          - build-only
+          - testpypi
+        default: build-only
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Tag-push runs (prod release) MUST NOT cancel each other; manual workflow_dispatch
+  # runs (build-only / TestPyPI) MAY cancel-in-progress so a re-trigger supersedes
+  # a stale run instead of queueing behind it.
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Preflight: enforce UTF-8 BOM on installer/*.ps1 files (PW#11 regression
+  # guard). Windows PowerShell 5.1 mis-decodes BOM-less UTF-8 as Windows-1252
+  # and produces parser errors on any multi-byte character. Failing this gate
+  # early prevents shipping a broken installer to end users.
+  # Refs: OQ-2026-05-27-7.
+  # ---------------------------------------------------------------------------
+  check-installer-ps1-bom:
+    name: Preflight — installer .ps1 BOM guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer/*.ps1 files start with UTF-8 BOM if non-ASCII
+        run: python3 installer/check_ps1_bom.py
+
+  # ---------------------------------------------------------------------------
+  # Preflight: version consistency guard (Phase F audit-fix round 1, B-03).
+  #
+  # Asserts at tag-push time that the three version sources agree:
+  #   1. git tag                                  (refs/tags/vX.Y.Z, stripped 'v')
+  #   2. sparrow-engine-cli/Cargo.toml            ([package].version — the source `spe --version` reads via CARGO_PKG_VERSION at sparrow-engine-cli/src/main.rs:43)
+  #   3. sparrow-engine-python/pyproject.toml     ([project].version — the source the PyPI wheel METADATA carries)
+  #
+  # All three MUST equal each other before any wheel / CLI tarball build starts.
+  # A mismatch means the tag was cut without bumping one of the manifests, which
+  # would either (a) ship a wheel whose METADATA disagrees with PyPI's stored
+  # version (publish-pypi-cpu's existing tag-vs-wheel check would catch THAT but
+  # too late — the GPU build also runs unnecessarily) or (b) ship a CLI tarball
+  # whose `spe --version` output disagrees with the wheel users see in `pip show`.
+  #
+  # Surfaced by Phase 4.5 lane 1 finding L1-F5 (MT-4.5-97/-98/-102): `spe --version`
+  # reported `0.1.0` while PyPI shipped 0.1.12 and brew shipped 0.1.10. Once Phase D
+  # bumps sparrow-engine-cli/Cargo.toml in lockstep with pyproject.toml, this guard
+  # prevents future drift.
+  #
+  # Gated to tag-push: workflow_dispatch / push-to-branch don't carry a tag-name
+  # commitment so the comparison is N/A and the job no-ops (skipped by `if:`).
+  # This means downstream `needs:` lists can include this job without slowing
+  # non-release runs.
+  # ---------------------------------------------------------------------------
+  check-version-consistency:
+    name: Preflight — version consistency (tag ↔ Cargo.toml ↔ pyproject.toml)
+    # Runs on every trigger. The internal step short-circuits with a PASS
+    # message on non-tag-push triggers so downstream `needs:` are unambiguously
+    # satisfied across workflow_dispatch / branch-push / tag-push. (Relying on
+    # GitHub's "skipped jobs satisfy needs" implicit rule is fragile when the
+    # downstream's own `if:` interacts with needs.* results.)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare git tag, sparrow-engine-cli Cargo.toml, sparrow-engine-python pyproject.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Trigger taxonomy (Phase F R2 F-R2-4):
+          #   tag-push       : enforce tag ↔ cli ↔ py three-way agreement (release-critical).
+          #   workflow_dispatch: enforce cli ↔ py two-way agreement (manual release rehearsal
+          #                     — no tag yet, but Cargo/Python must already agree so a follow-up
+          #                     tag-push doesn't blow up).
+          #   branch-push / PR: skip (most common dev case; pre-tag drift is intentional and
+          #                     gets caught at workflow_dispatch / tag-push time).
+          mode=""
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            mode="tag-push"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            mode="workflow-dispatch"
+          else
+            echo "Non-release trigger (event=${GITHUB_EVENT_NAME}, ref=${GITHUB_REF}). Skipping check."
+            exit 0
+          fi
+          echo "Enforcement mode: $mode"
+          # Strip optional leading 'v' from the tag name. Empty string on
+          # workflow_dispatch (no tag context); tag-version comparisons below
+          # are gated on `mode == tag-push` so the empty value is never read
+          # for enforcement in that path.
+          tag_version=""
+          if [ "$mode" = "tag-push" ]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+          fi
+
+          # sparrow-engine-cli Cargo.toml [package].version — awk-extracted (no python heredoc,
+          # no cargo / jq install). Looks for the `version = "..."` line under the `[package]`
+          # section header, stops at the next `[…]` section.
+          cli_version="$(awk '
+            /^\[package\][[:space:]]*$/      { in_pkg = 1; next }
+            in_pkg && /^\[/                  { in_pkg = 0 }
+            in_pkg && /^version[[:space:]]*=/{ match($0, /"[^"]+"/); print substr($0, RSTART+1, RLENGTH-2); exit }
+          ' sparrow-engine/sparrow-engine-cli/Cargo.toml)"
+          if [ -z "$cli_version" ]; then
+            echo "::error::could not extract [package].version from sparrow-engine/sparrow-engine-cli/Cargo.toml"
+            exit 2
+          fi
+
+          # sparrow-engine-python pyproject.toml [project].version — same awk pattern against [project].
+          py_version="$(awk '
+            /^\[project\][[:space:]]*$/      { in_proj = 1; next }
+            in_proj && /^\[/                 { in_proj = 0 }
+            in_proj && /^version[[:space:]]*=/{ match($0, /"[^"]+"/); print substr($0, RSTART+1, RLENGTH-2); exit }
+          ' sparrow-engine/sparrow-engine-python/pyproject.toml)"
+          if [ -z "$py_version" ]; then
+            echo "::error::could not extract [project].version from sparrow-engine/sparrow-engine-python/pyproject.toml"
+            exit 2
+          fi
+
+          echo "Tag version (stripped 'v'):           ${tag_version:-<n/a — workflow_dispatch>}"
+          echo "sparrow-engine-cli Cargo.toml:        $cli_version"
+          echo "sparrow-engine-python pyproject.toml: $py_version"
+
+          fail=0
+          if [ "$mode" = "tag-push" ]; then
+            if [ "$tag_version" != "$cli_version" ]; then
+              echo "::error::tag ($tag_version) ≠ sparrow-engine-cli Cargo.toml ($cli_version)"
+              echo "  -> bump sparrow-engine/sparrow-engine-cli/Cargo.toml [package].version to '$tag_version' before re-tagging."
+              fail=1
+            fi
+            if [ "$tag_version" != "$py_version" ]; then
+              echo "::error::tag ($tag_version) ≠ sparrow-engine-python pyproject.toml ($py_version)"
+              echo "  -> bump sparrow-engine/sparrow-engine-python/pyproject.toml [project].version to '$tag_version' before re-tagging."
+              fail=1
+            fi
+          fi
+          # cli ↔ py agreement is enforced on BOTH tag-push and workflow_dispatch
+          # (F-R2-4 round-2 fix): a workflow_dispatch release rehearsal must surface
+          # version drift before tag-push time, otherwise the manual dispatch path
+          # gives false-PASS while the eventual tag still fails.
+          if [ "$cli_version" != "$py_version" ]; then
+            echo "::error::sparrow-engine-cli Cargo.toml ($cli_version) ≠ sparrow-engine-python pyproject.toml ($py_version)"
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "FAIL: version consistency guard (Phase F B-03)."
+            echo "Refs: docs/review/phase4.5-cleanup-audit-fix-f/round_01/reviewer_review.md § B-03"
+            echo "      docs/review/phase4.5-cleanup-audit-fix-f/round_02/fixer_report.md § F-R2-4"
+            exit 1
+          fi
+          if [ "$mode" = "tag-push" ]; then
+            echo "PASS: all three version sources agree on '$tag_version'."
+          else
+            echo "PASS (workflow_dispatch): cli ↔ py agree on '$cli_version' (tag check skipped — no tag context)."
+          fi
+
+      - name: Compare ORT_VERSION across Dockerfile.cpu and Dockerfile.gpu
+        shell: bash
+        run: |
+          set -euo pipefail
+          # F-R2-6 (round 2): ARG ORT_VERSION is duplicated across the two
+          # Dockerfiles. A future ORT bump must touch both atomically or the
+          # CPU and GPU images drift into different ORT runtimes — which is
+          # the exact root cause B-06/B-07 fixed in round 1. Cheap grep guard
+          # in CI is simpler than refactoring to a shared build-arg source.
+          #
+          # OQ-2026-05-28-5: also pin both ARG defaults to the canonical
+          # sparrow-engine/docker/.ort-version source so the constraint has
+          # a single named home. Bump that file + both Dockerfile ARG
+          # defaults atomically; CI fails otherwise.
+          cpu_ort="$(awk '/^ARG[[:space:]]+ORT_VERSION=/{
+            sub(/^ARG[[:space:]]+ORT_VERSION=/, ""); print; exit
+          }' sparrow-engine/docker/Dockerfile.cpu)"
+          gpu_ort="$(awk '/^ARG[[:space:]]+ORT_VERSION=/{
+            sub(/^ARG[[:space:]]+ORT_VERSION=/, ""); print; exit
+          }' sparrow-engine/docker/Dockerfile.gpu)"
+          canonical_ort="$(cat sparrow-engine/docker/.ort-version | tr -d '[:space:]')"
+          if [ -z "$cpu_ort" ] || [ -z "$gpu_ort" ] || [ -z "$canonical_ort" ]; then
+            echo "::error::could not extract ORT_VERSION from one of the three sources"
+            echo "  Dockerfile.cpu:           '${cpu_ort:-<missing>}'"
+            echo "  Dockerfile.gpu:           '${gpu_ort:-<missing>}'"
+            echo "  docker/.ort-version:      '${canonical_ort:-<missing>}'"
+            exit 2
+          fi
+          echo "Dockerfile.cpu ARG ORT_VERSION:    $cpu_ort"
+          echo "Dockerfile.gpu ARG ORT_VERSION:    $gpu_ort"
+          echo "docker/.ort-version (canonical):   $canonical_ort"
+          if [ "$cpu_ort" != "$gpu_ort" ] || [ "$cpu_ort" != "$canonical_ort" ]; then
+            echo "::error::ORT_VERSION drift: cpu=$cpu_ort, gpu=$gpu_ort, canonical=$canonical_ort"
+            echo "  -> bump docker/.ort-version + both Dockerfile ARG defaults atomically;"
+            echo "     ORT-side ABI must match across CPU and GPU images, and the canonical"
+            echo "     source must agree with both Dockerfile defaults."
+            echo "  Refs: docs/review/phase4.5-cleanup-audit-fix-f/round_02/fixer_report.md § F-R2-6"
+            echo "        OQ-2026-05-28-5 (canonical .ort-version hoist)"
+            exit 1
+          fi
+          echo "PASS: Dockerfile.cpu, Dockerfile.gpu, and docker/.ort-version agree on ORT_VERSION=$cpu_ort."
+
+  # -------- CPU build matrix --------
+
+  build-cpu-linux:
+    name: Build CPU wheel (Linux manylinux_2_28 x86_64)
+    runs-on: ubuntu-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build CPU wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          manylinux: 2_28
+          working-directory: sparrow-engine/sparrow-engine-python
+          command: build
+          args: >-
+            --release
+            --auditwheel skip
+            --no-default-features
+            --features extension-module
+            --features cpu
+
+      - name: Inspect built wheel
+        run: |
+          ls -la sparrow-engine/target/wheels/
+          # Stable ABI tag must be present (cp311-abi3).
+          for w in sparrow-engine/target/wheels/sparrow_engine-*.whl; do
+            echo "Wheel: $w"
+            case "$w" in
+              *cp311-abi3*manylinux_2_28_x86_64*) echo "  OK: abi3 + manylinux_2_28";;
+              *) echo "  FAIL: expected cp311-abi3-manylinux_2_28_x86_64 tag in filename"; exit 1;;
+            esac
+          done
+
+      - name: Audit wheel (manylinux policy — HARD GATE)
+        run: |
+          python3 -m pip install --user auditwheel
+          for w in sparrow-engine/target/wheels/sparrow_engine-*.whl; do
+            python3 -m auditwheel show "$w"
+            # Hard gate: any external DT_NEEDED beyond the manylinux_2_28 allow-list
+            # (e.g. a future regression that re-introduces libonnxruntime / libnvjpeg /
+            # libpython linkage) must fail this job, not the PyPI upload step.
+            python3 -m auditwheel show "$w" | grep -q 'manylinux_2_28_x86_64' \
+              || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-cpu-linux
+          path: sparrow-engine/target/wheels/sparrow_engine-*.whl
+          if-no-files-found: error
+
+  # -------- CPU Linux abi3 import smoke test (3.11, 3.12, 3.13) --------
+  #
+  # Validates the abi3-py311 promise: one wheel imports on three CPython minors.
+  # Also validates the RP-3 ORT shim path: with onnxruntime present, no manual
+  # symlink should be needed.
+
+  smoke-cpu-linux:
+    name: Smoke test CPU Linux wheel (Python ${{ matrix.python }})
+    needs: build-cpu-linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-cpu-linux
+          path: dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install wheel + onnxruntime, run import + init()
+        run: |
+          python -m pip install --upgrade pip
+          # The wheel's runtime dep on onnxruntime>=1.25.1,<1.26 is resolved by pip.
+          python -m pip install dist/sparrow_engine-*.whl
+          python -c "import sparrow_engine; sparrow_engine.init(); print('Smoke OK on', __import__('sys').version)"
+
+  build-cpu-macos-arm64:
+    name: Build CPU wheel (macOS arm64)
+    runs-on: macos-14
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build CPU wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: sparrow-engine/sparrow-engine-python
+          command: build
+          target: aarch64-apple-darwin
+          args: >-
+            --release
+            --auditwheel skip
+            --no-default-features
+            --features extension-module
+            --features cpu
+
+      - name: Inspect built wheel
+        run: |
+          ls -la sparrow-engine/target/wheels/
+          for w in sparrow-engine/target/wheels/sparrow_engine-*.whl; do
+            echo "Wheel: $w"
+            case "$w" in
+              *cp311-abi3-macosx_11_0_arm64*) echo "  OK: abi3 + macosx_11_0_arm64";;
+              *) echo "  FAIL: expected cp311-abi3-macosx_11_0_arm64 tag (MACOSX_DEPLOYMENT_TARGET=11.0)"; exit 1;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-cpu-macos-arm64
+          path: sparrow-engine/target/wheels/sparrow_engine-*.whl
+          if-no-files-found: error
+
+  build-cpu-windows:
+    name: Build CPU wheel (Windows x86_64)
+    runs-on: windows-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build CPU wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: sparrow-engine/sparrow-engine-python
+          command: build
+          target: x86_64-pc-windows-msvc
+          args: >-
+            --release
+            --auditwheel skip
+            --no-default-features
+            --features extension-module
+            --features cpu
+
+      - name: Inspect built wheel
+        shell: bash
+        run: |
+          ls -la sparrow-engine/target/wheels/
+          for w in sparrow-engine/target/wheels/sparrow_engine-*.whl; do
+            echo "Wheel: $w"
+            case "$w" in
+              *cp311-abi3*win_amd64*) echo "  OK: abi3 + win_amd64";;
+              *) echo "  FAIL: expected cp311-abi3-win_amd64 tag"; exit 1;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-cpu-windows
+          path: sparrow-engine/target/wheels/sparrow_engine-*.whl
+          if-no-files-found: error
+
+  # -------- GPU build (Phase C: build-only, no publish) --------
+
+  build-gpu-linux:
+    name: Build GPU wheel (Linux x86_64, CUDA 12.6 + cuDNN, Rocky 8 / glibc 2.28)
+    runs-on: ubuntu-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    container:
+      # Rocky 8 base = RHEL 8 clone = glibc 2.28 (the manylinux_2_28 floor).
+      # Phase F (2026-05-25): swapped from ubuntu24.04 (glibc 2.39) so the
+      # `auditwheel repair --plat manylinux_2_28_x86_64` step in build.sh
+      # can succeed — that step hard-fails on glibc > 2.28.
+      image: nvidia/cuda:12.6.3-cudnn-devel-rockylinux8
+    steps:
+      - name: Install build prerequisites in container
+        run: |
+          # Rocky 8 / RHEL 8: dnf instead of apt; python3.11 is the newest
+          # cpython available via AppStream and matches the wheel's abi3-cp311
+          # target + the project's requires-python>=3.11 floor.
+          dnf install -y --setopt=install_weak_deps=False \
+            ca-certificates curl git gcc gcc-c++ make pkgconfig \
+            python3.11 python3.11-devel python3.11-pip
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python
+          # auditwheel >=6.0.0 needed for manylinux_2_28 policy support.
+          # patchelf MUST come from PyPI (not Rocky 8 EPEL, which ships
+          # v0.12 — auditwheel repair requires >=0.14). The PyPI patchelf
+          # package wraps the upstream binary release (currently 0.18+)
+          # and puts it in $HOME/.local/bin, which is prepended to PATH
+          # via $GITHUB_PATH so it takes precedence over any system
+          # patchelf. build.sh calls `auditwheel repair` at line 152 —
+          # must be on PATH before the `Build GPU wheel via build.sh` step.
+          python3 -m pip install --user --upgrade \
+            "auditwheel>=6.0.0" \
+            "patchelf>=0.14"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install maturin
+        run: |
+          uv tool install maturin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Verify libnvjpeg present in container
+        run: |
+          ldconfig -p | grep -i nvjpeg || true
+          find /usr -name 'libnvjpeg*' 2>/dev/null || true
+
+      - name: Build GPU wheel via build.sh
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          cd sparrow-engine/sparrow-engine-python
+          SPARROW_ENGINE_FLAVOR=gpu ./build.sh
+
+      - name: Inspect built wheel
+        run: |
+          ls -la sparrow-engine/target/wheels/
+          for w in sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl; do
+            echo "Wheel: $w"
+            case "$w" in
+              *cp311-abi3*manylinux_2_28_x86_64*) echo "  OK: abi3 + manylinux_2_28_x86_64";;
+              *) echo "  FAIL: expected cp311-abi3-manylinux_2_28_x86_64 tag"; exit 1;;
+            esac
+          done
+
+      - name: Audit wheel (manylinux policy — HARD GATE)
+        run: |
+          # Mirror the CPU build's hard gate (release.yml § build-cpu-linux).
+          # Any DT_NEEDED beyond the manylinux_2_28 allow-list — e.g. a
+          # regression that re-introduces libnvjpeg.so or libcuda.so linkage,
+          # bypassing the Phase E dlopen design — must fail this job, not the
+          # PyPI upload step. libonnxruntime is excluded by build.sh because
+          # the runtime install pulls onnxruntime-gpu separately.
+          python3 -m pip install --user auditwheel
+          for w in sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl; do
+            python3 -m auditwheel show "$w"
+            python3 -m auditwheel show "$w" | grep -q 'manylinux_2_28_x86_64' \
+              || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-gpu-linux
+          path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
+          if-no-files-found: error
+
+  build-gpu-windows:
+    name: Build GPU wheel (Windows x86_64)
+    runs-on: windows-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    # No CUDA Toolkit on the runner. cudarc's `fallback-dynamic-loading`
+    # feature (vendor/cudarc/build.rs:70-78) activates the `dynamic-loading`
+    # cfg from the feature flag alone, with no nvcc / driver probing.
+    # nvjpeg-sys (vendor/nvjpeg-sys/build.rs) is a 2-line stub that ships
+    # pre-generated bindings — no bindgen at build time. `ort` uses
+    # `load-dynamic`, so libonnxruntime is dlopen'd at runtime. None of
+    # these crates needs the CUDA SDK at compile time.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install maturin
+        shell: bash
+        run: |
+          uv tool install maturin
+          # uv tool dir --bin prints the platform-correct bin directory
+          # (~/.local/bin on Linux, %USERPROFILE%\.local\bin on Windows
+          # in recent uv versions) — avoids hard-coding either path.
+          uv tool dir --bin >> "$GITHUB_PATH"
+
+      - name: Build GPU wheel via build.sh
+        shell: bash
+        run: |
+          # Git Bash on windows-latest reports OSTYPE=msys; build.sh's
+          # IS_WINDOWS detection catches that and skips the Linux-only
+          # `--compatibility linux` flag and `auditwheel repair` step.
+          cd sparrow-engine/sparrow-engine-python
+          SPARROW_ENGINE_FLAVOR=gpu ./build.sh
+
+      - name: Inspect built wheel
+        shell: bash
+        run: |
+          ls -la sparrow-engine/target/wheels/
+          for w in sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl; do
+            echo "Wheel: $w"
+            case "$w" in
+              *cp311-abi3*win_amd64*) echo "  OK: abi3 + win_amd64";;
+              *) echo "  FAIL: expected cp311-abi3-win_amd64 tag"; exit 1;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-gpu-windows
+          path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
+          if-no-files-found: error
+
+  smoke-gpu-windows:
+    name: Smoke test GPU Windows wheel (Python ${{ matrix.python }})
+    needs: build-gpu-windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-gpu-windows
+          path: dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install wheel + onnxruntime-gpu, run import
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # PEP 508 markers in METADATA skip nvidia-cudnn-cu12 / cublas /
+          # curand / cufft on sys_platform != 'linux'; onnxruntime-gpu has
+          # native Windows wheels and resolves normally.
+          python -m pip install dist/sparrow_engine_gpu-*.whl
+          # GitHub-hosted windows-latest has no NVIDIA GPU, so we cannot
+          # call sparrow_engine.init() — Device::Auto/Cpu coerce to
+          # Cuda(0) on the GPU flavor (flavor-strict post-MT-4.1-2),
+          # which would fail at CUDA context creation. Import-only test
+          # still validates: pip resolution, cdylib load, PyO3 binding,
+          # METADATA Provides-Dist mutex with sparrow-engine.
+          python -c "import sparrow_engine; print('Smoke OK on', __import__('sys').version, '— version:', sparrow_engine.__version__)"
+
+  # -------- TestPyPI publish (workflow_dispatch) --------
+
+  publish-testpypi-cpu:
+    name: Publish CPU wheels to TestPyPI
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs:
+      - build-cpu-linux
+      - build-cpu-macos-arm64
+      - build-cpu-windows
+      - smoke-cpu-linux
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi-cpu
+      url: https://test.pypi.org/p/sparrow-engine
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-cpu-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show collected dist/
+        run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # TestPyPI is a sandbox; treat duplicate version uploads as no-ops
+          # so workflow_dispatch retries (e.g. after a downstream job fails)
+          # don't error out at the CPU publish step. Prod-PyPI publishes
+          # below MUST NOT set this flag — there a duplicate is a real error.
+          skip-existing: true
+
+  # -------- Prod PyPI publish (tag push, non-RC only) --------
+
+  publish-pypi-cpu:
+    name: Publish CPU wheels to PyPI
+    # Only on actual version tags. ANY hyphen in the tag name (`v0.1.0-rc1`,
+    # `v0.1.0-beta1`, `v1.0.0-alpha`, etc.) marks the tag as a prerelease and
+    # skips prod publish. workflow_dispatch also skips this job.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs:
+      - build-cpu-linux
+      - build-cpu-macos-arm64
+      - build-cpu-windows
+      - smoke-cpu-linux
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-cpu
+      url: https://pypi.org/p/sparrow-engine
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-cpu-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show collected dist/
+        run: ls -la dist/
+
+      - name: Validate tag matches wheel version (PyPI immutability guard)
+        run: |
+          # Strip leading 'v' from tag: refs/tags/v0.1.0 -> 0.1.0
+          tag_version="${GITHUB_REF_NAME#v}"
+          # Extract version from any wheel filename; abi3 wheels share one version.
+          # Wheel filename shape: sparrow_engine-<version>-cp311-abi3-<platform>.whl
+          wheel_version="$(ls dist/sparrow_engine-*.whl | head -1 \
+            | sed -E 's|.*/sparrow_engine-([^-]+)-cp311-abi3-.*|\1|')"
+          echo "Tag version:   $tag_version"
+          echo "Wheel version: $wheel_version"
+          if [ "$tag_version" != "$wheel_version" ]; then
+            echo "FAIL: tag ($tag_version) and wheel ($wheel_version) versions disagree."
+            echo "Bump pyproject.toml [project].version before tagging."
+            exit 1
+          fi
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # -------- GPU prod PyPI publish (still gated until Phase H) --------
+
+  publish-pypi-gpu:
+    name: Publish GPU wheel to PyPI
+    # Phase H (2026-05-25): gate flipped from `if: false` to mirror
+    # publish-pypi-cpu (only on actual non-prerelease version tags).
+    # Phase E (nvjpeg dlopen) + Phase F (Rocky 8 build container + auditwheel
+    # hard gate + CUDA runtime preload) made the GPU wheel manylinux_2_28-
+    # compliant and runtime-self-contained; v0.1.3 TestPyPI publish + dev-box
+    # E.7-E.10 manual test verified end-to-end install + inference.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs:
+      - build-gpu-linux
+      - build-gpu-windows
+      - smoke-gpu-windows
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-gpu
+      url: https://pypi.org/p/sparrow-engine-gpu
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-gpu-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show collected dist/
+        run: ls -la dist/
+
+      - name: Validate tag matches wheel version (PyPI immutability guard)
+        run: |
+          # Strip leading 'v' from tag: refs/tags/v0.1.4 -> 0.1.4
+          tag_version="${GITHUB_REF_NAME#v}"
+          # Extract version from any wheel filename; abi3 wheels share one version.
+          # Wheel filename shape: sparrow_engine_gpu-<version>-cp311-abi3-<platform>.whl
+          wheel_version="$(ls dist/sparrow_engine_gpu-*.whl | head -1 \
+            | sed -E 's|.*/sparrow_engine_gpu-([^-]+)-cp311-abi3-.*|\1|')"
+          echo "Tag version:   $tag_version"
+          echo "Wheel version: $wheel_version"
+          if [ "$tag_version" != "$wheel_version" ]; then
+            echo "FAIL: tag ($tag_version) and wheel ($wheel_version) versions disagree."
+            echo "Bump pyproject.toml [project].version (and Cargo.toml) before tagging."
+            exit 1
+          fi
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi-gpu:
+    name: Publish GPU wheel to TestPyPI
+    # Phase F (2026-05-25): GPU TestPyPI publish enabled. Phase E's nvjpeg
+    # dlopen rewrite removed libnvjpeg from DT_NEEDED; the Rocky 8 build
+    # container above now satisfies the manylinux_2_28 glibc floor; and the
+    # `auditwheel show` hard gate in build-gpu-linux confirms the wheel.
+    # Prod PyPI gate (publish-pypi-gpu) stays `if: false` until Phase H
+    # adds the tag-version validation step.
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs:
+      - build-gpu-linux
+      - build-gpu-windows
+      - smoke-gpu-windows
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi-gpu
+      url: https://test.pypi.org/p/sparrow-engine-gpu
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-gpu-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show collected dist/
+        run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # See publish-testpypi-cpu comment above — TestPyPI sandbox,
+          # duplicate-version uploads treated as no-ops on retry.
+          skip-existing: true
+
+  # ---------------------------------------------------------------------------
+  # RP-4 (2026-05-26) — CLI tarball matrix.
+  #
+  # Build per-platform tarballs of the `spe` / `spe-gpu` CLI with bundled
+  # libonnxruntime, layout matching `installer/sparrow-engine-install.sh:531`.
+  # Output naming: sparrow-engine-{cpu,gpu}-{ver}-{platform}.tar.gz (+ .sha256).
+  #
+  # Build jobs run on every tag push AND workflow_dispatch (target=build-only
+  # or testpypi); the publish-cli-release-assets job below only attaches to
+  # a GH Release on actual prod tags (no hyphen).
+  # ---------------------------------------------------------------------------
+
+  build-cli-linux-cpu:
+    name: Build CLI tarball (sparrow-engine-cpu, Linux x86_64)
+    runs-on: ubuntu-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    container:
+      # manylinux_2_28 = glibc 2.28 floor, matches build-cpu-linux's wheel target.
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Stage ORT runtime (pip onnxruntime, capi/libonnxruntime.so.X.Y.Z)
+        run: |
+          ORT_VENV="$RUNNER_TEMP/ort-venv"
+          rm -rf "$ORT_VENV"
+          /opt/python/cp311-cp311/bin/python -m venv "$ORT_VENV"
+          "$ORT_VENV/bin/pip" install --quiet "onnxruntime>=1.25.1,<1.26"
+          ORT_CAPI=$("$ORT_VENV/bin/python" -c 'import onnxruntime, pathlib; print(pathlib.Path(onnxruntime.__file__).parent / "capi")')
+          echo "ORT_STAGE_DIR=$ORT_CAPI" >> "$GITHUB_ENV"
+          ls -la "$ORT_CAPI"/libonnxruntime.so.*
+
+      - name: Build spe (release, CPU flavor, load-dynamic via ort_resolver)
+        working-directory: sparrow-engine
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release -p sparrow-engine-cli --bin spe \
+            --no-default-features --features cpu
+
+      - name: Hard gate — no DT_NEEDED libonnxruntime (load-dynamic invariant)
+        working-directory: sparrow-engine
+        run: |
+          set -euo pipefail
+          needed="$(readelf -d target/release/spe)"
+          printf '%s\n' "$needed" | grep -E 'NEEDED' || true
+          if printf '%s\n' "$needed" | grep -q 'libonnxruntime'; then
+            echo "FAIL: spe has DT_NEEDED libonnxruntime — load-dynamic contract violated (RP-3/RP-4)"
+            exit 1
+          fi
+
+      - name: Package tarball
+        working-directory: sparrow-engine
+        env:
+          FLAVOR: cpu
+          TARBALL_PLATFORM: linux-x86_64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            VERSION="0.0.0-ci-${GITHUB_SHA::8}"
+          fi
+          VERSION="$VERSION" ./scripts/package_cli_tarball.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-cpu-linux
+          path: |
+            sparrow-engine/dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz
+            sparrow-engine/dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # OQ-2026-05-28-1 — server-boot-smoke
+  #
+  # Regression guard for B-09 (server boot deadlock). Root cause: with
+  # ORT_DYLIB_PATH unset, the `ort` crate's load-dynamic path entered a long
+  # internal retry loop that LOOKED like a hang. Fix: port ort_resolver into
+  # sparrow-engine-server's main() so the server self-resolves ORT from the
+  # adjacent `lib/` directory in the RP-4 tarball layout.
+  #
+  # Without this smoke job, removing ort_resolver from server main would
+  # silently regress: the server would build fine, the unit tests would pass,
+  # and the bug would only surface when a real operator booted the binary.
+  # This job builds the server, stages an RP-4 tarball layout, starts the
+  # binary with NO ORT_DYLIB_PATH override, and polls /healthz with a 30s
+  # timeout. If ort_resolver regresses, the poll times out and CI fails.
+  # ---------------------------------------------------------------------------
+
+  server-boot-smoke:
+    name: Smoke test sparrow-engine-server boot + /healthz
+    needs: [check-installer-ps1-bom, check-version-consistency, build-cli-linux-cpu]
+    runs-on: ubuntu-latest
+    container:
+      # manylinux_2_28 — same glibc floor + ORT layout as build-cli-linux-cpu,
+      # so a successful smoke here implies a successful smoke on any release
+      # consumer with glibc >= 2.28.
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Stage ORT runtime (pip onnxruntime, capi/libonnxruntime.so.X.Y.Z)
+        run: |
+          ORT_VENV="$RUNNER_TEMP/ort-venv"
+          rm -rf "$ORT_VENV"
+          /opt/python/cp311-cp311/bin/python -m venv "$ORT_VENV"
+          "$ORT_VENV/bin/pip" install --quiet "onnxruntime>=1.25.1,<1.26"
+          ORT_CAPI=$("$ORT_VENV/bin/python" -c 'import onnxruntime, pathlib; print(pathlib.Path(onnxruntime.__file__).parent / "capi")')
+          echo "ORT_STAGE_DIR=$ORT_CAPI" >> "$GITHUB_ENV"
+
+      - name: Build sparrow-engine-server (release, CPU flavor, load-dynamic)
+        working-directory: sparrow-engine
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release -p sparrow-engine-server \
+            --no-default-features --features cpu
+
+      - name: Stage RP-4 tarball layout (bin/ + lib/)
+        working-directory: sparrow-engine
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/server-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+          cp target/release/sparrow-engine-server "$STAGE/bin/"
+          # Copy libonnxruntime.so.X.Y.Z so ort_resolver's `lib/` walk finds
+          # it. Intentionally do NOT create libonnxruntime.so symlink: the
+          # whole point of the resolver is to handle this case.
+          cp "$ORT_STAGE_DIR"/libonnxruntime.so.* "$STAGE/lib/"
+          ls -la "$STAGE/bin/" "$STAGE/lib/"
+          echo "SERVER_STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Boot server + poll /healthz (30s timeout)
+        run: |
+          set -euo pipefail
+          # NO ORT_DYLIB_PATH export — ort_resolver MUST set it from the
+          # adjacent lib/ dir. If this regresses, the server hangs at
+          # `Engine::new` and the poll times out below.
+          export SPARROW_ENGINE_BIND_ADDR=127.0.0.1:19250
+          "$SERVER_STAGE/bin/sparrow-engine-server" > "$RUNNER_TEMP/server.log" 2>&1 &
+          SERVER_PID=$!
+          echo "server PID: $SERVER_PID"
+
+          DEADLINE=$(( $(date +%s) + 30 ))
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if curl -fsS http://127.0.0.1:19250/healthz >/dev/null 2>&1; then
+              echo "PASS: /healthz returned 200 within 30s"
+              echo "--- server.log ---"
+              cat "$RUNNER_TEMP/server.log"
+              kill "$SERVER_PID" 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "FAIL: /healthz did not return 200 within 30s — server boot regression"
+          echo "--- server.log ---"
+          cat "$RUNNER_TEMP/server.log" || true
+          kill "$SERVER_PID" 2>/dev/null || true
+          exit 1
+
+  build-cli-linux-gpu:
+    name: Build CLI tarball (sparrow-engine-gpu, Linux x86_64)
+    runs-on: ubuntu-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    container:
+      # Same Rocky 8 / glibc 2.28 image as build-gpu-linux.
+      image: nvidia/cuda:12.6.3-cudnn-devel-rockylinux8
+    steps:
+      - name: Install build prerequisites
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            ca-certificates git gcc gcc-c++ make pkgconfig \
+            python3.11 python3.11-devel python3.11-pip binutils
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+          ln -sf /usr/bin/python3.11 /usr/local/bin/python
+
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Stage ORT GPU runtime (onnxruntime-gpu + CUDA provider sidecars)
+        run: |
+          ORT_VENV="$RUNNER_TEMP/ort-venv"
+          rm -rf "$ORT_VENV"
+          python3 -m venv "$ORT_VENV"
+          "$ORT_VENV/bin/pip" install --quiet "onnxruntime-gpu>=1.25.1,<1.26"
+          ORT_CAPI=$("$ORT_VENV/bin/python" -c 'import onnxruntime, pathlib; print(pathlib.Path(onnxruntime.__file__).parent / "capi")')
+          echo "ORT_STAGE_DIR=$ORT_CAPI" >> "$GITHUB_ENV"
+          ls -la "$ORT_CAPI"/libonnxruntime*.so* | head -20
+
+      - name: Patch GPU ORT RUNPATH for provider sidecars
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet "patchelf>=0.14"
+          export PATH="$HOME/.local/bin:$PATH"
+          patched=0
+          for so in "$ORT_STAGE_DIR"/libonnxruntime.so.* "$ORT_STAGE_DIR"/libonnxruntime_providers_*.so; do
+            [[ -e "$so" ]] || continue
+            patchelf --set-rpath '$ORIGIN' "$so"
+            readelf -d "$so" | grep -E 'RUNPATH|RPATH'
+            readelf -d "$so" | grep -q '\$ORIGIN' || { echo "FAIL: $so lacks \$ORIGIN RUNPATH"; exit 1; }
+            patched=$((patched + 1))
+          done
+          if [[ "$patched" -eq 0 ]]; then
+            echo "FAIL: no ORT shared libraries were patched"
+            exit 1
+          fi
+
+      - name: Build spe-gpu (release, GPU flavor, load-dynamic via ort_resolver)
+        working-directory: sparrow-engine
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release -p sparrow-engine-cli --bin spe-gpu \
+            --no-default-features --features gpu
+
+      - name: Hard gate — no DT_NEEDED libonnxruntime (load-dynamic invariant)
+        working-directory: sparrow-engine
+        run: |
+          set -euo pipefail
+          needed="$(readelf -d target/release/spe-gpu)"
+          printf '%s\n' "$needed" | grep -E 'NEEDED' || true
+          if printf '%s\n' "$needed" | grep -q 'libonnxruntime'; then
+            echo "FAIL: spe-gpu has DT_NEEDED libonnxruntime — load-dynamic contract violated (RP-3/RP-4)"
+            exit 1
+          fi
+
+      - name: Package tarball
+        working-directory: sparrow-engine
+        env:
+          FLAVOR: gpu
+          TARBALL_PLATFORM: linux-x86_64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            VERSION="0.0.0-ci-${GITHUB_SHA::8}"
+          fi
+          VERSION="$VERSION" ./scripts/package_cli_tarball.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-gpu-linux
+          path: |
+            sparrow-engine/dist/sparrow-engine-gpu-*-linux-x86_64.tar.gz
+            sparrow-engine/dist/sparrow-engine-gpu-*-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+  build-cli-macos-arm64:
+    name: Build CLI tarball (sparrow-engine-cpu, macOS arm64)
+    runs-on: macos-14
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GNU coreutils for packaging
+        run: |
+          brew install coreutils
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Stage ORT runtime
+        run: |
+          ORT_VENV="$RUNNER_TEMP/ort-venv"
+          rm -rf "$ORT_VENV"
+          python3 -m venv "$ORT_VENV"
+          "$ORT_VENV/bin/pip" install --quiet "onnxruntime>=1.25.1,<1.26"
+          ORT_CAPI=$("$ORT_VENV/bin/python" -c 'import onnxruntime, pathlib; print(pathlib.Path(onnxruntime.__file__).parent / "capi")')
+          echo "ORT_STAGE_DIR=$ORT_CAPI" >> "$GITHUB_ENV"
+
+      - name: Build spe (release, CPU flavor, macOS arm64)
+        working-directory: sparrow-engine
+        run: |
+          cargo build --release -p sparrow-engine-cli --bin spe \
+            --no-default-features --features cpu
+
+      - name: Hard gate — no LC_LOAD_DYLIB libonnxruntime (load-dynamic invariant)
+        working-directory: sparrow-engine
+        run: |
+          set -euo pipefail
+          loaded="$(otool -L target/release/spe)"
+          printf '%s\n' "$loaded"
+          if printf '%s\n' "$loaded" | grep -q 'libonnxruntime'; then
+            echo "FAIL: spe has LC_LOAD_DYLIB libonnxruntime — load-dynamic contract violated"
+            exit 1
+          fi
+
+      - name: Package tarball
+        working-directory: sparrow-engine
+        env:
+          FLAVOR: cpu
+          TARBALL_PLATFORM: macos-aarch64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            VERSION="0.0.0-ci-${GITHUB_SHA::8}"
+          fi
+          VERSION="$VERSION" ./scripts/package_cli_tarball.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-cpu-macos-arm64
+          path: |
+            sparrow-engine/dist/sparrow-engine-cpu-*-macos-aarch64.tar.gz
+            sparrow-engine/dist/sparrow-engine-cpu-*-macos-aarch64.tar.gz.sha256
+          if-no-files-found: error
+
+  build-cli-windows:
+    name: Build CLI tarball (sparrow-engine-cpu, Windows x86_64)
+    runs-on: windows-latest
+    needs: [check-installer-ps1-bom, check-version-consistency]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Stage ORT runtime
+        shell: bash
+        run: |
+          ORT_VENV="$(cygpath -u "$RUNNER_TEMP")/ort-venv"
+          rm -rf "$ORT_VENV"
+          python3 -m venv "$ORT_VENV"
+          "$ORT_VENV/Scripts/pip" install --quiet "onnxruntime>=1.25.1,<1.26"
+          # `.as_posix()` so the path uses forward slashes even on Windows
+          # (default pathlib repr is `C:\foo\bar`). The packaging script's
+          # bash path tests (`[[ -d $ort_capi ]]`) and command substitutions
+          # are more reliable with forward slashes under Git Bash + MSYS.
+          ORT_CAPI=$("$ORT_VENV/Scripts/python" -c "import onnxruntime, pathlib; print((pathlib.Path(onnxruntime.__file__).parent / 'capi').as_posix())")
+          echo "ORT_STAGE_DIR=$ORT_CAPI" >> "$GITHUB_ENV"
+
+      - name: Install zip (MSYS Git Bash does not ship it by default)
+        shell: pwsh
+        run: choco install zip -y --no-progress --no-color
+
+      - name: Build spe.exe (release, CPU flavor, Windows x86_64)
+        working-directory: sparrow-engine
+        shell: bash
+        run: |
+          cargo build --release -p sparrow-engine-cli --bin spe \
+            --no-default-features --features cpu
+
+      - name: Configure MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Windows DLL link verification: dumpbin (MSVC) lists imports.
+      - name: Hard gate — no onnxruntime.dll in import table (load-dynamic invariant)
+        working-directory: sparrow-engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $imports = & dumpbin /dependents target\release\spe.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin failed with exit code $LASTEXITCODE"
+          }
+          if ($imports -match 'onnxruntime\.dll') {
+            Write-Error "FAIL: spe.exe imports onnxruntime.dll - load-dynamic contract violated"
+            exit 1
+          }
+
+      - name: Package zip
+        working-directory: sparrow-engine
+        shell: bash
+        env:
+          FLAVOR: cpu
+          TARBALL_PLATFORM: windows-x86_64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            VERSION="0.0.0-ci-${GITHUB_SHA::8}"
+          fi
+          VERSION="$VERSION" ./scripts/package_cli_tarball.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-cpu-windows
+          path: |
+            sparrow-engine/dist/sparrow-engine-cpu-*-windows-x86_64.zip
+            sparrow-engine/dist/sparrow-engine-cpu-*-windows-x86_64.zip.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # RP-5 / RP-35 — Build + push CPU/GPU Docker server images to Docker Hub on
+  # prod tag push. Hyphenated tags (RC / pre) skip (same shape as
+  # publish-pypi-*). Failure of either job blocks the GitHub Release publish
+  # below (so sparrow's poll on /releases/latest is race-free — see RP-5
+  # final_design.md). Free ubuntu-latest runner suffices for both: cudarc
+  # fallback-dynamic-loading + nvjpeg-sys pre-generated bindings skip the
+  # build-time CUDA Toolkit requirement (RP-19 precedent for the Windows GPU
+  # wheel).
+  #
+  # Migration history (RP-35, 2026-06-05): runtime images moved from GHCR
+  # (ghcr.io/microsoft/sparrow-engine-server[-gpu]) to Docker Hub
+  # (docker.io/zhongqimiao/sparrow-engine-server[-gpu]) so end-users can
+  # `docker pull` without the ghcr.io prefix. Buildcache STAYS on GHCR
+  # (private, GITHUB_TOKEN access only) — no public consumer reads it; moving
+  # it to Docker Hub would require two extra public repos for internal CI
+  # state that nobody needs to see.
+  # ---------------------------------------------------------------------------
+
+  build-and-push-docker-cpu:
+    name: Build + push CPU Docker image to Docker Hub
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: [publish-pypi-cpu]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # needed for GHCR buildcache read/write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Two registry logins: Docker Hub for the runtime image push,
+      # GHCR for the buildcache read+write (kept private).
+      - name: Login to Docker Hub (runtime image destination)
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR (buildcache only)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: sparrow-engine
+          file: sparrow-engine/docker/Dockerfile.cpu
+          push: true
+          tags: |
+            docker.io/zhongqimiao/sparrow-engine-server:${{ github.ref_name }}
+            docker.io/zhongqimiao/sparrow-engine-server:latest
+            docker.io/zhongqimiao/sparrow-engine-server:sparrow-combined
+          labels: |
+            org.opencontainers.image.source=https://github.com/microsoft/Pytorch-Wildlife
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          # Buildcache lives in a SEPARATE image on GHCR (not as a tag on the
+          # runtime image) so the runtime image's tag list stays clean —
+          # sparrow's auto-PR workflow filters tags by shape, and a
+          # `buildcache` tag would confuse downstream introspection. Cache
+          # stays private to PW on GHCR even though runtime images moved to
+          # Docker Hub (RP-35).
+          cache-from: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:cpu
+          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:cpu,mode=max
+
+  build-and-push-docker-gpu:
+    name: Build + push GPU Docker image to Docker Hub
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    needs: [publish-pypi-gpu]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # needed for GHCR buildcache read/write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub (runtime image destination)
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR (buildcache only)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Free 15GB on ubuntu-latest before the ~4GB cuDNN runtime base pull.
+      # Default runner has 14GB free disk; GPU image build needs ~6-8GB
+      # working space (2GB base + layers + buildkit cache mounts).
+      - name: Free runner disk space (cuDNN base is ~2GB)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false  # keep nodejs/python — buildx needs them
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false  # we need docker
+
+      - id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: sparrow-engine
+          file: sparrow-engine/docker/Dockerfile.gpu
+          push: true
+          tags: |
+            docker.io/zhongqimiao/sparrow-engine-server-gpu:${{ github.ref_name }}
+            docker.io/zhongqimiao/sparrow-engine-server-gpu:latest
+            docker.io/zhongqimiao/sparrow-engine-server-gpu:sparrow-combined
+          labels: |
+            org.opencontainers.image.source=https://github.com/microsoft/Pytorch-Wildlife
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:gpu
+          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:gpu,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Attach CLI tarballs as GitHub Release assets on prod tag push.
+  # Hyphenated tags (RC / pre) skip publish; build jobs still ran above.
+  # ---------------------------------------------------------------------------
+
+  publish-cli-release-assets:
+    name: Attach CLI tarballs to GitHub Release
+    # Tag-push only; skips on hyphenated tags (RC / pre-release).
+    # Fires when the 3 reliable CLI builds succeed; build-cli-windows is
+    # allowed to fail in the meantime (Windows .zip packaging is a known
+    # follow-up — see RP-4 Windows tracking ticket). When Windows succeeds
+    # the .zip is attached automatically via the files glob below; when it
+    # fails, the release ships with 6 of 8 assets (Linux + macOS + GPU
+    # tarballs and their sha256s).
+    if: |
+      !cancelled()
+      && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      && !contains(github.ref_name, '-')
+      && needs['build-cli-linux-cpu'].result == 'success'
+      && needs['build-cli-linux-gpu'].result == 'success'
+      && needs['build-cli-macos-arm64'].result == 'success'
+      && needs['server-boot-smoke'].result == 'success'
+      && needs['build-and-push-docker-cpu'].result == 'success'
+      && needs['build-and-push-docker-gpu'].result == 'success'
+    needs:
+      - build-cli-linux-cpu
+      - build-cli-linux-gpu
+      - build-cli-macos-arm64
+      - build-cli-windows
+      - server-boot-smoke
+      - build-and-push-docker-cpu
+      - build-and-push-docker-gpu
+    runs-on: ubuntu-latest
+    permissions:
+      # softprops/action-gh-release needs write access to create / append the
+      # GH Release. The wheel publish jobs above use OIDC for PyPI; this job
+      # uses standard GITHUB_TOKEN scoped to contents:write.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show collected dist/
+        run: ls -la dist/
+
+      - name: Validate tag matches tarball version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          got=$(ls dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz | head -1 \
+            | sed -E 's|.*/sparrow-engine-cpu-([^-]+)-linux-x86_64\.tar\.gz|\1|')
+          echo "Tag version:     $tag_version"
+          echo "Tarball version: $got"
+          if [ "$tag_version" != "$got" ]; then
+            echo "FAIL: tag ($tag_version) and tarball ($got) versions disagree."
+            exit 1
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          # Soft-fail when Windows tarball is missing — see job-level if
+          # gate above. When build-cli-windows starts succeeding, the
+          # glob picks up the .zip automatically; for now the 6 reliable
+          # assets ship.
+          fail_on_unmatched_files: false
+          files: |
+            dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz
+            dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz.sha256
+            dist/sparrow-engine-gpu-*-linux-x86_64.tar.gz
+            dist/sparrow-engine-gpu-*-linux-x86_64.tar.gz.sha256
+            dist/sparrow-engine-cpu-*-macos-aarch64.tar.gz
+            dist/sparrow-engine-cpu-*-macos-aarch64.tar.gz.sha256
+            dist/sparrow-engine-cpu-*-windows-x86_64.zip
+            dist/sparrow-engine-cpu-*-windows-x86_64.zip.sha256
