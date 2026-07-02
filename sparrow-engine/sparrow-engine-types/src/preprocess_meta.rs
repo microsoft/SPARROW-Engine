@@ -7,7 +7,9 @@
 //! transform — that contract holds across the sparrow-engine-cpu / sparrow-engine-gpu split
 //! because `PreprocessMeta` is pure POD and lives in this leaf crate.
 
-use crate::manifest::{ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod};
+use crate::manifest::{
+    ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod, ResizeCropConfig,
+};
 
 /// Full preprocessing configuration, typically derived from a model manifest.
 #[derive(Debug, Clone)]
@@ -27,6 +29,8 @@ pub struct PreprocessConfig {
     /// Resize interpolation filter. `Bilinear` (default) -> `image` crate `Triangle`;
     /// `Bicubic` -> `CatmullRom` (matches PIL/torchvision bicubic).
     pub interpolation: Interpolation,
+    /// Resize+center-crop parameters. `Some` only for `PreprocessMethod::ResizeCrop`.
+    pub resize_crop: Option<ResizeCropConfig>,
 }
 
 /// Geometric metadata from preprocessing, needed by postprocessing to undo letterbox.
@@ -83,6 +87,7 @@ mod phase_a_r1_preprocess_meta_tests {
             pad_value: 114.0 / 255.0,
             channel_order: ChannelOrder::Bgr,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.method, cfg.method);
@@ -105,6 +110,7 @@ mod phase_a_r1_preprocess_meta_tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let debug_str = format!("{cfg:?}");
         assert!(debug_str.contains("PreprocessConfig"));

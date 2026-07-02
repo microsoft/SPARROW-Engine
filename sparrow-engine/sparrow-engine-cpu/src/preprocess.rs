@@ -21,7 +21,8 @@ use crate::error::{SparrowEngineError, Result};
 // re-export for convenience and to keep the `sparrow_engine::preprocess::ChannelOrder`
 // consumer path working (lib name is now "sparrow_engine" after the rename).
 pub use sparrow_engine_types::manifest::{
-    ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod,
+    ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod, ResizeCropConfig,
+    ResizeMode,
 };
 
 // Phase 3.8 Phase A: PreprocessMeta + PreprocessConfig moved to
@@ -84,6 +85,14 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
             filter,
         )?,
         PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h, filter)?,
+        PreprocessMethod::ResizeCrop => {
+            let rc = config.resize_crop.ok_or_else(|| {
+                crate::error::SparrowEngineError::InvalidManifest(
+                    "resize_crop method requires resize_crop config".to_string(),
+                )
+            })?;
+            resize_crop(&rgb, [target_w, target_h], &rc, filter)?
+        }
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             return Err(crate::error::SparrowEngineError::InvalidManifest(format!(
                 "{} preprocessing cannot be used with image preprocess()",
@@ -97,6 +106,7 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
     let tensor_norm = match config.method {
         PreprocessMethod::Letterbox => Normalization::None,
         PreprocessMethod::Resize => config.normalization,
+        PreprocessMethod::ResizeCrop => config.normalization,
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             unreachable!()
         }
@@ -205,6 +215,7 @@ fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
     match interp {
         Interpolation::Bilinear => image::imageops::FilterType::Triangle,
         Interpolation::Bicubic => image::imageops::FilterType::CatmullRom,
+        Interpolation::Lanczos => image::imageops::FilterType::Lanczos3,
     }
 }
 
@@ -259,6 +270,94 @@ fn resize_direct(
         }
     }
 
+    Ok((canvas, 1.0, 0.0, 0.0))
+}
+
+// ---------------------------------------------------------------------------
+// Resize + center-crop (ONB-1 center-crop classifiers)
+// ---------------------------------------------------------------------------
+
+/// Resize + center-crop pipeline: optional center-square crop -> resize (per
+/// `resize_mode` + `filter`) -> optional center-crop to `input_size`.
+///
+/// Covers the Ultralytics YOLOv8-cls idiom (`pre_crop_square` + exact resize),
+/// torchvision `Resize(S)+CenterCrop(C)` (`ShorterSide` + `center_crop`), and
+/// alita (square crop + LANCZOS resize + center-crop). Crops are exact pixel
+/// slices (`image::imageops::crop_imm`). Returns `(canvas, 1.0, 0.0, 0.0)` with
+/// raw u8-as-f32 pixels (normalization applied later in `build_tensor`), matching
+/// `resize_direct`'s contract — classifiers only, no coordinate mapping.
+fn resize_crop(
+    img: &RgbImage,
+    input_size: [u32; 2],
+    rc: &ResizeCropConfig,
+    filter: image::imageops::FilterType,
+) -> Result<(Vec<f32>, f32, f32, f32)> {
+    // 1. optional center-square crop (Ultralytics / alita)
+    let base: RgbImage = if rc.pre_crop_square {
+        let m = img.width().min(img.height());
+        let x = (img.width() - m) / 2;
+        let y = (img.height() - m) / 2;
+        image::imageops::crop_imm(img, x, y, m, m).to_image()
+    } else {
+        img.clone()
+    };
+
+    // 2. resize
+    let (rw, rh) = match rc.resize_mode {
+        ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
+        ResizeMode::ShorterSide => {
+            let s = rc.resize_size[0] as f32;
+            let (w, h) = (base.width() as f32, base.height() as f32);
+            let scale = s / w.min(h);
+            (
+                (w * scale).round().max(1.0) as u32,
+                (h * scale).round().max(1.0) as u32,
+            )
+        }
+    };
+    let resized = resize_pil(&base, rw, rh, filter)?;
+
+    // 3. optional center-crop to input_size
+    let (target_w, target_h) = (input_size[0], input_size[1]);
+    let final_img: RgbImage = if rc.center_crop {
+        if resized.width() < target_w || resized.height() < target_h {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "resize_crop: resized {}x{} is smaller than center_crop target {}x{}",
+                resized.width(),
+                resized.height(),
+                target_w,
+                target_h
+            )));
+        }
+        let x = (resized.width() - target_w) / 2;
+        let y = (resized.height() - target_h) / 2;
+        image::imageops::crop_imm(&resized, x, y, target_w, target_h).to_image()
+    } else {
+        resized
+    };
+
+    if final_img.width() != target_w || final_img.height() != target_h {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "resize_crop produced {}x{} but model input_size is {}x{} \
+             (set center_crop=true, or resize_size to match input_size)",
+            final_img.width(),
+            final_img.height(),
+            target_w,
+            target_h
+        )));
+    }
+
+    // Raw f32 canvas (normalization happens in build_tensor), matching resize_direct.
+    let total = checked_tensor_len_3hw(target_h, target_w)?;
+    let mut canvas = Vec::with_capacity(total);
+    for y in 0..target_h {
+        for x in 0..target_w {
+            let px = final_img.get_pixel(x, y);
+            canvas.push(px[0] as f32);
+            canvas.push(px[1] as f32);
+            canvas.push(px[2] as f32);
+        }
+    }
     Ok((canvas, 1.0, 0.0, 0.0))
 }
 
@@ -478,6 +577,60 @@ mod tests {
     }
 
     #[test]
+    fn test_lanczos_filter_mapping() {
+        assert!(matches!(
+            interp_filter(Interpolation::Lanczos),
+            image::imageops::FilterType::Lanczos3
+        ));
+    }
+
+    #[test]
+    fn test_resize_crop_ultralytics_style() {
+        // pre-crop center square -> exact resize to input_size, no center-crop
+        // (Ultralytics YOLOv8-cls idiom). Rectangular input -> square output.
+        let img = red_image(200, 100);
+        let rc = ResizeCropConfig {
+            pre_crop_square: true,
+            resize_size: [64, 64],
+            resize_mode: ResizeMode::Exact,
+            center_crop: false,
+        };
+        let (canvas, scale, _, _) =
+            resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).unwrap();
+        assert_eq!(canvas.len(), 64 * 64 * 3);
+        assert!((scale - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_resize_crop_torchvision_style() {
+        // shorter-side resize -> center-crop to input_size (awc135 / torchvision idiom).
+        // 200x100: shorter side 100 -> 64 => 128x64, center-crop 64x64.
+        let img = red_image(200, 100);
+        let rc = ResizeCropConfig {
+            pre_crop_square: false,
+            resize_size: [64, 64],
+            resize_mode: ResizeMode::ShorterSide,
+            center_crop: true,
+        };
+        let (canvas, _, _, _) =
+            resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).unwrap();
+        assert_eq!(canvas.len(), 64 * 64 * 3);
+    }
+
+    #[test]
+    fn test_resize_crop_too_small_errors() {
+        // center_crop target larger than the resized image must error, not panic.
+        let img = red_image(200, 100);
+        let rc = ResizeCropConfig {
+            pre_crop_square: false,
+            resize_size: [32, 32],
+            resize_mode: ResizeMode::Exact,
+            center_crop: true,
+        };
+        assert!(resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).is_err());
+    }
+
+    #[test]
     fn test_letterbox_preserves_aspect() {
         // 200x100 image → 640x640 letterbox
         let img = red_image(200, 100);
@@ -510,6 +663,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config).unwrap();
         assert_eq!(result.tensor.shape(), &[1, 3, 64, 64]);
@@ -534,6 +688,7 @@ mod tests {
             pad_value: 0.447,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config).unwrap();
         assert_eq!(result.tensor.shape(), &[1, 128, 128, 3]);
@@ -557,6 +712,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config).unwrap();
         // All values should be 1.0
@@ -583,6 +739,7 @@ mod tests {
             pad_value: 114.0 / 255.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config).unwrap();
 
@@ -616,6 +773,7 @@ mod tests {
             pad_value: 0.447,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config).unwrap();
 
@@ -646,6 +804,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let err = preprocess(&img, &config).unwrap_err();
         match err {
@@ -676,6 +835,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config);
         assert!(
@@ -706,6 +866,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let result = preprocess(&img, &config);
         assert!(result.is_err(), "Should fail on u32 overflow stride");
@@ -731,6 +892,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let r_rgb = preprocess(&img, &cfg_rgb).unwrap();
         // After Unit normalization: R=200/255, G=100/255, B=50/255.
@@ -747,6 +909,7 @@ mod tests {
             pad_value: 0.0,
             channel_order: ChannelOrder::Bgr,
             interpolation: Interpolation::Bilinear,
+            resize_crop: None,
         };
         let r_bgr = preprocess(&img, &cfg_bgr).unwrap();
         assert!((r_bgr.tensor[[0, 0, 0, 0]] - 50.0 / 255.0).abs() < 1e-5);

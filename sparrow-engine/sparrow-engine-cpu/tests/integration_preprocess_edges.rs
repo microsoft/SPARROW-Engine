@@ -29,6 +29,7 @@ fn letterbox_cfg(target: u32) -> PreprocessConfig {
         pad_value: 114.0 / 255.0,
         channel_order: ChannelOrder::Rgb,
         interpolation: Interpolation::Bilinear,
+        resize_crop: None,
     }
 }
 

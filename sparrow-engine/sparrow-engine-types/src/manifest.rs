@@ -25,6 +25,10 @@ pub enum PreprocessMethod {
     Letterbox,
     /// Direct resize to target size (distorts aspect ratio).
     Resize,
+    /// Resize + center-crop pipeline (ONB-1 center-crop classifiers). Parameters
+    /// carried in the manifest `[preprocessing]` fields, resolved to a
+    /// `ResizeCropConfig` on the runtime `PreprocessConfig`.
+    ResizeCrop,
     /// Mel spectrogram for audio models.
     MelSpectrogram {
         sample_rate: u32,
@@ -117,6 +121,40 @@ pub enum Interpolation {
     Bilinear,
     /// Bicubic (PIL BICUBIC, a=-0.5 Catmull-Rom) -> `image` crate `CatmullRom`.
     Bicubic,
+    /// Lanczos (high-quality windowed sinc) -> `image` crate `Lanczos3`. Used by
+    /// models whose upstream runner downsamples with cv2 `INTER_LANCZOS4` (e.g.
+    /// NZ-Species / alita's 600px crop stage).
+    Lanczos,
+}
+
+/// Resize strategy for the `resize_crop` preprocessing method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResizeMode {
+    /// Resize to an exact `[w, h]` (may distort aspect ratio).
+    #[default]
+    Exact,
+    /// Resize so the shorter side equals `resize_size[0]`, preserving aspect ratio
+    /// (torchvision `Resize(int)` idiom). Pairs with `center_crop`.
+    ShorterSide,
+}
+
+/// Parameters for the `resize_crop` preprocessing method (ONB-1 center-crop models).
+///
+/// Pipeline: optional center-square crop -> resize (per `resize_mode` + the
+/// manifest `interpolation`) -> optional center-crop to the model `input_size`.
+/// Covers the Ultralytics YOLOv8-cls idiom (`pre_crop_square` + exact resize),
+/// the torchvision `Resize(S)+CenterCrop(C)` idiom (`ShorterSide` + `center_crop`),
+/// and alita (square crop + LANCZOS resize + center-crop).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResizeCropConfig {
+    /// Crop the center `min(h,w)` square before resizing (Ultralytics / alita).
+    pub pre_crop_square: bool,
+    /// Resize target: `[w, h]` for `Exact`, or `[shorter_side, _]` for `ShorterSide`.
+    pub resize_size: [u32; 2],
+    /// How `resize_size` is interpreted.
+    pub resize_mode: ResizeMode,
+    /// Center-crop the resized image down to the model `input_size` as the final step.
+    pub center_crop: bool,
 }
 
 /// Inference precision: tensor data type used inside the ONNX graph.
@@ -241,6 +279,7 @@ impl PreprocessMethod {
         match self {
             PreprocessMethod::Letterbox => "letterbox",
             PreprocessMethod::Resize => "resize",
+            PreprocessMethod::ResizeCrop => "resize_crop",
             PreprocessMethod::MelSpectrogram { .. } => "mel_spectrogram",
             PreprocessMethod::RawAudio { .. } => "raw_audio",
         }
@@ -298,6 +337,10 @@ pub struct ModelManifest {
     /// manifest omits the field (defaults to `Bilinear` at use). `Bicubic` maps
     /// to the `image`-crate `CatmullRom` filter (matches PIL/torchvision bicubic).
     pub interpolation: Option<Interpolation>,
+
+    /// Image-only: resize+center-crop parameters. `Some` only when
+    /// `preprocess_method == ResizeCrop`; `None` for all other methods.
+    pub resize_crop: Option<ResizeCropConfig>,
 
     /// Inference precision: FP32 (default) or FP16. When `Fp16`, the engine
     /// loads `model_file_fp16` instead of `model_file`. Phase 3.8 fix.
@@ -470,9 +513,18 @@ struct RawPreprocessing {
     /// models trained via Ultralytics (which use BGR per cv2 default).
     #[serde(default)]
     channel_order: Option<String>,
-    /// Resize interpolation: "bilinear" (default) | "bicubic".
+    /// Resize interpolation: "bilinear" (default) | "bicubic" | "lanczos".
     #[serde(default)]
     interpolation: Option<String>,
+    // resize_crop-specific fields (used only when method = "resize_crop").
+    #[serde(default)]
+    pre_crop_square: Option<bool>,
+    #[serde(default)]
+    resize_size: Option<[u32; 2]>,
+    #[serde(default)]
+    resize_mode: Option<String>,
+    #[serde(default)]
+    center_crop: Option<bool>,
     // Audio-specific fields (required for mel_spectrogram, absent for vision).
     sample_rate: Option<u32>,
     n_fft: Option<u32>,
@@ -620,6 +672,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     let preprocess_method = match raw.preprocessing.method.as_str() {
         "letterbox" => PreprocessMethod::Letterbox,
         "resize" => PreprocessMethod::Resize,
+        "resize_crop" => PreprocessMethod::ResizeCrop,
         "raw_audio" => {
             let raw_err = |name: &str| {
                 SparrowEngineError::InvalidManifest(format!("raw_audio requires '{name}' field"))
@@ -1136,11 +1189,38 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         None => None,
         Some("bilinear") => Some(Interpolation::Bilinear),
         Some("bicubic") => Some(Interpolation::Bicubic),
+        Some("lanczos") => Some(Interpolation::Lanczos),
         Some(other) => {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "Unknown interpolation: '{other}' (expected 'bilinear' or 'bicubic')"
+                "Unknown interpolation: '{other}' (expected 'bilinear', 'bicubic', or 'lanczos')"
             )))
         }
+    };
+
+    // Resolve resize_crop parameters when the method is `resize_crop`.
+    let resize_crop = if preprocess_method == PreprocessMethod::ResizeCrop {
+        let resize_mode = match raw.preprocessing.resize_mode.as_deref() {
+            None | Some("exact") => ResizeMode::Exact,
+            Some("shorter_side") => ResizeMode::ShorterSide,
+            Some(other) => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "Unknown resize_mode: '{other}' (expected 'exact' or 'shorter_side')"
+                )))
+            }
+        };
+        let resize_size = raw.preprocessing.resize_size.or(input_size).ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(
+                "resize_crop requires 'resize_size' or 'input_size'".to_string(),
+            )
+        })?;
+        Some(ResizeCropConfig {
+            pre_crop_square: raw.preprocessing.pre_crop_square.unwrap_or(false),
+            resize_size,
+            resize_mode,
+            center_crop: raw.preprocessing.center_crop.unwrap_or(false),
+        })
+    } else {
+        None
     };
 
     Ok(ModelManifest {
@@ -1155,6 +1235,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         pad_value,
         channel_order,
         interpolation,
+        resize_crop,
         precision,
         inference_strategy,
         trt,
@@ -2215,11 +2296,84 @@ format = "one_per_line"
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "bilinear""#));
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
         assert_eq!(m.interpolation, Some(Interpolation::Bilinear));
-        // Invalid -> InvalidManifest error.
+        // Lanczos is valid (ONB-1 center-crop models).
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "lanczos""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::Lanczos));
+        // Invalid -> InvalidManifest error.
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "nearest""#));
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
         assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
         assert!(err.to_string().contains("interpolation"));
+    }
+
+    #[test]
+    fn test_resize_crop_parsing() {
+        let toml = r#"
+[model]
+id = "t"
+format = "onnx"
+file = "m.onnx"
+
+[preprocessing]
+method = "resize_crop"
+input_size = [480, 480]
+layout = "nchw"
+normalization = "imagenet"
+interpolation = "lanczos"
+pre_crop_square = true
+resize_size = [600, 600]
+resize_mode = "exact"
+center_crop = true
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.preprocess_method, PreprocessMethod::ResizeCrop);
+        assert_eq!(m.interpolation, Some(Interpolation::Lanczos));
+        let rc = m.resize_crop.expect("resize_crop config present");
+        assert!(rc.pre_crop_square);
+        assert!(rc.center_crop);
+        assert_eq!(rc.resize_size, [600, 600]);
+        assert_eq!(rc.resize_mode, ResizeMode::Exact);
+    }
+
+    #[test]
+    fn test_resize_crop_absent_when_method_is_resize() {
+        let toml = r#"
+[model]
+id = "t"
+format = "onnx"
+file = "m.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [224, 224]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.resize_crop, None);
     }
 
     #[test]

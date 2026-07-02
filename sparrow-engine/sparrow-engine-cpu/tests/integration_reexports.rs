@@ -136,6 +136,7 @@ fn audio_manifest_engine_config_reexports_resolve_at_crate_root() {
         pad_value: 0.447,
         channel_order: sparrow_engine::manifest::ChannelOrder::Rgb,
         interpolation: sparrow_engine::manifest::Interpolation::Bilinear,
+        resize_crop: None,
     };
 
     // Manifest types reachable at the sparrow_engine:: root (re-exported from
