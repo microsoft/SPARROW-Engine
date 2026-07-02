@@ -143,6 +143,18 @@ pub enum TrtPrecision {
     Int8,
 }
 
+/// TensorRT execution mode for a model manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrtMode {
+    /// Do not permit TensorRT warm-up for this model.
+    Off,
+    /// Serve on CUDA by default; build TensorRT only on explicit warm-up.
+    OnDemand,
+    /// Serve on CUDA by default; include this model in boot-time TRT warm-up.
+    Always,
+}
+
 /// Inference strategy: single-shot, tiled, or sliding window.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InferenceStrategy {
@@ -163,9 +175,12 @@ pub enum InferenceStrategy {
 /// Optional `[inference.trt]` TensorRT settings for the GPU flavor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrtConfig {
-    /// Opt into TensorRT for this model. Missing field defaults to false.
-    #[serde(default)]
+    /// Legacy TensorRT eligibility flag. Missing in a present table defaults to true.
+    #[serde(default = "default_trt_enabled")]
     pub enabled: bool,
+    /// TensorRT execution mode. When present, this supersedes `enabled`.
+    #[serde(default)]
+    pub mode: Option<TrtMode>,
     /// TensorRT builder precision. Missing field defaults to FP16.
     #[serde(default)]
     pub precision: TrtPrecision,
@@ -184,6 +199,34 @@ pub struct TrtConfig {
     /// Maximum dynamic-shape profile dimensions, keyed by ONNX input tensor name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_max: Option<BTreeMap<String, Vec<i64>>>,
+}
+
+impl TrtConfig {
+    /// Resolve the new `mode` key and legacy `enabled` key into one contract.
+    pub fn effective_mode(&self) -> TrtMode {
+        if let Some(mode) = self.mode {
+            let contradiction = matches!(
+                (mode, self.enabled),
+                (TrtMode::Off, true) | (TrtMode::OnDemand | TrtMode::Always, false)
+            );
+            if contradiction {
+                warn_trt_mode_enabled_contradiction(mode, self.enabled);
+            }
+            return mode;
+        }
+
+        if self.enabled {
+            TrtMode::OnDemand
+        } else {
+            TrtMode::Off
+        }
+    }
+}
+
+fn warn_trt_mode_enabled_contradiction(mode: TrtMode, enabled: bool) {
+    eprintln!(
+        "inference.trt.mode={mode:?} contradicts legacy inference.trt.enabled={enabled}; using mode"
+    );
 }
 
 /// Postprocessing method: how raw model output becomes detections/classifications.
@@ -1238,6 +1281,10 @@ fn default_trt_builder_optimization_level() -> u8 {
     3
 }
 
+fn default_trt_enabled() -> bool {
+    true
+}
+
 fn validate_trt_config(trt: &Option<TrtConfig>) -> Result<()> {
     let Some(trt) = trt else {
         return Ok(());
@@ -1468,6 +1515,61 @@ audio = [1, 1, 224, 90]
                 .and_then(|profiles| profiles.get("audio")),
             Some(&vec![1, 1, 224, 90])
         );
+    }
+
+    #[test]
+    fn trt_effective_mode_matches_back_compat_table() {
+        let mode_set: TrtConfig = toml::from_str("enabled = true\nmode = \"always\"\n").unwrap();
+        assert_eq!(mode_set.effective_mode(), TrtMode::Always);
+
+        let contradiction: TrtConfig =
+            toml::from_str("enabled = false\nmode = \"on_demand\"\n").unwrap();
+        assert_eq!(contradiction.effective_mode(), TrtMode::OnDemand);
+
+        let legacy_enabled: TrtConfig = toml::from_str("enabled = true\n").unwrap();
+        assert_eq!(legacy_enabled.effective_mode(), TrtMode::OnDemand);
+
+        let legacy_disabled: TrtConfig = toml::from_str("enabled = false\n").unwrap();
+        assert_eq!(legacy_disabled.effective_mode(), TrtMode::Off);
+
+        let bare_section: TrtConfig = toml::from_str("\n").unwrap();
+        assert!(bare_section.enabled);
+        assert_eq!(bare_section.effective_mode(), TrtMode::OnDemand);
+    }
+
+    #[test]
+    fn legacy_trt_enabled_manifest_still_parses_as_on_demand() {
+        let mut toml = make_model_toml(&[]);
+        toml.push_str(
+            r#"
+[inference.trt]
+enabled = true
+"#,
+        );
+        let dir = write_temp_file("manifest.toml", &toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        let trt = manifest.trt.expect("TRT table should parse");
+        assert!(trt.enabled);
+        assert_eq!(trt.mode, None);
+        assert_eq!(trt.effective_mode(), TrtMode::OnDemand);
+    }
+
+    #[test]
+    fn trt_mode_round_trips_snake_case_tokens() {
+        for (token, expected) in [
+            ("off", TrtMode::Off),
+            ("on_demand", TrtMode::OnDemand),
+            ("always", TrtMode::Always),
+        ] {
+            let toml = format!("mode = \"{token}\"\n");
+            let trt: TrtConfig = toml::from_str(&toml).unwrap();
+            assert_eq!(trt.mode, Some(expected));
+            assert_eq!(trt.effective_mode(), expected);
+            assert!(toml::to_string(&trt)
+                .unwrap()
+                .contains(&format!("mode = \"{token}\"")));
+        }
     }
 
     #[test]
