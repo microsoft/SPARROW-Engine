@@ -56,9 +56,9 @@ use std::time::Duration;
 use crate::engine_dispatch::{
     classify, detect, detect_audio, AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts,
     ClassifyResult, DetectOpts, DetectResult, Device, Engine, EngineConfig, ImageInput, ModelInfo,
-    ModelType, PipelineResult,
+    ModelType, PipelineResult, SparrowEngineError, TrtState, TrtStateView, TrtWarmupRejection,
 };
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use serde::Serialize;
 
@@ -83,8 +83,14 @@ struct Cli {
     #[arg(long, global = true)]
     quiet: bool,
 
+    /// Offline pre-bake of TensorRT engines before running the subcommand.
+    /// Accepts "all" or comma/space-separated model IDs. Uses the single-writer
+    /// TensorRT cache convention.
+    #[arg(long, global = true, value_name = "ids|all")]
+    trt_warm_up: Option<String>,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -337,6 +343,11 @@ enum ModelsAction {
         #[arg(long)]
         write: bool,
     },
+    /// Show TensorRT warm-up state for a model
+    TrtState {
+        /// Model ID
+        model_id: String,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -529,18 +540,56 @@ fn init_tracing() {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(ref warm_up_spec) = cli.trt_warm_up {
+        let engine = create_engine(&cli.device, &cli.model_dir)?;
+        run_trt_warm_up(&engine, warm_up_spec, cli.quiet);
+        return dispatch_command_with_engine(cli.command, &engine, &cli.model_dir, cli.quiet);
+    }
+
     match cli.command {
-        Commands::Detect(args) => cmd_detect(&cli.device, &cli.model_dir, cli.quiet, args),
-        Commands::Classify(args) => cmd_classify(&cli.device, &cli.model_dir, cli.quiet, args),
-        Commands::DetectAudio(args) => {
+        Some(Commands::Detect(args)) => cmd_detect(&cli.device, &cli.model_dir, cli.quiet, args),
+        Some(Commands::Classify(args)) => {
+            cmd_classify(&cli.device, &cli.model_dir, cli.quiet, args)
+        }
+        Some(Commands::DetectAudio(args)) => {
             cmd_detect_audio(&cli.device, &cli.model_dir, cli.quiet, args)
         }
-        Commands::Pipeline(args) => cmd_pipeline(&cli.device, &cli.model_dir, cli.quiet, args),
-        Commands::Models { action } => cmd_models(&cli.device, &cli.model_dir, action),
-        Commands::Device => cmd_device(&cli.device, &cli.model_dir),
-        Commands::Init => cmd_init(&cli.device, &cli.model_dir),
-        Commands::Hash(args) => cmd_hash(args),
-        Commands::DayNight(args) => cmd_day_night(args),
+        Some(Commands::Pipeline(args)) => {
+            cmd_pipeline(&cli.device, &cli.model_dir, cli.quiet, args)
+        }
+        Some(Commands::Models { action }) => cmd_models(&cli.device, &cli.model_dir, action),
+        Some(Commands::Device) => cmd_device(&cli.device, &cli.model_dir),
+        Some(Commands::Init) => cmd_init(&cli.device, &cli.model_dir),
+        Some(Commands::Hash(args)) => cmd_hash(args),
+        Some(Commands::DayNight(args)) => cmd_day_night(args),
+        None => {
+            Cli::command().print_help()?;
+            println!();
+            Ok(())
+        }
+    }
+}
+
+fn dispatch_command_with_engine(
+    command: Option<Commands>,
+    engine: &Engine,
+    model_dir: &Option<PathBuf>,
+    quiet: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        Some(Commands::Detect(args)) => cmd_detect_with_engine(engine, quiet, args),
+        Some(Commands::Classify(args)) => cmd_classify_with_engine(engine, quiet, args),
+        Some(Commands::DetectAudio(args)) => cmd_detect_audio_with_engine(engine, quiet, args),
+        Some(Commands::Pipeline(args)) => cmd_pipeline_with_engine(engine, quiet, args),
+        Some(Commands::Models {
+            action: ModelsAction::Verify { model_id, write },
+        }) => cmd_models_verify(model_dir, model_id, write),
+        Some(Commands::Models { action }) => cmd_models_with_engine(engine, action),
+        Some(Commands::Device) => cmd_device_with_engine(engine),
+        Some(Commands::Init) => cmd_init_with_engine(engine),
+        Some(Commands::Hash(args)) => cmd_hash(args),
+        Some(Commands::DayNight(args)) => cmd_day_night(args),
+        None => Ok(()),
     }
 }
 
@@ -669,6 +718,135 @@ fn create_engine(
     let config = EngineConfig::new(device, dir);
     let engine = Engine::new(config)?;
     Ok(engine)
+}
+
+fn parse_trt_warmup_ids(
+    spec: &str,
+    engine: &Engine,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let tokens: Vec<&str> = spec
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return Err("--trt-warm-up requires all or at least one model ID".into());
+    }
+    if tokens.iter().any(|s| s.eq_ignore_ascii_case("all")) {
+        return Ok(engine
+            .list_available_models()
+            .into_iter()
+            .map(|m| m.id)
+            .collect());
+    }
+    Ok(tokens.into_iter().map(str::to_string).collect())
+}
+
+fn make_trt_warmup_spinner(model_id: &str, quiet: bool) -> ProgressBar {
+    let hide = quiet || !io::stderr().is_terminal();
+    let bar = if hide {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr_with_hz(10))
+    };
+    let style = ProgressStyle::with_template("{spinner:.green} {msg}")
+        .unwrap_or_else(|_| ProgressStyle::default_spinner());
+    bar.set_style(style);
+    bar.set_message(format!("building TensorRT engine for {model_id}…"));
+    bar.enable_steady_tick(Duration::from_millis(250));
+    bar
+}
+
+fn trt_state_token(state: TrtState) -> &'static str {
+    match state {
+        TrtState::NotLoaded => "not_loaded",
+        TrtState::CudaReady => "cuda_ready",
+        TrtState::TrtWarming => "trt_warming",
+        TrtState::TrtReady => "trt_ready",
+        TrtState::TrtError => "trt_error",
+        TrtState::Unsupported => "unsupported",
+        _ => "unknown",
+    }
+}
+
+fn trt_warmup_result_exit_code(result: &engine_dispatch::Result<TrtStateView>) -> i32 {
+    match result {
+        Ok(view) => match view.state {
+            TrtState::TrtReady => 0,
+            TrtState::NotLoaded => 5,
+            TrtState::Unsupported => 3,
+            TrtState::TrtError | TrtState::CudaReady | TrtState::TrtWarming => 4,
+            _ => 4,
+        },
+        Err(SparrowEngineError::TrtWarmupRejected(rejection)) => match rejection {
+            TrtWarmupRejection::HardwareUnsupportedSm(_)
+            | TrtWarmupRejection::TrtRuntimeMissing(_)
+            | TrtWarmupRejection::CpuBuild => 3,
+            TrtWarmupRejection::NotEligible(_) | TrtWarmupRejection::Disabled => 6,
+        },
+        Err(SparrowEngineError::ManifestNotFound(_)) => 5,
+        Err(_) => 4,
+    }
+}
+
+fn print_trt_warmup_failure(
+    model_id: &str,
+    result: &engine_dispatch::Result<TrtStateView>,
+    code: i32,
+) {
+    match result {
+        Err(SparrowEngineError::TrtWarmupRejected(rejection)) => match code {
+            3 => eprintln!(
+                "{model_id}: hardware doesn't support TRT: {} ({rejection})",
+                rejection.reason()
+            ),
+            6 => eprintln!(
+                "{model_id}: TensorRT warm-up is not available: {} ({rejection})",
+                rejection.reason()
+            ),
+            _ => eprintln!("{model_id}: TensorRT warm-up failed: {rejection}"),
+        },
+        Err(SparrowEngineError::ManifestNotFound(_)) => {
+            eprintln!("{model_id}: model not found")
+        }
+        Err(e) => eprintln!("{model_id}: TensorRT warm-up build error: {e}"),
+        Ok(view) => eprintln!(
+            "{model_id}: TensorRT warm-up did not become ready: {}{}",
+            trt_state_token(view.state),
+            view.detail
+                .as_deref()
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default()
+        ),
+    }
+}
+
+fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
+    let ids = match parse_trt_warmup_ids(spec, engine) {
+        Ok(ids) => ids,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(4);
+        }
+    };
+
+    for id in ids {
+        let bar = make_trt_warmup_spinner(&id, quiet);
+        let result = engine.trt_warmup_blocking(&id);
+        bar.finish_and_clear();
+        let code = trt_warmup_result_exit_code(&result);
+        if code != 0 {
+            print_trt_warmup_failure(&id, &result, code);
+            std::process::exit(code);
+        }
+        eprintln!("{id}: trt_ready");
+    }
+}
+
+fn print_trt_state(view: TrtStateView) {
+    println!("{}", trt_state_token(view.state));
+    if let Some(detail) = view.detail {
+        println!("detail: {detail}");
+    }
 }
 
 /// Format ModelType for display.
@@ -1109,6 +1287,15 @@ fn cmd_detect(
     quiet: bool,
     args: DetectArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_detect_with_engine(&engine, quiet, args)
+}
+
+fn cmd_detect_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: DetectArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
     validate_viz_args(args.visualize, &args.output_dir)?;
 
     let files = resolve_inputs(&args.input, args.recursive);
@@ -1116,7 +1303,6 @@ fn cmd_detect(
         return Err("No image files found.".into());
     }
 
-    let engine = create_engine(device_str, model_dir)?;
     let model_id = args.model.as_deref().unwrap_or("megadetector-v6-yolov10e");
     let handle = engine.get_or_load_model(model_id)?;
 
@@ -1291,6 +1477,15 @@ fn cmd_classify(
     quiet: bool,
     args: ClassifyArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_classify_with_engine(&engine, quiet, args)
+}
+
+fn cmd_classify_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: ClassifyArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
     validate_viz_args(args.visualize, &args.output_dir)?;
 
     let files = resolve_inputs(&args.input, args.recursive);
@@ -1298,7 +1493,6 @@ fn cmd_classify(
         return Err("No image files found.".into());
     }
 
-    let engine = create_engine(device_str, model_dir)?;
     let model_id = args.model.as_deref().unwrap_or("speciesnet");
     let handle = engine.get_or_load_model(model_id)?;
 
@@ -1436,6 +1630,15 @@ fn cmd_detect_audio(
     quiet: bool,
     args: DetectAudioArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_detect_audio_with_engine(&engine, quiet, args)
+}
+
+fn cmd_detect_audio_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: DetectAudioArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
     let files = resolve_audio_inputs(&args.input, args.recursive);
     if files.is_empty() {
         return Err("No audio files found.".into());
@@ -1460,7 +1663,6 @@ fn cmd_detect_audio(
         PathBuf::new()
     };
 
-    let engine = create_engine(device_str, model_dir)?;
     let model_id = args.model.as_deref().unwrap_or("md-audiobirds-v1");
     let handle = engine.get_or_load_model(model_id)?;
     let audio_config = handle.audio_preprocess_config();
@@ -1816,6 +2018,15 @@ fn cmd_pipeline(
     quiet: bool,
     args: PipelineArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_pipeline_with_engine(&engine, quiet, args)
+}
+
+fn cmd_pipeline_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: PipelineArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
     validate_viz_args(args.visualize, &args.output_dir)?;
 
     let files = resolve_inputs(&args.input, args.recursive);
@@ -1823,8 +2034,7 @@ fn cmd_pipeline(
         return Err("No image files found.".into());
     }
 
-    let engine = create_engine(device_str, model_dir)?;
-    validate_pipeline_ids(&engine, &args.detector, &args.classifier)?;
+    validate_pipeline_ids(engine, &args.detector, &args.classifier)?;
 
     // Pre-load detector to obtain its ModelType for viz dispatch (Phase 3.5
     // S3 / MT-9). Lazy + idempotent: a repeat call (e.g. same id for both
@@ -1859,7 +2069,7 @@ fn cmd_pipeline(
         let image = ImageInput::FilePath(file.clone());
 
         match engine_dispatch::pipeline::run_pipeline_adhoc(
-            &engine,
+            engine,
             &image,
             &args.detector,
             &args.classifier,
@@ -2012,77 +2222,84 @@ fn cmd_models(
     action: ModelsAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Verify does not need ORT — skip engine creation (design 3.2).
-    if let ModelsAction::Verify {
-        ref model_id,
-        write,
-    } = action
-    {
-        let dir = resolve_model_dir(model_dir);
-        let ids: Vec<String> = if let Some(ref id) = model_id {
-            vec![id.clone()]
-        } else {
-            engine_dispatch::catalog::list_available_models(&dir)
-                .iter()
-                .map(|m| m.id.clone())
-                .collect()
-        };
-        if write {
-            let mut had_error = false;
-            for id in &ids {
-                match engine_dispatch::catalog::write_checksum(&dir, id) {
-                    Ok((hash, size)) => {
-                        eprintln!("{id}: wrote sha256={hash}, size={size}");
-                    }
-                    Err(e) => {
-                        eprintln!("{id}: error: {e}");
-                        had_error = true;
-                    }
-                }
-            }
-            if had_error {
-                return Err("one or more models failed checksum write".into());
-            }
-        } else {
-            let mut had_failure = false;
-            for id in &ids {
-                match engine_dispatch::catalog::verify_model(&dir, id) {
-                    Ok(engine_dispatch::catalog::VerifyResult::Ok) => {
-                        println!("{id}: OK");
-                    }
-                    Ok(engine_dispatch::catalog::VerifyResult::NoChecksum) => {
-                        println!("{id}: no checksum (use --write to generate)");
-                    }
-                    Ok(engine_dispatch::catalog::VerifyResult::SizeMismatch {
-                        expected,
-                        actual,
-                    }) => {
-                        println!("{id}: FAIL size mismatch (expected={expected}, actual={actual})");
-                        had_failure = true;
-                    }
-                    Ok(engine_dispatch::catalog::VerifyResult::ChecksumMismatch {
-                        expected,
-                        actual,
-                    }) => {
-                        println!("{id}: FAIL checksum mismatch");
-                        println!("  expected: {expected}");
-                        println!("  actual:   {actual}");
-                        had_failure = true;
-                    }
-                    Err(e) => {
-                        println!("{id}: error: {e}");
-                        had_failure = true;
-                    }
-                }
-            }
-            if had_failure {
-                return Err("one or more models failed verification".into());
-            }
-        }
-        return Ok(());
+    if let ModelsAction::Verify { model_id, write } = action {
+        return cmd_models_verify(model_dir, model_id, write);
     }
 
     let engine = create_engine(device_str, model_dir)?;
+    cmd_models_with_engine(&engine, action)
+}
 
+fn cmd_models_verify(
+    model_dir: &Option<PathBuf>,
+    model_id: Option<String>,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = resolve_model_dir(model_dir);
+    let ids: Vec<String> = if let Some(id) = model_id {
+        vec![id]
+    } else {
+        engine_dispatch::catalog::list_available_models(&dir)
+            .iter()
+            .map(|m| m.id.clone())
+            .collect()
+    };
+    if write {
+        let mut had_error = false;
+        for id in &ids {
+            match engine_dispatch::catalog::write_checksum(&dir, id) {
+                Ok((hash, size)) => {
+                    eprintln!("{id}: wrote sha256={hash}, size={size}");
+                }
+                Err(e) => {
+                    eprintln!("{id}: error: {e}");
+                    had_error = true;
+                }
+            }
+        }
+        if had_error {
+            return Err("one or more models failed checksum write".into());
+        }
+    } else {
+        let mut had_failure = false;
+        for id in &ids {
+            match engine_dispatch::catalog::verify_model(&dir, id) {
+                Ok(engine_dispatch::catalog::VerifyResult::Ok) => {
+                    println!("{id}: OK");
+                }
+                Ok(engine_dispatch::catalog::VerifyResult::NoChecksum) => {
+                    println!("{id}: no checksum (use --write to generate)");
+                }
+                Ok(engine_dispatch::catalog::VerifyResult::SizeMismatch { expected, actual }) => {
+                    println!("{id}: FAIL size mismatch (expected={expected}, actual={actual})");
+                    had_failure = true;
+                }
+                Ok(engine_dispatch::catalog::VerifyResult::ChecksumMismatch {
+                    expected,
+                    actual,
+                }) => {
+                    println!("{id}: FAIL checksum mismatch");
+                    println!("  expected: {expected}");
+                    println!("  actual:   {actual}");
+                    had_failure = true;
+                }
+                Err(e) => {
+                    println!("{id}: error: {e}");
+                    had_failure = true;
+                }
+            }
+        }
+        if had_failure {
+            return Err("one or more models failed verification".into());
+        }
+    }
+    Ok(())
+}
+
+fn cmd_models_with_engine(
+    engine: &Engine,
+    action: ModelsAction,
+) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         ModelsAction::List => {
             let models = engine.list_available_models();
@@ -2131,6 +2348,9 @@ fn cmd_models(
             serde_json::to_writer(&mut out, &info)?;
             writeln!(out)?;
         }
+        ModelsAction::TrtState { model_id } => {
+            print_trt_state(engine.trt_state(&model_id));
+        }
         ModelsAction::Verify { .. } => unreachable!(),
     }
 
@@ -2146,6 +2366,10 @@ fn cmd_device(
     model_dir: &Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let engine = create_engine(device_str, model_dir)?;
+    cmd_device_with_engine(&engine)
+}
+
+fn cmd_device_with_engine(engine: &Engine) -> Result<(), Box<dyn std::error::Error>> {
     let output = DeviceOutput {
         device: engine.active_device().to_string(),
     };
@@ -2165,6 +2389,10 @@ fn cmd_init(
     model_dir: &Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let engine = create_engine(device_str, model_dir)?;
+    cmd_init_with_engine(&engine)
+}
+
+fn cmd_init_with_engine(engine: &Engine) -> Result<(), Box<dyn std::error::Error>> {
     let dir = engine.config().model_dir.display();
     eprintln!(
         "Engine initialized. device={}, model_dir={dir}",
@@ -2223,6 +2451,64 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+        }
+    }
+
+    fn trt_view(state: TrtState) -> TrtStateView {
+        TrtStateView {
+            state,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn trt_warmup_exit_code_mapping_matches_cli_contract() {
+        let cases: Vec<(engine_dispatch::Result<TrtStateView>, i32)> = vec![
+            (Ok(trt_view(TrtState::TrtReady)), 0),
+            (Ok(trt_view(TrtState::TrtError)), 4),
+            (Ok(trt_view(TrtState::NotLoaded)), 5),
+            (Ok(trt_view(TrtState::Unsupported)), 3),
+            (
+                Err(SparrowEngineError::TrtWarmupRejected(
+                    TrtWarmupRejection::HardwareUnsupportedSm("sm_70".to_string()),
+                )),
+                3,
+            ),
+            (
+                Err(SparrowEngineError::TrtWarmupRejected(
+                    TrtWarmupRejection::TrtRuntimeMissing("libnvinfer".to_string()),
+                )),
+                3,
+            ),
+            (
+                Err(SparrowEngineError::TrtWarmupRejected(
+                    TrtWarmupRejection::CpuBuild,
+                )),
+                3,
+            ),
+            (
+                Err(SparrowEngineError::TrtWarmupRejected(
+                    TrtWarmupRejection::NotEligible("mode off".to_string()),
+                )),
+                6,
+            ),
+            (
+                Err(SparrowEngineError::TrtWarmupRejected(
+                    TrtWarmupRejection::Disabled,
+                )),
+                6,
+            ),
+            (
+                Err(SparrowEngineError::ManifestNotFound(PathBuf::from(
+                    "/models/missing/manifest.toml",
+                ))),
+                5,
+            ),
+            (Err(SparrowEngineError::Ort("build failed".to_string())), 4),
+        ];
+
+        for (result, expected_code) in cases {
+            assert_eq!(trt_warmup_result_exit_code(&result), expected_code);
         }
     }
 
