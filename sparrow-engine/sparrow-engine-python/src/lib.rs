@@ -63,9 +63,70 @@ pyo3::create_exception!(
     SparrowEngineError,
     pyo3::exceptions::PyException
 );
+pyo3::create_exception!(
+    _sparrow_engine_core,
+    TrtUnsupportedHardware,
+    SparrowEngineError
+);
 
 fn to_pyerr(e: sparrow_engine::SparrowEngineError) -> PyErr {
-    SparrowEngineError::new_err(format!("{e}"))
+    match e {
+        sparrow_engine::SparrowEngineError::TrtWarmupRejected(rejection) => {
+            let msg = format!(
+                "TensorRT warm-up rejected ({}): {rejection}",
+                rejection.reason()
+            );
+            match rejection {
+                sparrow_engine::TrtWarmupRejection::HardwareUnsupportedSm(_)
+                | sparrow_engine::TrtWarmupRejection::TrtRuntimeMissing(_)
+                | sparrow_engine::TrtWarmupRejection::CpuBuild => {
+                    TrtUnsupportedHardware::new_err(msg)
+                }
+                sparrow_engine::TrtWarmupRejection::NotEligible(_)
+                | sparrow_engine::TrtWarmupRejection::Disabled => {
+                    // The request is invalid for this model/configuration rather than
+                    // a Python runtime failure or missing hardware dependency.
+                    pyo3::exceptions::PyValueError::new_err(msg)
+                }
+            }
+        }
+        other => SparrowEngineError::new_err(format!("{other}")),
+    }
+}
+
+fn trt_state_name(state: sparrow_engine::TrtState) -> &'static str {
+    match state {
+        sparrow_engine::TrtState::NotLoaded => "not_loaded",
+        sparrow_engine::TrtState::CudaReady => "cuda_ready",
+        sparrow_engine::TrtState::TrtWarming => "trt_warming",
+        sparrow_engine::TrtState::TrtReady => "trt_ready",
+        sparrow_engine::TrtState::TrtError => "trt_error",
+        sparrow_engine::TrtState::Unsupported => "unsupported",
+        _ => "unknown",
+    }
+}
+
+fn trt_state_view_to_dict(
+    py: Python<'_>,
+    view: sparrow_engine::TrtStateView,
+) -> PyResult<PyObject> {
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("state", trt_state_name(view.state))?;
+    dict.set_item("detail", view.detail)?;
+    Ok(dict.into())
+}
+
+fn warmup_outcome_to_dict(
+    py: Python<'_>,
+    outcome: sparrow_engine::WarmupOutcome,
+) -> PyResult<PyObject> {
+    let dict = pyo3::types::PyDict::new(py);
+    let outcome = match outcome {
+        sparrow_engine::WarmupOutcome::Started => "started",
+        sparrow_engine::WarmupOutcome::AlreadyReady => "already_ready",
+    };
+    dict.set_item("outcome", outcome)?;
+    Ok(dict.into())
 }
 
 fn validate_pipeline_ids(
@@ -728,6 +789,36 @@ impl PyEngine {
         let config = EngineConfig::new(dev, PathBuf::from(model_dir));
         let engine = Engine::new(config).map_err(to_pyerr)?;
         Ok(Self { engine })
+    }
+
+    /// Load a model by ID, optionally blocking until its TensorRT engine is built.
+    #[pyo3(signature = (id, trt_warmup=false))]
+    fn load_model(&self, py: Python<'_>, id: &str, trt_warmup: bool) -> PyResult<()> {
+        py.allow_threads(|| {
+            self.engine.load_model_by_id(id).map_err(to_pyerr)?;
+            if trt_warmup {
+                self.engine.trt_warmup_blocking(id).map_err(to_pyerr)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Build or start building the TensorRT engine for a loaded model.
+    #[pyo3(signature = (id, wait=true))]
+    fn trt_warmup(&self, py: Python<'_>, id: &str, wait: bool) -> PyResult<PyObject> {
+        if wait {
+            let view =
+                py.allow_threads(|| self.engine.trt_warmup_blocking(id).map_err(to_pyerr))?;
+            trt_state_view_to_dict(py, view)
+        } else {
+            let outcome = py.allow_threads(|| self.engine.trt_warmup(id).map_err(to_pyerr))?;
+            warmup_outcome_to_dict(py, outcome)
+        }
+    }
+
+    /// Return the current TensorRT warm-up state for a model.
+    fn trt_state(&self, py: Python<'_>, id: &str) -> PyResult<PyObject> {
+        trt_state_view_to_dict(py, self.engine.trt_state(id))
     }
 
     /// Run object detection on a list of image paths.
@@ -1707,6 +1798,10 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "SparrowEngineError",
         m.py().get_type::<SparrowEngineError>(),
+    )?;
+    m.add(
+        "TrtUnsupportedHardware",
+        m.py().get_type::<TrtUnsupportedHardware>(),
     )?;
 
     // Engine
