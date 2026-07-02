@@ -1,5 +1,6 @@
 //! TensorRT execution-provider policy helpers.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use ort::ep::cuda::ConvAlgorithmSearch;
 use ort::ep::ExecutionProviderDispatch;
 use serde::Serialize;
 use sparrow_engine_types::error::{Result, SparrowEngineError};
-use sparrow_engine_types::manifest::{TrtConfig, TrtPrecision};
+use sparrow_engine_types::manifest::{TrtConfig, TrtMode, TrtPrecision};
 
 use crate::trt::cache::{
     cache_file_stale, hex_sha256, prepare_trt_cache_dir, trt_cache_dir, trt_cache_key,
@@ -18,6 +19,34 @@ use crate::trt::cache::{
 
 const CUDA_VERSION_FOR_CACHE: &str = "cuda-12080";
 const ORT_VERSION_FOR_CACHE: &str = "ort-2.0.0-rc.12-api-24";
+
+thread_local! {
+    static TRT_WARMUP_BUILD_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static TRT_FORCED_CONFIG: std::cell::RefCell<Option<TrtConfig>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn with_trt_warmup_build<T>(trt: Option<TrtConfig>, f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TRT_WARMUP_BUILD_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+            TRT_FORCED_CONFIG.with(|config| {
+                *config.borrow_mut() = None;
+            });
+        }
+    }
+
+    TRT_WARMUP_BUILD_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    TRT_FORCED_CONFIG.with(|config| {
+        *config.borrow_mut() = trt;
+    });
+    let _reset = Reset;
+    f()
+}
+
+fn trt_warmup_build_active() -> bool {
+    TRT_WARMUP_BUILD_DEPTH.with(|depth| depth.get() > 0)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GpuIdentity {
@@ -123,18 +152,33 @@ impl<'a> TrtEpBuilder<'a> {
     }
 
     pub(crate) fn execution_providers(&self) -> Result<Vec<ExecutionProviderDispatch>> {
+        let warmup_build = trt_warmup_build_active();
+        let forced_trt = if warmup_build {
+            TRT_FORCED_CONFIG.with(|config| config.borrow().clone())
+        } else {
+            None
+        };
+        let effective_trt = self.trt.or(forced_trt.as_ref());
         let env_disabled =
             trt_disabled_env_is_set(std::env::var("SPARROW_ENGINE_TRT_DISABLE").ok().as_deref());
-        let libs_probe = find_tensorrt_runtime();
-        let plan = decide_trt_provider_order(
-            self.trt,
-            self.gpu.sm_major,
-            self.gpu.sm_minor,
-            env_disabled,
-            libs_probe.present,
-            self.model_id,
-            &self.gpu.name,
-        )?;
+        let libs_probe = if warmup_build {
+            Some(find_tensorrt_runtime())
+        } else {
+            None
+        };
+        let plan = if warmup_build {
+            decide_trt_provider_order(
+                effective_trt,
+                self.gpu.sm_major,
+                self.gpu.sm_minor,
+                env_disabled,
+                libs_probe.as_ref().is_some_and(|probe| probe.present),
+                self.model_id,
+                &self.gpu.name,
+            )?
+        } else {
+            serving_provider_order(effective_trt, self.model_id)
+        };
 
         let mut trt_cache_dir = None;
         match plan.decision {
@@ -153,7 +197,10 @@ impl<'a> TrtEpBuilder<'a> {
                 tracing::info!(model_id = self.model_id, "TRT not opted in by manifest");
             }
             TrtPolicyDecision::TensorRtEnabled => {
-                let config = self.trt.expect("TensorRT plan requires config");
+                let config = effective_trt.expect("TensorRT plan requires config");
+                let libs_probe = libs_probe
+                    .as_ref()
+                    .expect("TensorRT warm-up plan requires library probe");
                 let cache_dir = self.cache_dir(config, libs_probe.version.as_deref())?;
                 tracing::info!(
                     model_id = self.model_id,
@@ -162,7 +209,7 @@ impl<'a> TrtEpBuilder<'a> {
                     engine_hw_compatible = config.engine_hw_compatible,
                     cache_dir = %cache_dir.display(),
                     fallback = "CUDA→CPU",
-                    "TRT EP registered"
+                    "TRT EP registered for explicit warm-up build"
                 );
                 trt_cache_dir = Some(cache_dir);
             }
@@ -172,7 +219,7 @@ impl<'a> TrtEpBuilder<'a> {
         for provider in plan.providers {
             match provider {
                 TrtProviderKind::TensorRt => {
-                    let config = self.trt.expect("TensorRT provider requires config");
+                    let config = effective_trt.expect("TensorRT provider requires config");
                     let cache_dir = trt_cache_dir
                         .as_ref()
                         .expect("TensorRT cache dir computed for TensorRT provider");
@@ -289,6 +336,19 @@ pub(crate) fn trt_disabled_env_is_set(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.trim().is_empty())
 }
 
+fn serving_provider_order(trt: Option<&TrtConfig>, model_id: &str) -> TrtProviderPlan {
+    if trt.is_some_and(|config| config.effective_mode() != TrtMode::Off) {
+        tracing::info!(
+            model_id,
+            "TRT eligible manifest loaded on CUDA EP; explicit warm-up is required to build/register TensorRT"
+        );
+    }
+    TrtProviderPlan {
+        decision: TrtPolicyDecision::NotOptedIn,
+        providers: vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu],
+    }
+}
+
 pub(crate) fn decide_trt_provider_order(
     trt: Option<&TrtConfig>,
     sm_major: i32,
@@ -310,7 +370,7 @@ pub(crate) fn decide_trt_provider_order(
             providers: vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu],
         });
     }
-    let Some(_config) = trt.filter(|config| config.enabled) else {
+    let Some(_config) = trt.filter(|config| config.effective_mode() != TrtMode::Off) else {
         return Ok(TrtProviderPlan {
             decision: TrtPolicyDecision::NotOptedIn,
             providers: vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu],
@@ -353,12 +413,12 @@ fn format_profile_shapes(shapes: Option<&BTreeMap<String, Vec<i64>>>) -> Option<
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TrtLibProbe {
-    present: bool,
-    version: Option<String>,
+pub(crate) struct TrtLibProbe {
+    pub(crate) present: bool,
+    pub(crate) version: Option<String>,
 }
 
-fn find_tensorrt_runtime() -> TrtLibProbe {
+pub(crate) fn find_tensorrt_runtime() -> TrtLibProbe {
     let mut dirs: Vec<PathBuf> = std::env::var_os("LD_LIBRARY_PATH")
         .map(|paths| std::env::split_paths(&paths).collect())
         .unwrap_or_default();
@@ -451,6 +511,7 @@ mod tests {
     fn enabled_trt() -> TrtConfig {
         TrtConfig {
             enabled: true,
+            mode: None,
             precision: TrtPrecision::Fp16,
             builder_optimization_level: 3,
             engine_hw_compatible: false,
@@ -458,6 +519,16 @@ mod tests {
             profile_opt: None,
             profile_max: None,
         }
+    }
+
+    #[test]
+    fn serving_provider_order_ignores_trt_runtime_concerns() {
+        let plan = serving_provider_order(Some(&enabled_trt()), "model-a");
+        assert_eq!(plan.decision, TrtPolicyDecision::NotOptedIn);
+        assert_eq!(
+            plan.providers,
+            vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu]
+        );
     }
 
     #[test]
