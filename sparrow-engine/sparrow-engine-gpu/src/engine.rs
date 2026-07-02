@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cudarc::driver::CudaContext;
@@ -356,6 +356,15 @@ fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
         "TensorRT warm-up build panicked".to_string()
     }
 }
+fn recover_trt_build_gate(build_gate: &Mutex<()>) -> MutexGuard<'_, ()> {
+    match build_gate.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("trt_build_gate was poisoned; recovering because it guards no data");
+            poisoned.into_inner()
+        }
+    }
+}
 
 fn run_trt_warmup_build(
     engine_inner: Arc<EngineInner>,
@@ -364,10 +373,8 @@ fn run_trt_warmup_build(
     model_id: String,
     expected: Arc<LoadedModel>,
 ) {
+    let _gate = recover_trt_build_gate(&build_gate);
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<LoadedModelInner> {
-        let _gate = build_gate
-            .lock()
-            .map_err(|_| SparrowEngineError::Ort("trt_build_gate poisoned".into()))?;
         let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
         crate::trt::ep::with_trt_warmup_build(expected.manifest.trt.clone(), || {
             build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
@@ -414,6 +421,7 @@ fn run_trt_warmup_build(
         return;
     }
 
+    touch_last_used(&expected.last_used);
     let warmed = Arc::new(LoadedModel {
         manifest: Arc::clone(&expected.manifest),
         labels: Arc::clone(&expected.labels),
@@ -807,11 +815,9 @@ impl Engine {
                     }) {
                     Ok(_thread) => Ok(WarmupOutcome::Started),
                     Err(err) => {
-                        handle
-                            .inner
-                            .warm
-                            .mark_error(format!("failed to spawn TensorRT warm-up thread: {err}"));
-                        Ok(WarmupOutcome::Started)
+                        let detail = format!("failed to spawn TensorRT warm-up thread: {err}");
+                        handle.inner.warm.mark_error(detail.clone());
+                        Err(SparrowEngineError::Ort(detail))
                     }
                 }
             }
@@ -1311,6 +1317,20 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(rejection, TrtWarmupRejection::NotEligible(_)));
+    }
+
+    #[test]
+    fn trt_build_gate_recovers_after_poison() {
+        let gate = std::sync::Arc::new(std::sync::Mutex::new(()));
+        let worker_gate = std::sync::Arc::clone(&gate);
+        let _ = std::thread::spawn(move || {
+            let _guard = worker_gate.lock().unwrap();
+            panic!("poison gate for test");
+        })
+        .join();
+
+        assert!(gate.is_poisoned());
+        let _guard = recover_trt_build_gate(&gate);
     }
 
     #[test]

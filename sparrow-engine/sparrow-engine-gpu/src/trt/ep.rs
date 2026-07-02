@@ -9,7 +9,7 @@ use cudarc::driver::CudaContext;
 use ort::ep::cuda::ConvAlgorithmSearch;
 use ort::ep::ExecutionProviderDispatch;
 use serde::Serialize;
-use sparrow_engine_types::error::{Result, SparrowEngineError};
+use sparrow_engine_types::error::{Result, SparrowEngineError, TrtWarmupRejection};
 use sparrow_engine_types::manifest::{TrtConfig, TrtMode, TrtPrecision};
 
 use crate::trt::cache::{
@@ -96,6 +96,42 @@ pub(crate) struct TrtProviderPlan {
     pub(crate) providers: Vec<TrtProviderKind>,
 }
 
+fn warmup_plan_error(
+    plan: &TrtProviderPlan,
+    model_id: &str,
+    sm_major: i32,
+    sm_minor: i32,
+) -> Option<SparrowEngineError> {
+    if plan.decision == TrtPolicyDecision::TensorRtEnabled
+        && plan
+            .providers
+            .iter()
+            .any(|provider| matches!(provider, TrtProviderKind::TensorRt))
+    {
+        return None;
+    }
+
+    let error = match plan.decision {
+        TrtPolicyDecision::EnvDisabled => {
+            SparrowEngineError::TrtWarmupRejected(TrtWarmupRejection::Disabled)
+        }
+        TrtPolicyDecision::UnsupportedSm => {
+            SparrowEngineError::TrtWarmupRejected(TrtWarmupRejection::HardwareUnsupportedSm(
+                format!("SM {sm_major}.{sm_minor} is below TensorRT warm-up minimum SM 7.5"),
+            ))
+        }
+        TrtPolicyDecision::NotOptedIn => {
+            SparrowEngineError::TrtWarmupRejected(TrtWarmupRejection::NotEligible(format!(
+                "model '{model_id}' does not enable [inference.trt] warm-up"
+            )))
+        }
+        TrtPolicyDecision::TensorRtEnabled => SparrowEngineError::Ort(
+            "TensorRT warm-up provider plan did not include the TensorRT EP".to_string(),
+        ),
+    };
+    Some(error)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct CudaEpConfig {
     pub(crate) device_id: i32,
@@ -179,6 +215,14 @@ impl<'a> TrtEpBuilder<'a> {
         } else {
             serving_provider_order(effective_trt, self.model_id)
         };
+
+        if warmup_build {
+            if let Some(error) =
+                warmup_plan_error(&plan, self.model_id, self.gpu.sm_major, self.gpu.sm_minor)
+            {
+                return Err(error);
+            }
+        }
 
         let mut trt_cache_dir = None;
         match plan.decision {
@@ -519,6 +563,32 @@ mod tests {
             profile_opt: None,
             profile_max: None,
         }
+    }
+
+    #[test]
+    fn warmup_plan_error_rejects_cuda_only_env_disabled_plan() {
+        let plan = TrtProviderPlan {
+            decision: TrtPolicyDecision::EnvDisabled,
+            providers: vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu],
+        };
+        let error = warmup_plan_error(&plan, "model-a", 8, 9).unwrap();
+        assert!(matches!(
+            error,
+            SparrowEngineError::TrtWarmupRejected(TrtWarmupRejection::Disabled)
+        ));
+    }
+
+    #[test]
+    fn warmup_plan_error_accepts_tensor_rt_plan() {
+        let plan = TrtProviderPlan {
+            decision: TrtPolicyDecision::TensorRtEnabled,
+            providers: vec![
+                TrtProviderKind::TensorRt,
+                TrtProviderKind::Cuda,
+                TrtProviderKind::Cpu,
+            ],
+        };
+        assert!(warmup_plan_error(&plan, "model-a", 8, 9).is_none());
     }
 
     #[test]
