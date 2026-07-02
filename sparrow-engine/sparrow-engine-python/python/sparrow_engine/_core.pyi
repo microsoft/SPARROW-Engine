@@ -1,11 +1,27 @@
 """Type stubs for sparrow_engine._sparrow_engine_core native module."""
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional, TypedDict
 
 # Per-file progress callback: (index_0_based, total, filename) -> None.
 # Invoked after each file's inference attempt resolves. See `detect` etc.
 _ProgressCallback = Callable[[int, int, str], None]
 
 class SparrowEngineError(Exception): ...
+class TrtUnsupportedHardware(SparrowEngineError): ...
+
+class TrtStateInfo(TypedDict):
+    state: Literal[
+        "not_loaded",
+        "cuda_ready",
+        "trt_warming",
+        "trt_ready",
+        "trt_error",
+        "unsupported",
+        "unknown",
+    ]
+    detail: Optional[str]
+
+class TrtWarmupOutcome(TypedDict):
+    outcome: Literal["started", "already_ready"]
 
 class BBox:
     x_min: float
@@ -89,6 +105,17 @@ class ModelInfo:
 
 class PyEngine:
     def __init__(self, device: str, model_dir: str) -> None: ...
+    def load_model(
+        self,
+        id: str,
+        trt_warmup: bool = False,
+    ) -> None: ...
+    def trt_warmup(
+        self,
+        id: str,
+        wait: bool = True,
+    ) -> TrtStateInfo | TrtWarmupOutcome: ...
+    def trt_state(self, id: str) -> TrtStateInfo: ...
     def detect(
         self,
         paths: list[str],
