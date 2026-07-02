@@ -2619,7 +2619,6 @@ version = "0.1.17"
 dependencies = [
  "cbindgen",
  "csbindgen",
- "fast_image_resize",
  "image",
  "log",
  "ndarray",
