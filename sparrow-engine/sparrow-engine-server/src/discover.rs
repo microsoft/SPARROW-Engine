@@ -4,12 +4,46 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine_dispatch::manifest::{self, PipelineManifest, PipelineRole};
-use crate::engine_dispatch::{derive_model_type, ModelInfo};
+use crate::engine_dispatch::{derive_model_type, ModelInfo, TrtMode};
 
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
     pub models: BTreeMap<String, ModelInfo>,
+    #[cfg(not(test))]
+    pub trt_modes: BTreeMap<String, TrtMode>,
     pub pipelines: BTreeMap<String, CatalogPipeline>,
+}
+
+impl Catalog {
+    pub fn trt_mode(&self, model_id: &str) -> TrtMode {
+        #[cfg(not(test))]
+        {
+            self.trt_modes
+                .get(model_id)
+                .copied()
+                .unwrap_or(TrtMode::Off)
+        }
+        #[cfg(test)]
+        {
+            let _ = model_id;
+            TrtMode::Off
+        }
+    }
+
+    pub fn trt_always_ids(&self) -> Vec<String> {
+        #[cfg(not(test))]
+        {
+            self.trt_modes
+                .iter()
+                .filter(|(_, mode)| **mode == TrtMode::Always)
+                .map(|(id, _)| id.clone())
+                .collect()
+        }
+        #[cfg(test)]
+        {
+            Vec::new()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +101,15 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                 // duplicate-on-insert is unreachable from sibling directories.
                 let model_type =
                     derive_model_type(&m.preprocess_method, &m.postprocess_method, m.subtype);
+                let trt_mode = m
+                    .trt
+                    .as_ref()
+                    .map(|trt| trt.effective_mode())
+                    .unwrap_or(TrtMode::Off);
+                #[cfg(not(test))]
+                catalog.trt_modes.insert(id.clone(), trt_mode);
+                #[cfg(test)]
+                let _ = trt_mode;
                 catalog.models.insert(
                     id.clone(),
                     ModelInfo {

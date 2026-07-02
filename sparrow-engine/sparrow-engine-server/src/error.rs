@@ -4,7 +4,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-use crate::engine_dispatch::SparrowEngineError;
+use crate::engine_dispatch::{SparrowEngineError, TrtWarmupRejection};
 
 /// Unified error type for handlers.
 pub enum AppError {
@@ -95,6 +95,10 @@ impl IntoResponse for AppError {
 
 fn bongo_into_response(e: SparrowEngineError) -> Response {
     use SparrowEngineError::*;
+    if let TrtWarmupRejected(rejection) = &e {
+        let (status, code) = trt_warmup_rejection_status_code(rejection);
+        return error_json_with_reason(status, code, &e.to_string(), rejection.reason());
+    }
     let (status, code) = match &e {
         // Engine lifecycle
         EngineAlreadyExists => (StatusCode::INTERNAL_SERVER_ERROR, "ENGINE_ALREADY_EXISTS"),
@@ -138,6 +142,7 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         NvjpegUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "NVJPEG_UNAVAILABLE"),
         // Required runtime is missing, so the service cannot serve this model yet.
         TrtRuntimeMissing(_) => (StatusCode::SERVICE_UNAVAILABLE, "TRT_RUNTIME_UNAVAILABLE"),
+        TrtWarmupRejected(_) => unreachable!("handled before the shared error map"),
         // ORT / IO
         Ort(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INFERENCE_ERROR"),
         Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
@@ -147,12 +152,36 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
     error_json(status, code, &e.to_string())
 }
 
+fn trt_warmup_rejection_status_code(rejection: &TrtWarmupRejection) -> (StatusCode, &str) {
+    match rejection {
+        TrtWarmupRejection::HardwareUnsupportedSm(_)
+        | TrtWarmupRejection::TrtRuntimeMissing(_)
+        | TrtWarmupRejection::CpuBuild => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "TRT_UNSUPPORTED_HARDWARE")
+        }
+        TrtWarmupRejection::NotEligible(_) => (StatusCode::CONFLICT, "TRT_NOT_ELIGIBLE"),
+        TrtWarmupRejection::Disabled => (StatusCode::CONFLICT, "TRT_DISABLED"),
+    }
+}
+
 fn error_json(status: StatusCode, code: &str, message: &str) -> Response {
     let body = json!({
         "error": {
             "code": code,
             "message": message,
             "status": status.as_u16(),
+        }
+    });
+    (status, Json(body)).into_response()
+}
+
+fn error_json_with_reason(status: StatusCode, code: &str, message: &str, reason: &str) -> Response {
+    let body = json!({
+        "error": {
+            "code": code,
+            "message": message,
+            "status": status.as_u16(),
+            "reason": reason,
         }
     });
     (status, Json(body)).into_response()
@@ -195,6 +224,53 @@ mod tests {
         let body = error_body(response).await;
         assert_eq!(body["error"]["status"], 503);
         assert_eq!(body["error"]["code"], "TRT_RUNTIME_UNAVAILABLE");
+        assert!(body["error"].get("reason").is_none());
+    }
+
+    #[tokio::test]
+    async fn trt_warmup_rejections_include_status_code_and_reason() {
+        let cases = [
+            (
+                TrtWarmupRejection::HardwareUnsupportedSm("SM 7.0".to_string()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "TRT_UNSUPPORTED_HARDWARE",
+                "hardware_unsupported_sm",
+            ),
+            (
+                TrtWarmupRejection::TrtRuntimeMissing("libnvinfer missing".to_string()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "TRT_UNSUPPORTED_HARDWARE",
+                "trt_runtime_missing",
+            ),
+            (
+                TrtWarmupRejection::CpuBuild,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "TRT_UNSUPPORTED_HARDWARE",
+                "cpu_build",
+            ),
+            (
+                TrtWarmupRejection::NotEligible("mode off".to_string()),
+                StatusCode::CONFLICT,
+                "TRT_NOT_ELIGIBLE",
+                "trt_not_eligible",
+            ),
+            (
+                TrtWarmupRejection::Disabled,
+                StatusCode::CONFLICT,
+                "TRT_DISABLED",
+                "trt_disabled",
+            ),
+        ];
+
+        for (rejection, status, code, reason) in cases {
+            let response =
+                AppError::from(SparrowEngineError::TrtWarmupRejected(rejection)).into_response();
+            assert_eq!(response.status(), status);
+            let body = error_body(response).await;
+            assert_eq!(body["error"]["status"], status.as_u16());
+            assert_eq!(body["error"]["code"], code);
+            assert_eq!(body["error"]["reason"], reason);
+        }
     }
 
     async fn error_body(response: Response) -> serde_json::Value {

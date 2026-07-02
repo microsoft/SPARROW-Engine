@@ -1,12 +1,13 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
+use clap::Parser;
 use sparrow_engine_server::cli::{Cli, Command};
 use sparrow_engine_server::config::{Config, LogFormat};
-use sparrow_engine_server::discover::{discover_catalog, parse_preload_ids};
+use sparrow_engine_server::discover::{discover_catalog, parse_preload_ids, Catalog};
 use sparrow_engine_server::engine_dispatch::{Device, Engine, EngineConfig};
 use sparrow_engine_server::router;
 use sparrow_engine_server::state::AppState;
-use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
@@ -147,6 +148,16 @@ async fn run_server() {
     };
     info!("listening on {}", config.bind_addr);
 
+    let trt_warmup_raw = std::env::var("SPARROW_ENGINE_TRT_WARMUP").ok();
+    let trt_warmup_ids = match trt_warmup_ids_from_env(trt_warmup_raw.as_deref(), &state.catalog) {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!(error = %e, "invalid SPARROW_ENGINE_TRT_WARMUP");
+            std::process::exit(1);
+        }
+    };
+    spawn_trt_warmups(&state, trt_warmup_ids);
+
     let drain_timeout = Duration::from_secs(config.drain_timeout_secs);
 
     let server = axum::serve(listener, app).with_graceful_shutdown({
@@ -225,6 +236,32 @@ fn spawn_idle_unload_reaper(
                         break;
                     }
                 }
+            }
+        }
+    });
+}
+
+fn trt_warmup_ids_from_env(raw: Option<&str>, catalog: &Catalog) -> Result<Vec<String>, String> {
+    let mut ids: BTreeSet<String> = parse_preload_ids(raw, catalog)?.into_iter().collect();
+    ids.extend(catalog.trt_always_ids());
+    Ok(ids.into_iter().collect())
+}
+
+fn spawn_trt_warmups(state: &AppState, ids: Vec<String>) {
+    if ids.is_empty() {
+        return;
+    }
+    let engine = state.engine.clone();
+    tokio::spawn(async move {
+        for model_id in ids {
+            let engine = engine.clone();
+            let id_for_log = model_id.clone();
+            match tokio::task::spawn_blocking(move || engine.trt_warmup(&model_id)).await {
+                Ok(Ok(_)) => info!(model_id = %id_for_log, "started TensorRT warm-up"),
+                Ok(Err(e)) => {
+                    warn!(model_id = %id_for_log, error = %e, "TensorRT warm-up was not started")
+                }
+                Err(e) => warn!(model_id = %id_for_log, error = %e, "TensorRT warm-up task failed"),
             }
         }
     });
@@ -316,4 +353,3 @@ fn run_healthcheck(config: &Config) -> i32 {
         Err(_) => 1,
     }
 }
-

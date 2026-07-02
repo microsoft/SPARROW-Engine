@@ -3,9 +3,11 @@
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Json, Path, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
-use crate::engine_dispatch::{ModelInfo, ModelType};
+use crate::engine_dispatch::{ModelInfo, ModelType, WarmupOutcome};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -130,10 +132,53 @@ pub async fn unload_model(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// POST /v1/models/{model_id}/trt-warmup — kick an explicit TensorRT warm-up.
+pub async fn trt_warmup(
+    State(state): State<AppState>,
+    Path(model_id): Path<String>,
+) -> Result<Response, AppError> {
+    let engine = state.engine.clone();
+    let outcome = super::run_blocking({
+        let id = model_id.clone();
+        move || engine.trt_warmup(&id)
+    })
+    .await?;
+
+    let response = match outcome {
+        WarmupOutcome::Started => (
+            StatusCode::ACCEPTED,
+            [("Retry-After", "3")],
+            Json(json!({
+                "trt_state": "trt_warming",
+                "poll": {
+                    "method": "GET",
+                    "path": "/v1/catalog",
+                },
+            })),
+        )
+            .into_response(),
+        WarmupOutcome::AlreadyReady => Json(json!({
+            "trt_state": "trt_ready",
+        }))
+        .into_response(),
+    };
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Method, Request};
+    use serde_json::Value;
+    use std::fs;
+    use std::net::SocketAddr;
+    use std::path::{Path, PathBuf};
+    use tower::Service;
+
+    use crate::config::{Config, LogFormat};
+    use crate::discover::discover_catalog;
+    use crate::engine_dispatch::{Device, Engine, EngineConfig};
 
     // Regression (SRV1): ModelResponse must surface the Phase 3 fields so HTTP
     // clients can read version / description / onnx_sha256 / onnx_size_bytes /
@@ -163,6 +208,31 @@ mod tests {
         assert_eq!(json["onnx_size_bytes"], 104857600);
     }
 
+    #[tokio::test]
+    async fn zzz_trt_warmup_endpoint_maps_cpu_build_and_unknown_model() {
+        let model_dir = unique_model_dir("trt_warmup_endpoint");
+        write_detector_manifest(&model_dir, "known");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let engine = new_test_engine(model_dir.clone());
+        let state = AppState::with_catalog(
+            engine,
+            test_config(model_dir.clone()),
+            discover_catalog(&model_dir),
+        );
+        let mut app = crate::router::build_router(state);
+
+        let known = request(&mut app, Method::POST, "/v1/models/known/trt-warmup").await;
+        assert_eq!(known.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = response_json(known).await;
+        assert_eq!(body["error"]["code"], "TRT_UNSUPPORTED_HARDWARE");
+        assert_eq!(body["error"]["reason"], "cpu_build");
+
+        let unknown = request(&mut app, Method::POST, "/v1/models/missing/trt-warmup").await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let body = response_json(unknown).await;
+        assert_eq!(body["error"]["code"], "MANIFEST_NOT_FOUND");
+    }
+
     #[test]
     fn model_response_skips_missing_optional_fields() {
         let info = ModelInfo {
@@ -189,5 +259,105 @@ mod tests {
         assert!(!obj.contains_key("description"));
         assert!(!obj.contains_key("onnx_sha256"));
         assert!(!obj.contains_key("onnx_size_bytes"));
+    }
+
+    fn unique_model_dir(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("trt_warmup_model_tests")
+            .join(format!("{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_detector_manifest(model_root: &Path, id: &str) {
+        let model_dir = model_root.join(id);
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(
+            model_dir.join("manifest.toml"),
+            format!(
+                r#"[model]
+id = "{id}"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[inference.trt]
+mode = "on_demand"
+
+[postprocessing]
+method = "yolo_e2e"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn new_test_engine(model_dir: PathBuf) -> Engine {
+        let config = EngineConfig::new(Device::Cpu, model_dir);
+        let mut last_err = None;
+        for _ in 0..100 {
+            match Engine::new(config.clone()) {
+                Ok(engine) => return engine,
+                Err(e) => {
+                    last_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+        panic!("test engine unavailable: {:?}", last_err);
+    }
+
+    fn test_config(model_dir: PathBuf) -> Config {
+        Config {
+            bind_addr: "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+            model_dir,
+            log_format: LogFormat::Pretty,
+            log_level: "debug".to_string(),
+            max_body_size: 1024 * 1024,
+            max_concurrent_inference: 1,
+            max_batch_size: 4,
+            request_timeout_secs: 30,
+            drain_timeout_secs: 1,
+            device: "cpu".to_string(),
+            inter_threads: Some(1),
+            intra_threads: Some(1),
+            idle_unload_seconds: 0,
+            idle_unload_keep_last_n: 1,
+        }
+    }
+
+    async fn request(
+        app: &mut axum::Router,
+        method: Method,
+        uri: &str,
+    ) -> axum::response::Response {
+        app.call(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn response_json(response: Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 }
