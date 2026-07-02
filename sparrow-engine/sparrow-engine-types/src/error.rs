@@ -1,8 +1,48 @@
 //! Error types for the sparrow-engine workspace.
 
+use std::fmt;
 use std::path::PathBuf;
 
 use crate::types::ModelType;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrtWarmupRejection {
+    HardwareUnsupportedSm(String),
+    TrtRuntimeMissing(String),
+    CpuBuild,
+    NotEligible(String),
+    Disabled,
+}
+
+impl TrtWarmupRejection {
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::HardwareUnsupportedSm(_) => "hardware_unsupported_sm",
+            Self::TrtRuntimeMissing(_) => "trt_runtime_missing",
+            Self::CpuBuild => "cpu_build",
+            Self::NotEligible(_) => "trt_not_eligible",
+            Self::Disabled => "trt_disabled",
+        }
+    }
+}
+
+impl fmt::Display for TrtWarmupRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HardwareUnsupportedSm(msg) => {
+                write!(f, "hardware does not support TensorRT warm-up: {msg}")
+            }
+            Self::TrtRuntimeMissing(msg) => {
+                write!(f, "TensorRT runtime is unavailable for warm-up: {msg}")
+            }
+            Self::CpuBuild => write!(f, "TensorRT warm-up is unavailable in the CPU build"),
+            Self::NotEligible(msg) => {
+                write!(f, "model is not eligible for TensorRT warm-up: {msg}")
+            }
+            Self::Disabled => write!(f, "TensorRT warm-up is disabled"),
+        }
+    }
+}
 
 /// All errors produced by sparrow-engine.
 #[derive(Debug, thiserror::Error)]
@@ -120,6 +160,9 @@ pub enum SparrowEngineError {
     // -- TensorRT runtime deps (GPU flavor) --
     #[error("{0}")]
     TrtRuntimeMissing(String),
+
+    #[error("{0}")]
+    TrtWarmupRejected(TrtWarmupRejection),
 
     // -- ORT --
     #[error("ONNX Runtime error: {0}")]
@@ -241,6 +284,34 @@ mod phase_a_r1_error_tests {
         );
         let debug = format!("{e:?}");
         assert!(debug.contains("EmptyPipeline"), "unexpected Debug: {debug}");
+    }
+
+    #[test]
+    fn trt_warmup_rejection_reason_strings_are_stable() {
+        let cases = [
+            (
+                TrtWarmupRejection::HardwareUnsupportedSm("sm_70".to_string()),
+                "hardware_unsupported_sm",
+            ),
+            (
+                TrtWarmupRejection::TrtRuntimeMissing("libnvinfer.so missing".to_string()),
+                "trt_runtime_missing",
+            ),
+            (TrtWarmupRejection::CpuBuild, "cpu_build"),
+            (
+                TrtWarmupRejection::NotEligible("mode is off".to_string()),
+                "trt_not_eligible",
+            ),
+            (TrtWarmupRejection::Disabled, "trt_disabled"),
+        ];
+
+        for (rejection, expected) in cases {
+            assert_eq!(rejection.reason(), expected);
+            assert_eq!(
+                SparrowEngineError::TrtWarmupRejected(rejection.clone()).to_string(),
+                rejection.to_string()
+            );
+        }
     }
 
     #[test]
