@@ -156,8 +156,8 @@ fn letterbox(
     let new_w = (img_w * scale).round().max(1.0).min(target_w as f32) as u32;
     let new_h = (img_h * scale).round().max(1.0).min(target_h as f32) as u32;
 
-    // Resize using bilinear interpolation (SIMD via fast_image_resize, thread_local cached Resizer)
-    let resized = resize_fast_bilinear(img, new_w, new_h)?;
+    // Resize using PIL/torchvision-matching bilinear (image crate Triangle; ENG-RESIZE)
+    let resized = resize_pil_bilinear(img, new_w, new_h)?;
 
     let pad_x = (target_w as f32 - new_w as f32) / 2.0;
     let pad_y = (target_h as f32 - new_h as f32) / 2.0;
@@ -189,43 +189,24 @@ fn letterbox(
 }
 
 // ---------------------------------------------------------------------------
-// SIMD-accelerated resize (fast_image_resize, thread_local Resizer cache)
+// PIL/torchvision-matching bilinear resize (image crate Triangle filter)
 // ---------------------------------------------------------------------------
 
-/// Bilinear resize using fast_image_resize's SIMD-accelerated convolution.
-/// Resizer is thread-local to avoid per-call SIMD-detection + allocation overhead.
-fn resize_fast_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> Result<RgbImage> {
-    use fast_image_resize::images::Image as FirImage;
-    use fast_image_resize::{
-        FilterType as FirFilter, PixelType, ResizeAlg, ResizeOptions, Resizer,
-    };
-    use std::cell::RefCell;
-
-    thread_local! {
-        static RESIZER: RefCell<Resizer> = RefCell::new(Resizer::new());
-    }
-
-    let src = FirImage::from_vec_u8(
-        img.width(),
-        img.height(),
-        img.as_raw().to_vec(),
-        PixelType::U8x3,
-    )
-    .map_err(|e| {
-        SparrowEngineError::ImageDecode(format!("fast_image_resize source allocation failed: {e}"))
-    })?;
-    let mut dst = FirImage::new(new_w, new_h, PixelType::U8x3);
-    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FirFilter::Bilinear));
-    RESIZER.with(|r| {
-        r.borrow_mut()
-            .resize(&src, &mut dst, &opts)
-            .map_err(|e| SparrowEngineError::ImageDecode(format!("fast_image_resize failed: {e}")))
-    })?;
-    RgbImage::from_raw(new_w, new_h, dst.into_vec()).ok_or_else(|| {
-        SparrowEngineError::ImageDecode(format!(
-            "RgbImage::from_raw failed for resized image {new_w}x{new_h}"
-        ))
-    })
+/// Bilinear resize matching PIL / torchvision (`image` crate `Triangle` filter).
+///
+/// Upstream models are trained + deployed with PIL-style antialiased bilinear
+/// (`torchvision.transforms.Resize`). `fast_image_resize`'s `Convolution(Bilinear)`
+/// is NOT bit-identical to PIL and diverges enough to fail classifier parity at
+/// aggressive downscale (ENG-RESIZE, 2026-07-01: engine 0.501 vs PIL 0.389 on a
+/// peruvian-andes outlier). The `image` crate's `Triangle` filter matches PIL to
+/// ~1e-3 (verified through the ONNX). Correctness over the marginal SIMD speed.
+fn resize_pil_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> Result<RgbImage> {
+    Ok(image::imageops::resize(
+        img,
+        new_w,
+        new_h,
+        image::imageops::FilterType::Triangle,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +227,7 @@ fn resize_direct(
     target_w: u32,
     target_h: u32,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
-    let resized = resize_fast_bilinear(img, target_w, target_h)?;
+    let resized = resize_pil_bilinear(img, target_w, target_h)?;
 
     // Store as raw f32 (u8 cast) — normalization happens in build_tensor
     let total = checked_tensor_len_3hw(target_h, target_w)?;
