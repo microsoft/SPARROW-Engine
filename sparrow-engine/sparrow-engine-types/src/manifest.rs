@@ -103,6 +103,22 @@ pub enum ChannelOrder {
     Bgr,
 }
 
+/// Resize interpolation filter applied before inference.
+///
+/// PIL / torchvision `Resize` defaults to **bilinear**; some models (e.g.
+/// DeepForestVision / DINOv2) train + deploy with **bicubic**. The engine's
+/// `image`-crate resize maps `Bilinear -> Triangle` and `Bicubic -> CatmullRom`,
+/// both empirically matching PIL to ~0.1/255 (ENG-RESIZE). Default `Bilinear`
+/// preserves behaviour for manifests without the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Interpolation {
+    /// Bilinear (PIL/torchvision default) -> `image` crate `Triangle`.
+    #[default]
+    Bilinear,
+    /// Bicubic (PIL BICUBIC, a=-0.5 Catmull-Rom) -> `image` crate `CatmullRom`.
+    Bicubic,
+}
+
 /// Inference precision: tensor data type used inside the ONNX graph.
 ///
 /// FP32 is the default (preserves pre-3.8 behaviour). FP16 requires:
@@ -278,6 +294,11 @@ pub struct ModelManifest {
     /// Defaults to `Rgb` (preserves pre-3.8 behaviour) when manifest field absent.
     pub channel_order: Option<ChannelOrder>,
 
+    /// Image-only: resize interpolation filter. None for audio models / when the
+    /// manifest omits the field (defaults to `Bilinear` at use). `Bicubic` maps
+    /// to the `image`-crate `CatmullRom` filter (matches PIL/torchvision bicubic).
+    pub interpolation: Option<Interpolation>,
+
     /// Inference precision: FP32 (default) or FP16. When `Fp16`, the engine
     /// loads `model_file_fp16` instead of `model_file`. Phase 3.8 fix.
     pub precision: Precision,
@@ -449,6 +470,9 @@ struct RawPreprocessing {
     /// models trained via Ultralytics (which use BGR per cv2 default).
     #[serde(default)]
     channel_order: Option<String>,
+    /// Resize interpolation: "bilinear" (default) | "bicubic".
+    #[serde(default)]
+    interpolation: Option<String>,
     // Audio-specific fields (required for mel_spectrogram, absent for vision).
     sample_rate: Option<u32>,
     n_fft: Option<u32>,
@@ -1105,6 +1129,20 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         class_distribution: d.class_distribution,
     });
 
+    // Resize interpolation: optional, defaults to Bilinear at use (preserves
+    // pre-existing behaviour for manifests without the field). Bicubic maps to
+    // the image-crate CatmullRom filter in the CPU preprocessor.
+    let interpolation = match raw.preprocessing.interpolation.as_deref() {
+        None => None,
+        Some("bilinear") => Some(Interpolation::Bilinear),
+        Some("bicubic") => Some(Interpolation::Bicubic),
+        Some(other) => {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "Unknown interpolation: '{other}' (expected 'bilinear' or 'bicubic')"
+            )))
+        }
+    };
+
     Ok(ModelManifest {
         id: raw.model.id,
         format: raw.model.format,
@@ -1116,6 +1154,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         normalization,
         pad_value,
         channel_order,
+        interpolation,
         precision,
         inference_strategy,
         trt,
@@ -2133,6 +2172,54 @@ format = "one_per_line"
         assert_eq!(manifest.postprocess_method, PostprocessMethod::Softmax);
         assert_eq!(manifest.confidence_threshold, None);
         assert_eq!(manifest.normalization, Some(Normalization::Imagenet));
+    }
+
+    #[test]
+    fn test_interpolation_parsing() {
+        let make = |interp_line: &str| {
+            format!(
+                r#"
+[model]
+id = "t"
+format = "onnx"
+file = "m.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [224, 224]
+layout = "nchw"
+normalization = "imagenet"
+{interp_line}
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+            )
+        };
+        // Absent -> None (defaults to Bilinear at use; preserves prior behaviour).
+        let dir = write_temp_file("manifest.toml", &make(""));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, None);
+        // Explicit bicubic -> Some(Bicubic).
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "bicubic""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::Bicubic));
+        // Explicit bilinear -> Some(Bilinear).
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "bilinear""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::Bilinear));
+        // Invalid -> InvalidManifest error.
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "lanczos""#));
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+        assert!(err.to_string().contains("interpolation"));
     }
 
     #[test]

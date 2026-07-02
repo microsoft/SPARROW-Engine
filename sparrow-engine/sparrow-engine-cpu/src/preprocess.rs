@@ -20,7 +20,9 @@ use crate::error::{SparrowEngineError, Result};
 // TOML-driven config). They live in sparrow-engine-types after Phase 3.8 Phase A;
 // re-export for convenience and to keep the `sparrow_engine::preprocess::ChannelOrder`
 // consumer path working (lib name is now "sparrow_engine" after the rename).
-pub use sparrow_engine_types::manifest::{ChannelOrder, Layout, Normalization, PreprocessMethod};
+pub use sparrow_engine_types::manifest::{
+    ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod,
+};
 
 // Phase 3.8 Phase A: PreprocessMeta + PreprocessConfig moved to
 // sparrow-engine-types/src/preprocess_meta.rs (pure POD types, dep-direction-clean).
@@ -71,6 +73,7 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
     let target_h = config.input_size[1];
 
     // 2. Resize / letterbox
+    let filter = interp_filter(config.interpolation);
     let (canvas, scale, pad_x, pad_y) = match config.method {
         PreprocessMethod::Letterbox => letterbox(
             &rgb,
@@ -78,8 +81,9 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
             target_h,
             config.pad_value,
             &config.normalization,
+            filter,
         )?,
-        PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h)?,
+        PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h, filter)?,
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             return Err(crate::error::SparrowEngineError::InvalidManifest(format!(
                 "{} preprocessing cannot be used with image preprocess()",
@@ -149,6 +153,7 @@ fn letterbox(
     target_h: u32,
     pad_value: f32,
     norm: &Normalization,
+    filter: image::imageops::FilterType,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
     let (img_w, img_h) = (img.width() as f32, img.height() as f32);
     let scale = (target_w as f32 / img_w).min(target_h as f32 / img_h);
@@ -156,8 +161,8 @@ fn letterbox(
     let new_w = (img_w * scale).round().max(1.0).min(target_w as f32) as u32;
     let new_h = (img_h * scale).round().max(1.0).min(target_h as f32) as u32;
 
-    // Resize using PIL/torchvision-matching bilinear (image crate Triangle; ENG-RESIZE)
-    let resized = resize_pil_bilinear(img, new_w, new_h)?;
+    // Resize using the manifest-selected PIL/torchvision-matching filter (ENG-RESIZE)
+    let resized = resize_pil(img, new_w, new_h, filter)?;
 
     let pad_x = (target_w as f32 - new_w as f32) / 2.0;
     let pad_y = (target_h as f32 - new_h as f32) / 2.0;
@@ -189,24 +194,36 @@ fn letterbox(
 }
 
 // ---------------------------------------------------------------------------
-// PIL/torchvision-matching bilinear resize (image crate Triangle filter)
+// PIL/torchvision-matching resize (image crate filters)
 // ---------------------------------------------------------------------------
 
-/// Bilinear resize matching PIL / torchvision (`image` crate `Triangle` filter).
+/// Map the manifest interpolation choice to the `image` crate filter that
+/// empirically matches PIL/torchvision (ENG-RESIZE, 2026-07-01/02):
+/// - `Bilinear` -> `Triangle` (matches PIL BILINEAR to ~0.10/255)
+/// - `Bicubic`  -> `CatmullRom` (matches PIL BICUBIC to ~0.11/255)
+fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
+    match interp {
+        Interpolation::Bilinear => image::imageops::FilterType::Triangle,
+        Interpolation::Bicubic => image::imageops::FilterType::CatmullRom,
+    }
+}
+
+/// Resize matching PIL / torchvision using the given `image` crate filter.
 ///
-/// Upstream models are trained + deployed with PIL-style antialiased bilinear
+/// Upstream models are trained + deployed with PIL-style antialiased resampling
 /// (`torchvision.transforms.Resize`). `fast_image_resize`'s `Convolution(Bilinear)`
 /// is NOT bit-identical to PIL and diverges enough to fail classifier parity at
 /// aggressive downscale (ENG-RESIZE, 2026-07-01: engine 0.501 vs PIL 0.389 on a
-/// peruvian-andes outlier). The `image` crate's `Triangle` filter matches PIL to
-/// ~1e-3 (verified through the ONNX). Correctness over the marginal SIMD speed.
-fn resize_pil_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> Result<RgbImage> {
-    Ok(image::imageops::resize(
-        img,
-        new_w,
-        new_h,
-        image::imageops::FilterType::Triangle,
-    ))
+/// peruvian-andes outlier). The `image` crate's `Triangle` (bilinear) matches PIL
+/// to ~1e-3 and `CatmullRom` (bicubic) to ~0.11/255 (verified through the ONNX).
+/// Correctness over the marginal SIMD speed.
+fn resize_pil(
+    img: &RgbImage,
+    new_w: u32,
+    new_h: u32,
+    filter: image::imageops::FilterType,
+) -> Result<RgbImage> {
+    Ok(image::imageops::resize(img, new_w, new_h, filter))
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +243,9 @@ fn resize_direct(
     img: &RgbImage,
     target_w: u32,
     target_h: u32,
+    filter: image::imageops::FilterType,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
-    let resized = resize_pil_bilinear(img, target_w, target_h)?;
+    let resized = resize_pil(img, target_w, target_h, filter)?;
 
     // Store as raw f32 (u8 cast) — normalization happens in build_tensor
     let total = checked_tensor_len_3hw(target_h, target_w)?;
@@ -413,7 +431,7 @@ mod tests {
     #[test]
     fn test_resize_direct_shape() {
         let img = red_image(100, 50);
-        let (canvas, scale, pad_x, pad_y) = resize_direct(&img, 64, 64).unwrap();
+        let (canvas, scale, pad_x, pad_y) = resize_direct(&img, 64, 64, image::imageops::FilterType::Triangle).unwrap();
         assert_eq!(canvas.len(), 64 * 64 * 3);
         assert!((scale - 1.0).abs() < 1e-6);
         assert!(pad_x.abs() < 1e-6);
@@ -421,11 +439,50 @@ mod tests {
     }
 
     #[test]
+    fn test_interp_filter_mapping() {
+        use image::imageops::FilterType;
+        assert!(matches!(
+            interp_filter(Interpolation::Bilinear),
+            FilterType::Triangle
+        ));
+        assert!(matches!(
+            interp_filter(Interpolation::Bicubic),
+            FilterType::CatmullRom
+        ));
+    }
+
+    #[test]
+    fn test_bicubic_differs_from_bilinear() {
+        // High-frequency checkerboard so the two filters resolve to different
+        // resized pixels. (A *linear* gradient is a degenerate case — cubic
+        // reproduces linear ramps exactly, so it would match bilinear.)
+        let mut img = RgbImage::new(64, 64);
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                let v = if (x / 3 + y / 3) % 2 == 0 { 255u8 } else { 0u8 };
+                img.put_pixel(x, y, image::Rgb([v, v, v]));
+            }
+        }
+        let bil = resize_direct(&img, 24, 24, interp_filter(Interpolation::Bilinear))
+            .unwrap()
+            .0;
+        let bic = resize_direct(&img, 24, 24, interp_filter(Interpolation::Bicubic))
+            .unwrap()
+            .0;
+        assert_eq!(bil.len(), bic.len());
+        let total_diff: f32 = bil.iter().zip(&bic).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            total_diff > 0.0,
+            "bicubic (CatmullRom) must differ from bilinear (Triangle) on high-freq content"
+        );
+    }
+
+    #[test]
     fn test_letterbox_preserves_aspect() {
         // 200x100 image → 640x640 letterbox
         let img = red_image(200, 100);
         let (_canvas, scale, pad_x, pad_y) =
-            letterbox(&img, 640, 640, 0.0, &Normalization::Unit).unwrap();
+            letterbox(&img, 640, 640, 0.0, &Normalization::Unit, image::imageops::FilterType::Triangle).unwrap();
 
         // scale = min(640/200, 640/100) = min(3.2, 6.4) = 3.2
         assert!((scale - 3.2).abs() < 1e-4);
@@ -452,6 +509,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config).unwrap();
         assert_eq!(result.tensor.shape(), &[1, 3, 64, 64]);
@@ -475,6 +533,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.447,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config).unwrap();
         assert_eq!(result.tensor.shape(), &[1, 128, 128, 3]);
@@ -497,6 +556,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config).unwrap();
         // All values should be 1.0
@@ -522,6 +582,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 114.0 / 255.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config).unwrap();
 
@@ -554,6 +615,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.447,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config).unwrap();
 
@@ -583,6 +645,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let err = preprocess(&img, &config).unwrap_err();
         match err {
@@ -612,6 +675,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config);
         assert!(
@@ -641,6 +705,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let result = preprocess(&img, &config);
         assert!(result.is_err(), "Should fail on u32 overflow stride");
@@ -665,6 +730,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let r_rgb = preprocess(&img, &cfg_rgb).unwrap();
         // After Unit normalization: R=200/255, G=100/255, B=50/255.
@@ -680,6 +746,7 @@ mod tests {
             normalization: Normalization::Unit,
             pad_value: 0.0,
             channel_order: ChannelOrder::Bgr,
+            interpolation: Interpolation::Bilinear,
         };
         let r_bgr = preprocess(&img, &cfg_bgr).unwrap();
         assert!((r_bgr.tensor[[0, 0, 0, 0]] - 50.0 / 255.0).abs() < 1e-5);

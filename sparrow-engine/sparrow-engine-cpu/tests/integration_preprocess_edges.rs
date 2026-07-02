@@ -7,7 +7,7 @@
 //
 // All 4 tests are ORT-free.
 
-use sparrow_engine::manifest::{ChannelOrder, Layout, Normalization, PreprocessMethod};
+use sparrow_engine::manifest::{ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod};
 use sparrow_engine::{ImageInput, PixelFormat, PreprocessConfig};
 
 fn raw_image(w: u32, h: u32) -> ImageInput {
@@ -28,6 +28,7 @@ fn letterbox_cfg(target: u32) -> PreprocessConfig {
         normalization: Normalization::Unit,
         pad_value: 114.0 / 255.0,
         channel_order: ChannelOrder::Rgb,
+        interpolation: Interpolation::Bilinear,
     }
 }
 

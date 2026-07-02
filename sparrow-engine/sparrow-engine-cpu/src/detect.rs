@@ -785,6 +785,7 @@ pub(crate) fn preprocess_config_from_manifest(
             })?,
         pad_value: manifest.pad_value.unwrap_or(0.0),
         channel_order: manifest.channel_order.unwrap_or_default(),
+        interpolation: manifest.interpolation.unwrap_or_default(),
     })
 }
 

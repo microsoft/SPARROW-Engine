@@ -7,7 +7,7 @@
 //! transform — that contract holds across the sparrow-engine-cpu / sparrow-engine-gpu split
 //! because `PreprocessMeta` is pure POD and lives in this leaf crate.
 
-use crate::manifest::{ChannelOrder, Layout, Normalization, PreprocessMethod};
+use crate::manifest::{ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod};
 
 /// Full preprocessing configuration, typically derived from a model manifest.
 #[derive(Debug, Clone)]
@@ -24,6 +24,9 @@ pub struct PreprocessConfig {
     /// BGR is required for YOLO-family models trained via Ultralytics; setting this
     /// causes `build_tensor` to swap channels 0 and 2 when emitting NCHW planes.
     pub channel_order: ChannelOrder,
+    /// Resize interpolation filter. `Bilinear` (default) -> `image` crate `Triangle`;
+    /// `Bicubic` -> `CatmullRom` (matches PIL/torchvision bicubic).
+    pub interpolation: Interpolation,
 }
 
 /// Geometric metadata from preprocessing, needed by postprocessing to undo letterbox.
@@ -47,7 +50,7 @@ pub struct PreprocessMeta {
 #[cfg(test)]
 mod phase_a_r1_preprocess_meta_tests {
     use super::*;
-    use crate::manifest::{ChannelOrder, Layout, Normalization, PreprocessMethod};
+    use crate::manifest::{ChannelOrder, Interpolation, Layout, Normalization, PreprocessMethod};
 
     #[test]
     fn preprocess_meta_is_copy_via_assignment() {
@@ -79,6 +82,7 @@ mod phase_a_r1_preprocess_meta_tests {
             normalization: Normalization::Unit,
             pad_value: 114.0 / 255.0,
             channel_order: ChannelOrder::Bgr,
+            interpolation: Interpolation::Bilinear,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.method, cfg.method);
@@ -100,6 +104,7 @@ mod phase_a_r1_preprocess_meta_tests {
             normalization: Normalization::Imagenet,
             pad_value: 0.0,
             channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
         };
         let debug_str = format!("{cfg:?}");
         assert!(debug_str.contains("PreprocessConfig"));

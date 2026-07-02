@@ -1532,6 +1532,7 @@ mod tests {
             normalization: Some(manifest::Normalization::Unit),
             pad_value: Some(114.0),
             channel_order: Some(manifest::ChannelOrder::Rgb),
+            interpolation: None,
             precision: manifest::Precision::Fp32,
             inference_strategy: manifest::InferenceStrategy::Single,
             trt: None,
