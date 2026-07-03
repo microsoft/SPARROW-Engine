@@ -29,9 +29,9 @@
 schema_version = "1.0"
 
 [zenodo]
-record = "21084702"
+record = "21152904"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.10.0"
+version = "0.11.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -172,6 +172,189 @@ family = ["SpeciesNet"]
 status = "active"
 license = "Apache-2.0"
 zip = "camera_trap__classifier__SpeciesNet-Crop.zip"
+
+# ---- AddaxAI PyTorch classifiers (ONB-1, Zenodo v0.11.0) ----
+
+[[model]]
+id = "southwest-usa-v3"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__southwest-usa-v3.zip"
+
+[[model]]
+id = "peruvian-andes"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__peruvian-andes.zip"
+
+[[model]]
+id = "sub-saharan-drylands"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__sub-saharan-drylands.zip"
+
+[[model]]
+id = "manas-panthera"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__manas-panthera.zip"
+
+[[model]]
+id = "gifu-japan"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__gifu-japan.zip"
+
+[[model]]
+id = "hawaii-puaa"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "CC-BY-NC-4.0"
+zip = "camera_trap__classifier__hawaii-puaa.zip"
+
+[[model]]
+id = "central-india"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "CC-BY-NC-4.0"
+zip = "camera_trap__classifier__central-india.zip"
+
+[[model]]
+id = "top-end-savanna"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "CC-BY-NC-4.0"
+zip = "camera_trap__classifier__top-end-savanna.zip"
+
+[[model]]
+id = "parks-victoria"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "Apache-2.0"
+zip = "camera_trap__classifier__parks-victoria.zip"
+
+[[model]]
+id = "sw-borderlands"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "Apache-2.0"
+zip = "camera_trap__classifier__sw-borderlands.zip"
+
+[[model]]
+id = "ahdrift"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "Apache-2.0"
+zip = "camera_trap__classifier__ahdrift.zip"
+
+[[model]]
+id = "deep-forest-vision"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__deep-forest-vision.zip"
+
+[[model]]
+id = "awc135"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__awc135.zip"
+
+[[model]]
+id = "namibian"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__namibian.zip"
+
+[[model]]
+id = "iran"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__iran.zip"
+
+[[model]]
+id = "nz-invasives"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__nz-invasives.zip"
+
+[[model]]
+id = "queensland"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "SpeciesNet"]
+status = "active"
+license = "CC-BY-4.0"
+zip = "camera_trap__classifier__queensland.zip"
+
+# multi-label (per-class sigmoid) classifier — engine multi-label image-classifier support
+[[model]]
+id = "nz-species"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "camera_trap__classifier__nz-species.zip"
 
 # ============================ Acoustics — Detector ==============================
 
