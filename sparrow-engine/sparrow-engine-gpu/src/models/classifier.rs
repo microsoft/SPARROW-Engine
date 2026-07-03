@@ -783,24 +783,6 @@ impl ClassifierModel {
             }
         };
 
-        // INTERIM (ENG-MULTILABEL-GPU landing): the GPU flavor does not yet
-        // honour the manifest `interpolation` field (bicubic/lanczos) — the
-        // fused `resize_gpu` kernel is bilinear-only today. Reject non-bilinear
-        // interpolation explicitly so a bicubic/lanczos-trained model is never
-        // silently downgraded to bilinear on GPU; the CPU flavor supports these
-        // now. GPU bicubic/lanczos lands next in ENG-RESIZE Phase 2.
-        if !matches!(
-            self.manifest.interpolation,
-            None | Some(Interpolation::Bilinear)
-        ) {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "ClassifierModel::classify: manifest '{}' requests interpolation = {:?}, which the \
-                 GPU flavor does not yet support (bilinear only); use the CPU flavor. GPU \
-                 bicubic/lanczos lands in ENG-RESIZE Phase 2.",
-                self.manifest.id, self.manifest.interpolation
-            )));
-        }
-
         // 3. GPU preprocess dispatched on manifest method.
         // SpeciesNet's manifest is `Resize` + `unit`, so it lands in
         // `resize_gpu` with `NormalizeStats::UNIT` (mean=[0,0,0], std=[1,1,1])
@@ -815,6 +797,7 @@ impl ClassifierModel {
                 target_h,
                 channel_order,
                 stats,
+                self.manifest.interpolation.unwrap_or(Interpolation::Bilinear),
             )?,
             PreprocessMethod::ResizeCrop => {
                 // INTERIM (ENG-MULTILABEL-GPU landing): the resize_crop GPU

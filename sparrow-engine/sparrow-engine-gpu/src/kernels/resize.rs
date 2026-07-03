@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
 use sparrow_engine_types::error::{SparrowEngineError, Result};
-use sparrow_engine_types::manifest::ChannelOrder;
+use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
@@ -68,6 +68,7 @@ impl ResizeKernel {
 /// 1280×960 → 480×480 this is 7 (so up to 49 source-pixel reads per
 /// output pixel). The kernel sizes its weight arrays to 16 to handle
 /// up to ~7× downsample without spilling.
+#[allow(clippy::too_many_arguments)]
 pub fn resize_gpu(
     stream: &Arc<CudaStream>,
     kernel: &ResizeKernel,
@@ -76,6 +77,7 @@ pub fn resize_gpu(
     tgt_h: u32,
     channel_order: ChannelOrder,
     stats: NormalizeStats,
+    interp: Interpolation,
 ) -> Result<CudaSlice<f32>> {
     let total = checked_tensor_len_3hw(tgt_h, tgt_w)?;
     let mut dst: CudaSlice<f32> = stream
@@ -115,6 +117,13 @@ pub fn resize_gpu(
     // (e.g., mean=[0,0,0], std=[1.0,1.0,1.0001]) take the general path,
     // which is the correct behaviour.
     let unit_flag: i32 = if stats == NormalizeStats::UNIT { 1 } else { 0 };
+    // Interpolation filter selector — mirrors sparrow-engine-cpu's interp_filter:
+    // Bilinear -> Triangle, Bicubic -> CatmullRom, Lanczos -> Lanczos3.
+    let interp_flag: i32 = match interp {
+        Interpolation::Bilinear => 0,
+        Interpolation::Bicubic => 1,
+        Interpolation::Lanczos => 2,
+    };
 
     launch
         .arg(&src.data)
@@ -130,11 +139,140 @@ pub fn resize_gpu(
         .arg(&std_g)
         .arg(&std_b)
         .arg(&unit_flag)
-        .arg(&bgr_flag);
+        .arg(&bgr_flag)
+        .arg(&interp_flag);
 
     // SAFETY: kernel signature matches args; bounds check inside kernel.
     unsafe { launch.launch(cfg) }
         .map_err(|e| SparrowEngineError::Ort(format!("cudarc launch resize_kernel: {e}")))?;
 
     Ok(dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::GpuImage;
+    use image::{Rgb, RgbImage};
+
+    fn cuda_or_skip(name: &str) -> Option<Arc<CudaContext>> {
+        if std::env::var("SPARROW_ENGINE_GPU_TESTS").as_deref() == Ok("0") {
+            eprintln!("SPARROW_ENGINE_GPU_TESTS=0 -> skipping {name}");
+            return None;
+        }
+        match CudaContext::new(0) {
+            Ok(c) => Some(c),
+            Err(_) => {
+                eprintln!("CUDA unavailable -> skipping {name}");
+                None
+            }
+        }
+    }
+
+    // High-frequency synthetic image so bilinear / bicubic / lanczos produce
+    // meaningfully DIFFERENT outputs — a filter-routing bug (always bilinear)
+    // would then fail the bicubic / lanczos cases.
+    fn synthetic(w: u32, h: u32) -> RgbImage {
+        RgbImage::from_fn(w, h, |x, y| {
+            let r = ((x * 17 + y * 5) % 256) as u8;
+            let g = ((x * 3 + y * 29) % 256) as u8;
+            let b = (((x ^ y) * 11) % 256) as u8;
+            Rgb([r, g, b])
+        })
+    }
+
+    // CPU reference: the exact production resize (image crate, u8) -> unit /255
+    // -> NCHW, matching sparrow-engine-cpu's resize_direct + build_tensor(unit).
+    fn cpu_ref_nchw(
+        img: &RgbImage,
+        tw: u32,
+        th: u32,
+        filter: image::imageops::FilterType,
+    ) -> Vec<f32> {
+        let resized = image::imageops::resize(img, tw, th, filter);
+        let plane = (tw * th) as usize;
+        let mut out = vec![0f32; 3 * plane];
+        for y in 0..th {
+            for x in 0..tw {
+                let p = resized.get_pixel(x, y);
+                let idx = (y * tw + x) as usize;
+                out[idx] = p[0] as f32 / 255.0;
+                out[plane + idx] = p[1] as f32 / 255.0;
+                out[2 * plane + idx] = p[2] as f32 / 255.0;
+            }
+        }
+        out
+    }
+
+    fn run_case(name: &str, interp: Interpolation, filter: image::imageops::FilterType) {
+        let ctx = match cuda_or_skip(name) {
+            Some(c) => c,
+            None => return,
+        };
+        let stream = ctx.default_stream();
+        let kernel = ResizeKernel::new(&ctx).expect("compile resize kernel");
+        // Non-integer downsample ratio exercises multi-tap windows.
+        let (sw, sh, tw, th) = (40u32, 32u32, 17u32, 13u32);
+        let img = synthetic(sw, sh);
+        let host_rgb: Vec<u8> = img.as_raw().clone();
+        let data = stream.clone_htod(&host_rgb).expect("htod");
+        let gpu_img = GpuImage {
+            data,
+            width: sw,
+            height: sh,
+        };
+        let dev = resize_gpu(
+            &stream,
+            &kernel,
+            &gpu_img,
+            tw,
+            th,
+            ChannelOrder::Rgb,
+            NormalizeStats::UNIT,
+            interp,
+        )
+        .expect("resize_gpu");
+        let got: Vec<f32> = stream.clone_dtoh(&dev).expect("dtoh");
+        stream.synchronize().expect("sync");
+        let want = cpu_ref_nchw(&img, tw, th, filter);
+        assert_eq!(got.len(), want.len());
+        let mut maxd = 0f32;
+        for (a, b) in got.iter().zip(want.iter()) {
+            maxd = maxd.max((a - b).abs());
+        }
+        // GPU keeps f32 (clamped, no u8 round); CPU rounds to u8 -> <=0.5/255
+        // rounding gap + float ULP. 2/255 headroom still catches a wrong filter
+        // (bilinear vs bicubic diverge far more than that on this image).
+        assert!(
+            maxd < 2.0 / 255.0,
+            "{name}: max abs diff {maxd} vs image-crate {filter:?} exceeds 2/255"
+        );
+    }
+
+    #[test]
+    fn resize_gpu_matches_image_crate_bilinear() {
+        run_case(
+            "bilinear",
+            Interpolation::Bilinear,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+
+    #[test]
+    fn resize_gpu_matches_image_crate_bicubic() {
+        run_case(
+            "bicubic",
+            Interpolation::Bicubic,
+            image::imageops::FilterType::CatmullRom,
+        );
+    }
+
+    #[test]
+    fn resize_gpu_matches_image_crate_lanczos() {
+        run_case(
+            "lanczos",
+            Interpolation::Lanczos,
+            image::imageops::FilterType::Lanczos3,
+        );
+    }
 }

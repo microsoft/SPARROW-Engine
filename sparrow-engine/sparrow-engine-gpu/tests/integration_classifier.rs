@@ -721,6 +721,7 @@ fn classifier_latency_bench_stages() {
             480,
             ChannelOrder::Rgb,
             sparrow_engine::kernels::tiled_preprocess::NormalizeStats::UNIT,
+            manifest::Interpolation::Bilinear,
         )
         .expect("kernel");
         let krn = t1.elapsed().as_secs_f64() * 1000.0;
