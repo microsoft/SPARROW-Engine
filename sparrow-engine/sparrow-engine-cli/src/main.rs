@@ -720,10 +720,9 @@ fn create_engine(
     Ok(engine)
 }
 
-fn parse_trt_warmup_ids(
-    spec: &str,
-    engine: &Engine,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+/// Pure spec tokenizer for `--trt-warm-up`: returns the explicit tokens plus whether
+/// the `all` wildcard was requested. Extracted (engine-free) so it is unit-testable.
+fn trt_warmup_spec_tokens(spec: &str) -> Result<(Vec<String>, bool), String> {
     let tokens: Vec<&str> = spec
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|s| !s.is_empty())
@@ -731,14 +730,29 @@ fn parse_trt_warmup_ids(
     if tokens.is_empty() {
         return Err("--trt-warm-up requires all or at least one model ID".into());
     }
-    if tokens.iter().any(|s| s.eq_ignore_ascii_case("all")) {
-        return Ok(engine
-            .list_available_models()
-            .into_iter()
-            .map(|m| m.id)
-            .collect());
+    let is_all = tokens.iter().any(|s| s.eq_ignore_ascii_case("all"));
+    Ok((tokens.into_iter().map(str::to_string).collect(), is_all))
+}
+
+/// Parse the `--trt-warm-up` spec into concrete model IDs plus a flag indicating
+/// whether the `all` wildcard was used. `all` is best-effort (skip models that are
+/// not TRT-eligible); explicitly-named IDs are strict (a not-eligible ID is an error).
+fn parse_trt_warmup_ids(
+    spec: &str,
+    engine: &Engine,
+) -> Result<(Vec<String>, bool), Box<dyn std::error::Error>> {
+    let (tokens, is_all) = trt_warmup_spec_tokens(spec)?;
+    if is_all {
+        return Ok((
+            engine
+                .list_available_models()
+                .into_iter()
+                .map(|m| m.id)
+                .collect(),
+            true,
+        ));
     }
-    Ok(tokens.into_iter().map(str::to_string).collect())
+    Ok((tokens, false))
 }
 
 fn make_trt_warmup_spinner(model_id: &str, quiet: bool) -> ProgressBar {
@@ -821,7 +835,7 @@ fn print_trt_warmup_failure(
 }
 
 fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
-    let ids = match parse_trt_warmup_ids(spec, engine) {
+    let (ids, all_wildcard) = match parse_trt_warmup_ids(spec, engine) {
         Ok(ids) => ids,
         Err(e) => {
             eprintln!("error: {e}");
@@ -834,11 +848,19 @@ fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
         let result = engine.trt_warmup_blocking(&id);
         bar.finish_and_clear();
         let code = trt_warmup_result_exit_code(&result);
-        if code != 0 {
-            print_trt_warmup_failure(&id, &result, code);
-            std::process::exit(code);
+        if code == 0 {
+            eprintln!("{id}: trt_ready");
+            continue;
         }
-        eprintln!("{id}: trt_ready");
+        // `--trt-warm-up all` is best-effort across the whole catalog: a model that
+        // simply doesn't opt into TensorRT (exit 6 = not-eligible / disabled) is
+        // skipped, not fatal. Explicitly-named IDs stay strict (any failure exits).
+        if all_wildcard && code == 6 {
+            eprintln!("{id}: skipped (not TRT-eligible)");
+            continue;
+        }
+        print_trt_warmup_failure(&id, &result, code);
+        std::process::exit(code);
     }
 }
 
@@ -3530,5 +3552,19 @@ mod tests {
                 "non-TTY stderr should auto-hide the progress bar"
             );
         }
+    }
+
+    #[test]
+    fn trt_warmup_spec_tokens_detects_all_and_explicit() {
+        // `all` wildcard, case-insensitive
+        assert!(trt_warmup_spec_tokens("all").unwrap().1);
+        assert!(trt_warmup_spec_tokens("ALL").unwrap().1);
+        assert!(trt_warmup_spec_tokens("m1, all").unwrap().1);
+        // explicit ids -> not wildcard, tokens preserved + split on comma/space
+        let (ids, is_all) = trt_warmup_spec_tokens("m1, m2 m3").unwrap();
+        assert!(!is_all);
+        assert_eq!(ids, vec!["m1", "m2", "m3"]);
+        // empty spec -> error
+        assert!(trt_warmup_spec_tokens("   ").is_err());
     }
 }
