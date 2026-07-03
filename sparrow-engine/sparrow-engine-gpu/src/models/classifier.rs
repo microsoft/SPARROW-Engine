@@ -72,8 +72,8 @@ use ort::value::{Shape, TensorRef, TensorRefMut};
 use sparrow_engine_core::postprocess;
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{
-    self, ChannelOrder, Layout, ModelManifest, Normalization, PostprocessMethod, Precision,
-    PreprocessMethod,
+    self, ChannelOrder, Interpolation, Layout, ModelManifest, Normalization, PostprocessMethod,
+    Precision, PreprocessMethod,
 };
 use sparrow_engine_types::{ClassifyOpts, ClassifyResult, ImageInput};
 
@@ -450,15 +450,15 @@ impl ClassifierModel {
     /// Load a SpeciesNet-style classifier on the given CUDA context.
     ///
     /// Steps:
-    /// 1. Validate manifest is a vision softmax classifier.
+    /// 1. Validate manifest is a vision classifier (softmax or sigmoid).
     /// 2. Resolve ONNX file path (FP32 default; FP16 opt-in via manifest).
     /// 3. Load labels (`sparrow_engine_types::manifest::load_labels`).
     /// 4. Build ORT session with CUDA EP pinned to `ctx.ordinal()`.
     /// 5. Cache input/output names and CUDA `MemoryInfo`.
     ///
     /// # Errors
-    /// - `SparrowEngineError::InvalidManifest` if the manifest is not a softmax vision
-    ///   classifier (audio rejected; non-softmax postprocess rejected;
+    /// - `SparrowEngineError::InvalidManifest` if the manifest is not a vision
+    ///   classifier (audio rejected; non-classifier postprocess rejected;
     ///   `precision = fp16` without `model_file_fp16` rejected). Matches the
     ///   error shape used by `YoloModel::load` and `TiledModel::load`
     ///   (Phase 3.8 Step 1 audit-fix R2 B6 / S-NEW-3).
@@ -482,9 +482,12 @@ impl ClassifierModel {
                 manifest.preprocess_method.as_str(),
             )));
         }
-        if !matches!(manifest.postprocess_method, PostprocessMethod::Softmax) {
+        if !matches!(
+            manifest.postprocess_method,
+            PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+        ) {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "ClassifierModel::load: manifest '{}' has postprocess = {}, expected softmax",
+                "ClassifierModel::load: manifest '{}' has postprocess = {}, expected softmax or sigmoid",
                 manifest.id,
                 manifest.postprocess_method.as_str(),
             )));
@@ -611,8 +614,13 @@ impl ClassifierModel {
         // `keep_io_types=True` early.
         validate_input_dtype_fp32(&session, &manifest.id)?;
         // Phase 3.8 Step 1 audit-fix R2 B8 (M-NEW-1): catch wrong-shape ONNX
-        // at load time instead of garbage softmax output at first inference.
-        validate_output_shape_softmax(&session, &manifest.id, labels.len())?;
+        // at load time instead of garbage classifier output at first inference.
+        validate_output_shape_classifier(
+            &session,
+            &manifest.id,
+            labels.len(),
+            manifest.postprocess_method.as_str(),
+        )?;
 
         // 5. Cache input/output names + CUDA MemoryInfo template.
         let input_name = session
@@ -775,6 +783,24 @@ impl ClassifierModel {
             }
         };
 
+        // INTERIM (ENG-MULTILABEL-GPU landing): the GPU flavor does not yet
+        // honour the manifest `interpolation` field (bicubic/lanczos) — the
+        // fused `resize_gpu` kernel is bilinear-only today. Reject non-bilinear
+        // interpolation explicitly so a bicubic/lanczos-trained model is never
+        // silently downgraded to bilinear on GPU; the CPU flavor supports these
+        // now. GPU bicubic/lanczos lands next in ENG-RESIZE Phase 2.
+        if !matches!(
+            self.manifest.interpolation,
+            None | Some(Interpolation::Bilinear)
+        ) {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "ClassifierModel::classify: manifest '{}' requests interpolation = {:?}, which the \
+                 GPU flavor does not yet support (bilinear only); use the CPU flavor. GPU \
+                 bicubic/lanczos lands in ENG-RESIZE Phase 2.",
+                self.manifest.id, self.manifest.interpolation
+            )));
+        }
+
         // 3. GPU preprocess dispatched on manifest method.
         // SpeciesNet's manifest is `Resize` + `unit`, so it lands in
         // `resize_gpu` with `NormalizeStats::UNIT` (mean=[0,0,0], std=[1,1,1])
@@ -790,6 +816,18 @@ impl ClassifierModel {
                 channel_order,
                 stats,
             )?,
+            PreprocessMethod::ResizeCrop => {
+                // INTERIM (ENG-MULTILABEL-GPU landing): the resize_crop GPU
+                // pipeline (optional square crop → resize → center-crop →
+                // normalize + NCHW) is not yet implemented. It lands next in
+                // ENG-RESIZE Phase 2. Reject explicitly; the CPU flavor supports
+                // resize_crop today.
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "ClassifierModel::classify: manifest '{}' uses preprocess method 'resize_crop', \
+                     not yet supported on the GPU flavor (ENG-RESIZE Phase 2). Use the CPU flavor.",
+                    self.manifest.id
+                )));
+            }
             PreprocessMethod::Letterbox => {
                 // Defense-in-depth: load() rejects this at manifest validation
                 // time (Phase 3.8 Step 1 audit-fix R3 M8). Reachable only if the
@@ -871,7 +909,13 @@ impl ClassifierModel {
                 .map_err(|e| {
                     SparrowEngineError::Ort(format!("Session::run (host roundtrip): {e}"))
                 })?;
-            extract_softmax_top_k(&outputs, &self.output_name, &self.labels, opts)?
+            extract_classifier_top_k(
+                &outputs,
+                &self.output_name,
+                &self.labels,
+                opts,
+                &self.manifest.postprocess_method,
+            )?
         } else {
             // Zero-copy CUDA path.
             let (dev_ptr_u64, _sync) = dev_tensor.device_ptr(&stream);
@@ -900,7 +944,13 @@ impl ClassifierModel {
             let outputs = guard
                 .run(ort::inputs![&self.input_name => input_tensor])
                 .map_err(|e| SparrowEngineError::Ort(format!("Session::run: {e}")))?;
-            extract_softmax_top_k(&outputs, &self.output_name, &self.labels, opts)?
+            extract_classifier_top_k(
+                &outputs,
+                &self.output_name,
+                &self.labels,
+                opts,
+                &self.manifest.postprocess_method,
+            )?
         };
         // dev_tensor drops at end of scope (after the block).
 
@@ -926,14 +976,18 @@ impl ClassifierModel {
     }
 }
 
-/// Extract logits from a SessionOutputs and apply softmax. Shared between
-/// the zero-copy CUDA-binding path and the host-roundtrip diagnostic path
-/// in [`ClassifierModel::classify`].
-fn extract_softmax_top_k(
+/// Extract logits from a SessionOutputs and apply the classifier postprocess:
+/// single-winner **softmax** (default) or per-class **sigmoid** for multi-label
+/// classifiers (`postprocess_method = Sigmoid`, e.g. AddaxAI nz-species).
+/// Mirrors the dispatch in `sparrow_engine_cpu::classify`. Shared between the
+/// zero-copy CUDA-binding path and the host-roundtrip diagnostic path in
+/// [`ClassifierModel::classify`].
+fn extract_classifier_top_k(
     outputs: &ort::session::SessionOutputs<'_>,
     output_name: &str,
     labels: &[String],
     opts: &ClassifyOpts,
+    postprocess_method: &PostprocessMethod,
 ) -> Result<Vec<sparrow_engine_types::Classification>> {
     let output = outputs.get(output_name).ok_or_else(|| {
         SparrowEngineError::Ort(format!("classifier output '{output_name}' not found"))
@@ -956,7 +1010,14 @@ fn extract_softmax_top_k(
             "Unexpected classifier output rank {ndim}; expected 1 or 2"
         )));
     };
-    postprocess::try_softmax(&view_2d, labels, opts)
+    match postprocess_method {
+        // Multi-label image classifier: per-class independent sigmoid (no
+        // cross-class normalization). Mirrors sparrow_engine_cpu::classify.
+        PostprocessMethod::Sigmoid { .. } => {
+            postprocess::try_sigmoid_classify(&view_2d, labels, opts)
+        }
+        _ => postprocess::try_softmax(&view_2d, labels, opts),
+    }
 }
 
 impl ClassifierModel {
@@ -990,7 +1051,8 @@ fn validate_input_dtype_fp32(session: &Session, model_id: &str) -> Result<()> {
     }
 }
 
-/// Validate the softmax classifier output shape at load time.
+/// Validate the classifier output shape at load time (softmax or sigmoid; both
+/// are rank-2 `[1, N]` logits).
 ///
 /// Accepts:
 /// - rank-1 `[N]` (raw logits, no batch dim)
@@ -1002,10 +1064,11 @@ fn validate_input_dtype_fp32(session: &Session, model_id: &str) -> Result<()> {
 /// the rank check fires; the dimension match is skipped.
 ///
 /// Phase 3.8 Step 1 audit-fix R2 B8 (M-NEW-1). Mirrors `yolo.rs::validate_output_shape`.
-fn validate_output_shape_softmax(
+fn validate_output_shape_classifier(
     session: &Session,
     model_id: &str,
     num_classes: usize,
+    method: &str,
 ) -> Result<()> {
     // Phase 3.8 Step 1 doc-fix R1 F-C9: collapse the `is_empty` early-return +
     // position-indexing into a single safe `?` chain. Eliminates the implicit
@@ -1018,7 +1081,7 @@ fn validate_output_shape_softmax(
             .ok_or_else(|| SparrowEngineError::OutputShapeMismatch {
                 id: model_id.to_string(),
                 shape: "no outputs".to_string(),
-                method: "softmax".to_string(),
+                method: method.to_string(),
             })?;
     let dims: Vec<i64> = match first_output.dtype() {
         ort::value::ValueType::Tensor { shape, .. } => shape.iter().copied().collect(),
@@ -1031,7 +1094,7 @@ fn validate_output_shape_softmax(
             return Err(SparrowEngineError::OutputShapeMismatch {
                 id: model_id.to_string(),
                 shape: format!("{dims:?} (expected rank-1 [N] or rank-2 [1, N] / [-1, N])"),
-                method: "softmax".to_string(),
+                method: method.to_string(),
             });
         }
     };
@@ -1041,7 +1104,7 @@ fn validate_output_shape_softmax(
         return Err(SparrowEngineError::OutputShapeMismatch {
             id: model_id.to_string(),
             shape: format!("{dims:?} (expected last dim = {num_classes})"),
-            method: "softmax".to_string(),
+            method: method.to_string(),
         });
     }
     Ok(())
@@ -1056,6 +1119,8 @@ mod tests {
     fn dummy_manifest(method: PostprocessMethod) -> ModelManifest {
         ModelManifest {
             id: "test".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "test.onnx".into(),
             preprocess_method: PreprocessMethod::Resize,
@@ -1156,6 +1221,34 @@ mod tests {
             Err(SparrowEngineError::InvalidManifest(msg)) if msg.contains("expected softmax") => {}
             Err(other) => panic!("expected non-softmax rejection, got Err({other:?})"),
             Ok(_) => panic!("expected non-softmax rejection, got Ok(_)"),
+        }
+    }
+
+    /// ENG-MULTILABEL-GPU: a multi-label (sigmoid) image classifier manifest is
+    /// ACCEPTED at the postprocess gate (mirrors the CPU flavor). It proceeds
+    /// past manifest validation and fails only later at ONNX session commit
+    /// (the fixture path has no real model file) — never with the
+    /// "expected softmax or sigmoid" manifest rejection.
+    #[test]
+    fn load_accepts_sigmoid_multilabel_at_manifest_gate() {
+        let m = dummy_manifest(PostprocessMethod::Sigmoid {
+            confidence_threshold: 0.5,
+        });
+        let ctx = match cuda_or_skip("load_accepts_sigmoid_multilabel_at_manifest_gate") {
+            Some(c) => c,
+            None => return,
+        };
+        let manifest_dir = Path::new("/tmp");
+        match ClassifierModel::load(&ctx, &m, manifest_dir) {
+            Err(SparrowEngineError::InvalidManifest(msg))
+                if msg.contains("expected softmax or sigmoid") =>
+            {
+                panic!("sigmoid classifier wrongly rejected at postprocess gate: {msg}")
+            }
+            // ONNX commit / other downstream failure is expected (no real model
+            // at the fixture path); acceptance at the manifest gate is proven.
+            Err(_) => {}
+            Ok(_) => {}
         }
     }
 

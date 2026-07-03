@@ -177,6 +177,8 @@ mod tests {
     fn yolo_like_manifest() -> ModelManifest {
         ModelManifest {
             id: "fake_yolo".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,

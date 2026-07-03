@@ -30,7 +30,10 @@ pub(crate) fn validate_vision_classifier(manifest: &ModelManifest) -> Result<()>
             method: manifest.preprocess_method.as_str().to_string(),
         });
     }
-    if !matches!(manifest.postprocess_method, PostprocessMethod::Softmax) {
+    if !matches!(
+        manifest.postprocess_method,
+        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+    ) {
         return Err(SparrowEngineError::NotAClassifier {
             id: manifest.id.clone(),
             method: manifest.postprocess_method.as_str().to_string(),
@@ -47,7 +50,7 @@ pub(crate) fn validate_vision_classifier(manifest: &ModelManifest) -> Result<()>
 ///
 /// # Errors
 /// - [`SparrowEngineError::NotAClassifier`] if the model is not a softmax
-///   classifier.
+///   (single-winner) or sigmoid (multi-label) classifier.
 /// - [`SparrowEngineError::IsAudioModel`] if the model is audio.
 /// - [`SparrowEngineError::ModelUnloaded`] / [`SparrowEngineError::EngineFreed`] if the
 ///   handle is invalid.
@@ -110,6 +113,8 @@ mod tests {
     fn yolo_like_manifest() -> ModelManifest {
         ModelManifest {
             id: "fake_yolo".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,
@@ -142,5 +147,26 @@ mod tests {
         let m = yolo_like_manifest();
         let err = validate_vision_classifier(&m).unwrap_err();
         assert!(matches!(err, SparrowEngineError::NotAClassifier { .. }));
+    }
+
+    #[test]
+    fn validate_vision_classifier_accepts_softmax() {
+        let mut m = yolo_like_manifest();
+        m.preprocess_method = PreprocessMethod::Resize;
+        m.postprocess_method = PostprocessMethod::Softmax;
+        assert!(validate_vision_classifier(&m).is_ok());
+    }
+
+    #[test]
+    fn validate_vision_classifier_accepts_sigmoid_multilabel() {
+        // Multi-label image classifier (e.g. AddaxAI nz-species): (image, Sigmoid)
+        // is a Classifier, not a Detector. Mirrors the CPU flavor + the
+        // derive_model_type contract in sparrow-engine-types.
+        let mut m = yolo_like_manifest();
+        m.preprocess_method = PreprocessMethod::Resize;
+        m.postprocess_method = PostprocessMethod::Sigmoid {
+            confidence_threshold: 0.5,
+        };
+        assert!(validate_vision_classifier(&m).is_ok());
     }
 }

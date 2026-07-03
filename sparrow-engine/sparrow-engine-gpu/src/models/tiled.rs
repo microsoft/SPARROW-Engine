@@ -970,7 +970,7 @@ fn validate_input_dtype_fp32(session: &ort::session::Session, model_id: &str) ->
 fn validate_output_shape_tiled(session: &ort::session::Session, model_id: &str) -> Result<()> {
     // Phase 3.8 Step 1 doc-fix R1 F-T10: collapse the `is_empty` early-return +
     // position-indexing into a single safe `?` chain. Mirrors the F-C9 pattern
-    // in classifier.rs::validate_output_shape_softmax.
+    // in classifier.rs::validate_output_shape_classifier.
     let first_output =
         session
             .outputs()
@@ -1213,6 +1213,8 @@ mod tests {
     fn dummy_tiled_manifest(tile_size: [u32; 2], tile_overlap: u32) -> ModelManifest {
         ModelManifest {
             id: "tiled-test".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "test.onnx".into(),
             preprocess_method: PreprocessMethod::Resize,

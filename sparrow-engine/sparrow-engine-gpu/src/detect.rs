@@ -160,6 +160,8 @@ mod tests {
     fn fake_audio_manifest() -> ModelManifest {
         ModelManifest {
             id: "fake_audio".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,
@@ -224,6 +226,8 @@ mod tests {
         // because the SlidingWindow check is gone and no other check fires.
         let m = ModelManifest {
             id: "fake_letterbox_sliding".into(),
+            interpolation: None,
+            resize_crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,
