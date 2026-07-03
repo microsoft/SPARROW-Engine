@@ -49,6 +49,8 @@
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -57,7 +59,8 @@ use cudarc::driver::CudaContext;
 use sparrow_engine_types::error::{Result, SparrowEngineError, TrtWarmupRejection};
 use sparrow_engine_types::manifest::{self, ModelManifest, PipelineManifest, TrtMode};
 use sparrow_engine_types::{
-    derive_model_type, ModelInfo, ModelType, TrtState, TrtStateView, WarmupOutcome,
+    derive_model_type, AudioDetectOpts, AudioInput, ClassifyOpts, DetectOpts, ImageInput,
+    ModelInfo, ModelType, PixelFormat, TrtState, TrtStateView, WarmupOutcome,
 };
 
 // Phase 3.8 Phase C Wave 4b: re-export `Device` + `EngineConfig` at the
@@ -70,7 +73,7 @@ pub use sparrow_engine_types::{Device, EngineConfig};
 use crate::kernels::center_crop::CenterCropKernel;
 use crate::kernels::letterbox::LetterboxKernel;
 use crate::kernels::resize::ResizeKernel;
-use crate::models::audio::AudioModel;
+use crate::models::audio::{AudioModel, GpuAudioDetectOpts};
 use crate::models::audio_raw::RawAudioModel;
 use crate::models::classifier::{ClassifierModel, JpegDecoder};
 use crate::models::tiled::TiledModel;
@@ -366,6 +369,9 @@ fn recover_trt_build_gate(build_gate: &Mutex<()>) -> MutexGuard<'_, ()> {
     }
 }
 
+#[cfg(test)]
+static TRT_VALIDATION_TEST_INJECTION: AtomicU8 = AtomicU8::new(0);
+
 fn run_trt_warmup_build(
     engine_inner: Arc<EngineInner>,
     models: Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
@@ -396,7 +402,17 @@ fn run_trt_warmup_build(
         }
     };
 
-    if let Err(err) = validate_trt_loaded_model(&trt_inner) {
+    commit_validated_trt_loaded_model(&engine_inner, &models, model_id, &expected, trt_inner);
+}
+
+fn commit_validated_trt_loaded_model(
+    engine_inner: &Arc<EngineInner>,
+    models: &Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
+    model_id: String,
+    expected: &Arc<LoadedModel>,
+    trt_inner: LoadedModelInner,
+) {
+    if let Err(err) = validate_trt_loaded_model(engine_inner, expected, &trt_inner) {
         expected.warm.mark_error(err.to_string());
         return;
     }
@@ -435,14 +451,145 @@ fn run_trt_warmup_build(
     expected.warm.mark_ready();
 }
 
-fn validate_trt_loaded_model(inner: &LoadedModelInner) -> Result<()> {
-    match inner {
-        LoadedModelInner::Yolo(_)
-        | LoadedModelInner::Classifier(_)
-        | LoadedModelInner::Tiled(_)
-        | LoadedModelInner::Audio(_)
-        | LoadedModelInner::AudioRaw(_) => Ok(()),
+fn validate_trt_loaded_model(
+    engine_inner: &Arc<EngineInner>,
+    expected: &LoadedModel,
+    inner: &LoadedModelInner,
+) -> Result<()> {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        validate_trt_loaded_model_once(engine_inner, expected, inner)
+    }));
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(SparrowEngineError::Ort(format!(
+            "TensorRT warm-up validation failed: {err}"
+        ))),
+        Err(payload) => Err(SparrowEngineError::Ort(format!(
+            "TensorRT warm-up validation panicked: {}",
+            panic_payload_to_string(payload)
+        ))),
     }
+}
+
+fn validate_trt_loaded_model_once(
+    engine_inner: &Arc<EngineInner>,
+    expected: &LoadedModel,
+    inner: &LoadedModelInner,
+) -> Result<()> {
+    #[cfg(test)]
+    match TRT_VALIDATION_TEST_INJECTION.load(Ordering::Acquire) {
+        1 => {
+            return Err(SparrowEngineError::Ort(
+                "injected TensorRT validation failure".to_string(),
+            ))
+        }
+        2 => panic!("injected TensorRT validation panic"),
+        _ => {}
+    }
+
+    match inner {
+        LoadedModelInner::Yolo(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            model.detect(
+                &engine_inner.ctx,
+                &engine_inner.letterbox,
+                &image,
+                &DetectOpts::default(),
+            )?;
+        }
+        LoadedModelInner::Classifier(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            let mut decoder = JpegDecoder::new(&engine_inner.ctx)?;
+            model.classify(
+                &engine_inner.ctx,
+                &engine_inner.center_crop,
+                &engine_inner.resize,
+                &mut decoder,
+                &image,
+                &ClassifyOpts::default(),
+            )?;
+        }
+        LoadedModelInner::Tiled(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            model.detect_tiled(&engine_inner.ctx, &image, &DetectOpts::default())?;
+        }
+        LoadedModelInner::Audio(model) => {
+            let audio = canned_audio_input(&expected.manifest)?;
+            let opts = GpuAudioDetectOpts {
+                base: AudioDetectOpts::default(),
+                strategy: GpuAudioDetectOpts::default_strategy(),
+            };
+            model.detect(&audio, &opts)?;
+        }
+        LoadedModelInner::AudioRaw(model) => {
+            let audio = canned_audio_input(&expected.manifest)?;
+            model.detect(&audio, &AudioDetectOpts::default(), &expected.labels)?;
+        }
+    }
+    Ok(())
+}
+
+fn canned_image_input(manifest: &ModelManifest) -> Result<ImageInput> {
+    let [width, height] = manifest.input_size.ok_or_else(|| {
+        SparrowEngineError::InvalidManifest(format!(
+            "manifest '{}' missing input_size",
+            manifest.id
+        ))
+    })?;
+    let stride = width.checked_mul(3).ok_or_else(|| {
+        SparrowEngineError::InvalidManifest(format!(
+            "manifest '{}' input width overflows RGB stride",
+            manifest.id
+        ))
+    })?;
+    let byte_len = (stride as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "manifest '{}' input dimensions overflow validation buffer",
+                manifest.id
+            ))
+        })?;
+    Ok(ImageInput::Raw {
+        data: vec![0; byte_len],
+        width,
+        height,
+        stride,
+        format: PixelFormat::Rgb,
+    })
+}
+
+fn canned_audio_input(manifest: &ModelManifest) -> Result<AudioInput> {
+    let sample_count = match &manifest.preprocess_method {
+        manifest::PreprocessMethod::MelSpectrogram { sample_rate, .. } => {
+            let duration_s = match manifest.inference_strategy {
+                manifest::InferenceStrategy::SlidingWindow {
+                    segment_duration_s, ..
+                } => segment_duration_s,
+                _ => 1.0,
+            };
+            ((*sample_rate as f32) * duration_s.max(0.001)).ceil() as usize
+        }
+        manifest::PreprocessMethod::RawAudio { window_samples, .. } => *window_samples as usize,
+        other => {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "manifest '{}' is not an audio model (preprocess={})",
+                manifest.id,
+                other.as_str()
+            )))
+        }
+    }
+    .max(1);
+
+    let sample_rate = match &manifest.preprocess_method {
+        manifest::PreprocessMethod::MelSpectrogram { sample_rate, .. }
+        | manifest::PreprocessMethod::RawAudio { sample_rate, .. } => *sample_rate,
+        _ => unreachable!("non-audio preprocess returned above"),
+    };
+    Ok(AudioInput::Samples {
+        data: vec![0.0; sample_count],
+        sample_rate,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,6 +1478,114 @@ mod tests {
 
         assert!(gate.is_poisoned());
         let _guard = recover_trt_build_gate(&gate);
+    }
+
+    fn mel_classifier_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../sparrow-engine-core/tests/fixtures/audio/mel_classifier_tiny")
+    }
+
+    fn load_validation_fixture() -> Option<(Engine, ModelHandle)> {
+        if !cuda_available() {
+            eprintln!("trt validation regression: no CUDA, skipping");
+            return None;
+        }
+        let fixture_dir = mel_classifier_fixture_dir();
+        if !fixture_dir.join("manifest.toml").exists() || !fixture_dir.join("model.onnx").exists() {
+            eprintln!(
+                "trt validation regression: fixture missing at {}, skipping",
+                fixture_dir.display()
+            );
+            return None;
+        }
+
+        ENGINE_EXISTS.store(false, Ordering::SeqCst);
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+        let model_root = fixture_dir
+            .parent()
+            .expect("mel classifier fixture has parent")
+            .to_path_buf();
+        let engine = Engine::new(EngineConfig::new(Device::Auto, model_root)).expect("engine");
+        let handle = engine
+            .load_model(fixture_dir.join("manifest.toml"))
+            .expect("load fixture model");
+        Some((engine, handle))
+    }
+
+    #[test]
+    #[serial]
+    fn trt_validation_failure_keeps_cuda_model_and_publishes_error() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let manifest_dir = original.path.parent().expect("loaded manifest has parent");
+        let replacement =
+            build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
+                .expect("build replacement model for validation test");
+
+        TRT_VALIDATION_TEST_INJECTION.store(1, Ordering::Release);
+        commit_validated_trt_loaded_model(
+            &engine.inner,
+            &engine.models,
+            handle.model_id().to_string(),
+            &original,
+            replacement,
+        );
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+
+        let state = engine.trt_state(handle.model_id());
+        assert_eq!(state.state, TrtState::TrtError);
+        let detail = state.detail.expect("validation failure detail");
+        assert!(detail.contains("TensorRT warm-up validation failed"));
+        assert!(detail.contains("injected TensorRT validation failure"));
+
+        let current = engine
+            .get_model_handle(handle.model_id())
+            .expect("model remains loaded after validation failure");
+        assert!(Arc::ptr_eq(&current.inner, &original));
+        handle
+            .check_valid()
+            .expect("original CUDA handle remains valid");
+        drop(engine);
+    }
+
+    #[test]
+    #[serial]
+    fn trt_validation_panic_keeps_cuda_model_and_publishes_error() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let manifest_dir = original.path.parent().expect("loaded manifest has parent");
+        let replacement =
+            build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
+                .expect("build replacement model for validation panic test");
+
+        TRT_VALIDATION_TEST_INJECTION.store(2, Ordering::Release);
+        commit_validated_trt_loaded_model(
+            &engine.inner,
+            &engine.models,
+            handle.model_id().to_string(),
+            &original,
+            replacement,
+        );
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+
+        let state = engine.trt_state(handle.model_id());
+        assert_eq!(state.state, TrtState::TrtError);
+        let detail = state.detail.expect("validation panic detail");
+        assert!(detail.contains("TensorRT warm-up validation panicked"));
+        assert!(detail.contains("injected TensorRT validation panic"));
+
+        let current = engine
+            .get_model_handle(handle.model_id())
+            .expect("model remains loaded after validation panic");
+        assert!(Arc::ptr_eq(&current.inner, &original));
+        handle
+            .check_valid()
+            .expect("original CUDA handle remains valid");
+        drop(engine);
     }
 
     #[test]
