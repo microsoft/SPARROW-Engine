@@ -1,6 +1,7 @@
 //! Classification inference.
 //!
-//! Orchestrates: preprocess -> ORT session.run -> softmax postprocess.
+//! Orchestrates: preprocess -> ORT session.run -> softmax (single-winner) or
+//! per-class sigmoid (multi-label) postprocess.
 
 use std::time::Instant;
 
@@ -30,7 +31,10 @@ pub(crate) fn validate_vision_classifier(manifest: &ModelManifest) -> Result<()>
             method: manifest.preprocess_method.as_str().to_string(),
         });
     }
-    if !matches!(manifest.postprocess_method, PostprocessMethod::Softmax) {
+    if !matches!(
+        manifest.postprocess_method,
+        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+    ) {
         return Err(SparrowEngineError::NotAClassifier {
             id: manifest.id.clone(),
             method: manifest.postprocess_method.as_str().to_string(),
@@ -45,11 +49,11 @@ pub(crate) fn validate_vision_classifier(manifest: &ModelManifest) -> Result<()>
 
 /// Run classification inference on a single image.
 ///
-/// Validates model type, preprocesses, runs ORT, applies softmax, and returns
-/// top-k classifications.
+/// Validates model type, preprocesses, runs ORT, applies softmax (single-winner)
+/// or per-class sigmoid (multi-label), and returns top-k classifications.
 ///
 /// # Errors
-/// - `NotAClassifier` if the model's postprocessing method is not `softmax`
+/// - `NotAClassifier` if the model's postprocessing method is not `softmax` or `sigmoid`
 /// - `ModelUnloaded` if the handle has been invalidated — also surfaces if the
 ///   engine itself has been dropped (post-S1 MT-17 mitigation: `Drop for Engine`
 ///   in `engine.rs` leaks `Arc<EngineInner>` so `Weak::upgrade()` keeps
@@ -97,7 +101,8 @@ pub fn classify(
         ));
     }
 
-    // 5. Postprocess: extract logits and apply softmax.
+    // 5. Postprocess: extract logits and apply softmax (single-winner) or per-class
+    //    sigmoid (multi-label classifiers, manifest postprocessing="sigmoid").
     let output_view: ArrayViewD<'_, f32> = outputs[0]
         .try_extract_array::<f32>()
         .map_err(crate::engine::ort_err)?;
@@ -127,7 +132,14 @@ pub fn classify(
         )));
     };
 
-    let classifications = postprocess::try_softmax(&view_2d, labels, opts)?;
+    let classifications = match manifest.postprocess_method {
+        // Multi-label image classifier: per-class independent sigmoid, not the
+        // single-winner softmax (e.g. AddaxAI nz-species).
+        PostprocessMethod::Sigmoid { .. } => {
+            postprocess::try_sigmoid_classify(&view_2d, labels, opts)?
+        }
+        _ => postprocess::try_softmax(&view_2d, labels, opts)?,
+    };
     drop(outputs);
     drop(guard);
 

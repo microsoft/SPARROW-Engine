@@ -554,6 +554,62 @@ pub fn try_softmax(
         .collect())
 }
 
+/// Fallible per-class **sigmoid** postprocessor for MULTI-LABEL image classifiers.
+///
+/// Unlike [`try_softmax`] (single-winner; probabilities sum to 1), each class is
+/// scored independently: `confidence_i = 1 / (1 + exp(-logit_i))`. Returns the
+/// top-k classes ranked by their independent sigmoid score. Used by multi-label
+/// image classifiers (e.g. AddaxAI nz-species) whose manifest declares
+/// `postprocessing = "sigmoid"`. `logits` shape: `[1, num_classes]` or
+/// `[batch, num_classes]`; only the first batch element is processed.
+pub fn try_sigmoid_classify(
+    logits: &ArrayView2<f32>,
+    labels: &[String],
+    opts: &ClassifyOpts,
+) -> Result<Vec<Classification>> {
+    if logits.nrows() == 0 || logits.ncols() == 0 {
+        return Err(SparrowEngineError::Ort(format!(
+            "sigmoid expects non-empty [N, C] logits, got {:?}",
+            logits.shape()
+        )));
+    }
+    let top_k = opts.top_k.unwrap_or(1) as usize;
+    if top_k == 0 {
+        return Err(SparrowEngineError::Ort(
+            "sigmoid top_k must be >= 1".to_string(),
+        ));
+    }
+    let row = logits.index_axis(Axis(0), 0);
+    if !row.iter().all(|v| v.is_finite()) {
+        return Err(SparrowEngineError::Ort(
+            "sigmoid logits contain non-finite values".to_string(),
+        ));
+    }
+    let num_classes = row.len();
+
+    // Per-class independent sigmoid (multi-label): no cross-class normalization.
+    let mut scored: Vec<(usize, f32)> = row
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, 1.0 / (1.0 + (-v).exp())))
+        .collect();
+
+    // Sort descending by score.
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take top_k, capped by actual class count.
+    let k = top_k.min(num_classes);
+
+    Ok(scored[..k]
+        .iter()
+        .map(|&(idx, prob)| Classification {
+            label: label_for_id(labels, idx as u32),
+            label_id: idx as u32,
+            confidence: prob,
+        })
+        .collect())
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -1129,6 +1185,44 @@ mod tests {
                 r.confidence
             );
         }
+    }
+
+    #[test]
+    fn test_sigmoid_classify_independent_scores() {
+        // Multi-label: each class scored independently via sigmoid(logit); scores
+        // do NOT sum to 1. logit 0 -> 0.5; large +/- -> ~1 / ~0.
+        let logits = array![[0.0, 2.0, -2.0]];
+        let labels = test_labels();
+        let opts = ClassifyOpts { top_k: Some(3) };
+        let results = try_sigmoid_classify(&logits.view(), &labels, &opts).unwrap();
+        assert_eq!(results.len(), 3);
+        // Ranked descending: class 1 (logit 2) highest.
+        assert_eq!(results[0].label_id, 1);
+        assert!((results[0].confidence - 0.880_797).abs() < 1e-4); // sigmoid(2)
+        // The logit-0 class must score ~0.5 (softmax would not).
+        let c0 = results.iter().find(|c| c.label_id == 0).unwrap();
+        assert!(
+            (c0.confidence - 0.5).abs() < 1e-6,
+            "sigmoid(0)=0.5, got {}",
+            c0.confidence
+        );
+        // Independent scores must not sum to 1 (distinguishes from softmax).
+        let total: f32 = results.iter().map(|c| c.confidence).sum();
+        assert!(
+            (total - 1.0).abs() > 0.1,
+            "multi-label sigmoid scores must not sum to 1, got {total}"
+        );
+    }
+
+    #[test]
+    fn test_sigmoid_classify_top_k_and_rank() {
+        // top_k selects the single highest independent sigmoid score.
+        let logits = array![[-1.0, 3.0, 0.5]];
+        let labels = test_labels();
+        let opts = ClassifyOpts { top_k: Some(1) };
+        let results = try_sigmoid_classify(&logits.view(), &labels, &opts).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].label_id, 1); // logit 3 highest
     }
 
     // -----------------------------------------------------------------------

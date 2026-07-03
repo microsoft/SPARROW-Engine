@@ -40,6 +40,17 @@ pub fn derive_model_type(
             ModelType::AudioClassifier
         }
         (_, PostprocessMethod::Softmax) => ModelType::Classifier,
+        // Multi-label image classifier: non-audio preprocess + per-class sigmoid
+        // (e.g. AddaxAI nz-species). Each class is scored independently (not the
+        // single-winner softmax). Matched here because (image, Sigmoid) otherwise
+        // falls through to Detector. MelSpectrogram+Sigmoid (AudioDetector) is
+        // matched above; RawAudio+Sigmoid is rejected by manifest validation.
+        (
+            PreprocessMethod::Letterbox
+            | PreprocessMethod::Resize
+            | PreprocessMethod::ResizeCrop,
+            PostprocessMethod::Sigmoid { .. },
+        ) => ModelType::Classifier,
         _ => ModelType::Detector,
     };
     // Subtype promotion: only a vision Detector is eligible for overhead-dot
@@ -180,14 +191,15 @@ mod phase_a_r1_model_type_tests {
 
     #[test]
     fn detector_for_image_preprocess_plus_non_softmax_postprocess() {
-        // Letterbox + {YoloE2e, MegadetV5a, HeatmapPeaks, Sigmoid} → Detector when Standard.
+        // Letterbox + {YoloE2e, MegadetV5a, HeatmapPeaks} → Detector when Standard.
+        // (Sigmoid is intentionally NOT here — image+Sigmoid is now a multi-label
+        // Classifier; see multilabel_classifier_when_sigmoid_with_image_preprocess.)
         let postprocess_methods: Vec<PostprocessMethod> = vec![
             PostprocessMethod::YoloE2e,
             PostprocessMethod::MegadetV5a {
                 iou_threshold: 0.45,
             },
             heatmap(),
-            sigmoid(),
         ];
         for pp in &postprocess_methods {
             assert_eq!(
@@ -206,15 +218,40 @@ mod phase_a_r1_model_type_tests {
     }
 
     #[test]
+    fn multilabel_classifier_when_sigmoid_with_image_preprocess() {
+        // Image preprocess + Sigmoid = multi-label image classifier (per-class
+        // independent scores), NOT a Detector. The Overhead hint must not promote
+        // it (promotion applies only to a vision Detector base).
+        for pre in [
+            PreprocessMethod::Letterbox,
+            PreprocessMethod::Resize,
+            PreprocessMethod::ResizeCrop,
+        ] {
+            assert_eq!(
+                derive_model_type(&pre, &sigmoid(), ModelSubtype::Standard),
+                ModelType::Classifier,
+                "{} + Sigmoid should be a multi-label Classifier",
+                pre.as_str()
+            );
+            assert_eq!(
+                derive_model_type(&pre, &sigmoid(), ModelSubtype::Overhead),
+                ModelType::Classifier,
+                "{} + Sigmoid + Overhead must stay Classifier (no promotion)",
+                pre.as_str()
+            );
+        }
+    }
+
+    #[test]
     fn overhead_detector_when_image_detector_combo_with_overhead_subtype() {
         // Same matrix as above but Overhead subtype must promote to OverheadDetector.
+        // (Sigmoid excluded — image+Sigmoid is a Classifier, not promotable.)
         let postprocess_methods: Vec<PostprocessMethod> = vec![
             PostprocessMethod::YoloE2e,
             PostprocessMethod::MegadetV5a {
                 iou_threshold: 0.45,
             },
             heatmap(),
-            sigmoid(),
         ];
         for pp in &postprocess_methods {
             assert_eq!(
