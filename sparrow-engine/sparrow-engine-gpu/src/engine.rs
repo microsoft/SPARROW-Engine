@@ -67,6 +67,7 @@ pub use sparrow_engine_types::{Device, EngineConfig};
 use crate::kernels::center_crop::CenterCropKernel;
 use crate::kernels::letterbox::LetterboxKernel;
 use crate::kernels::resize::ResizeKernel;
+use crate::kernels::resize_crop::ResizeCropKernel;
 use crate::models::audio::AudioModel;
 use crate::models::audio_raw::RawAudioModel;
 use crate::models::classifier::{ClassifierModel, JpegDecoder};
@@ -190,6 +191,9 @@ pub(crate) struct EngineInner {
     pub(crate) center_crop: CenterCropKernel,
     /// Compiled CUDA resize kernel. Used by classifier dispatch.
     pub(crate) resize: ResizeKernel,
+    /// Compiled CUDA resize_crop kernel (ENG-RESIZE Phase 2). Used by classifier
+    /// dispatch for `PreprocessMethod::ResizeCrop` (center-crop classifiers).
+    pub(crate) resize_crop: ResizeCropKernel,
     /// Cached nvjpeg decoder. Used by classifier dispatch (Yolo + Tiled
     /// already carry their own decoder behind a private `Mutex`).
     pub(crate) decoder: Mutex<JpegDecoder>,
@@ -289,6 +293,7 @@ impl Engine {
             let letterbox = LetterboxKernel::new(&ctx)?;
             let center_crop = CenterCropKernel::new(&ctx)?;
             let resize = ResizeKernel::new(&ctx)?;
+            let resize_crop = ResizeCropKernel::new(&ctx)?;
             let decoder = JpegDecoder::new(&ctx)?;
             Ok(EngineInner {
                 ctx,
@@ -297,6 +302,7 @@ impl Engine {
                 letterbox,
                 center_crop,
                 resize,
+                resize_crop,
                 decoder: Mutex::new(decoder),
             })
         };

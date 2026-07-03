@@ -65,6 +65,7 @@ use std::time::Instant;
 use sparrow_engine::kernels::center_crop::CenterCropKernel;
 use sparrow_engine::kernels::letterbox::LetterboxKernel;
 use sparrow_engine::kernels::resize::ResizeKernel;
+use sparrow_engine::kernels::resize_crop::ResizeCropKernel;
 use sparrow_engine::models::classifier::{ClassifierModel, JpegDecoder};
 use sparrow_engine::models::tiled::TiledModel;
 use sparrow_engine::models::yolo::YoloModel;
@@ -269,6 +270,8 @@ fn bench_classifier(
     let center_crop = CenterCropKernel::new(&ctx)
         .map_err(|e| format!("CenterCropKernel::new: {e}"))?;
     let resize = ResizeKernel::new(&ctx).map_err(|e| format!("ResizeKernel::new: {e}"))?;
+    let resize_crop =
+        ResizeCropKernel::new(&ctx).map_err(|e| format!("ResizeCropKernel::new: {e}"))?;
     let mut decoder = JpegDecoder::new(&ctx).map_err(|e| format!("JpegDecoder::new: {e}"))?;
     let model = ClassifierModel::load(&ctx, &manifest, manifest_dir)
         .map_err(|e| format!("ClassifierModel::load: {e}"))?;
@@ -277,7 +280,7 @@ fn bench_classifier(
     let first = ImageInput::FilePath(images[0].clone());
     for _ in 0..warmup {
         let _ = model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &first, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &first, &opts)
             .map_err(|e| format!("warmup classify: {e}"))?;
     }
 
@@ -286,7 +289,7 @@ fn bench_classifier(
         let input = ImageInput::FilePath(p.clone());
         let t0 = Instant::now();
         let r = model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
             .map_err(|e| format!("classify {}: {e}", p.display()))?;
         let dt = t0.elapsed().as_secs_f64() * 1000.0;
         // For classifier, "count" is the number of classifications returned

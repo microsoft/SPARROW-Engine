@@ -43,6 +43,7 @@ use ort::session::Session;
 use ort::value::TensorRef;
 use sparrow_engine::kernels::center_crop::CenterCropKernel;
 use sparrow_engine::kernels::resize::ResizeKernel;
+use sparrow_engine::kernels::resize_crop::ResizeCropKernel;
 use sparrow_engine::models::classifier::{ClassifierModel, JpegDecoder};
 use sparrow_engine_core::postprocess;
 use sparrow_engine_types::manifest::{self, ChannelOrder, ModelManifest, Normalization, Precision};
@@ -407,13 +408,14 @@ fn classifier_smoke() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let model = ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("load classifier");
 
     let input = ImageInput::FilePath(jpegs[0].clone());
     let opts = ClassifyOpts { top_k: Some(5) };
     let result: ClassifyResult = model
-        .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+        .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
         .expect("classify");
 
     assert!(
@@ -463,6 +465,7 @@ fn classifier_parity_vs_cpu_baseline() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let gpu_model =
         ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("gpu load classifier");
@@ -479,7 +482,7 @@ fn classifier_parity_vs_cpu_baseline() {
     for path in &jpegs {
         let input = ImageInput::FilePath(path.clone());
         let gpu_res = gpu_model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
             .expect("gpu classify");
         let cpu_top5 = cpu_model.classify(path, 5);
 
@@ -598,6 +601,7 @@ fn classifier_latency_bench() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let model = ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("load classifier");
 
@@ -609,7 +613,7 @@ fn classifier_latency_bench() {
     for path in jpegs.iter().take(warmup_max) {
         let input = ImageInput::FilePath(path.clone());
         let _ = model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
             .expect("warmup classify");
     }
 
@@ -621,7 +625,7 @@ fn classifier_latency_bench() {
         let input = ImageInput::FilePath((*path).clone());
         let t0 = Instant::now();
         let _ = model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
             .expect("timed classify");
         latencies_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
@@ -662,6 +666,7 @@ fn classifier_latency_bench_stages() {
     let center_crop =
         sparrow_engine::kernels::center_crop::CenterCropKernel::new(&ctx).expect("kernel");
     let resize = ResizeKernel::new(&ctx).expect("resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("JpegDecoder");
     let model = ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("load");
 
@@ -673,6 +678,7 @@ fn classifier_latency_bench_stages() {
                 &ctx,
                 &center_crop,
                 &resize,
+                &resize_crop,
                 &mut decoder,
                 &ImageInput::FilePath(path.clone()),
                 &opts,
@@ -736,6 +742,7 @@ fn classifier_latency_bench_stages() {
                 &ctx,
                 &center_crop,
                 &resize,
+                &resize_crop,
                 &mut decoder,
                 &ImageInput::FilePath(path.clone()),
                 &opts,
@@ -973,13 +980,14 @@ fn amazon_classifier_smoke() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let model = ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("load classifier");
 
     let input = ImageInput::FilePath(jpegs[0].clone());
     let opts = ClassifyOpts { top_k: Some(5) };
     let result: ClassifyResult = model
-        .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+        .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
         .expect("classify");
 
     assert!(
@@ -1030,6 +1038,7 @@ fn amazon_classifier_parity_vs_cpu_baseline() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let gpu_model =
         ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("gpu load classifier");
@@ -1046,7 +1055,7 @@ fn amazon_classifier_parity_vs_cpu_baseline() {
     for path in &jpegs {
         let input = ImageInput::FilePath(path.clone());
         let gpu_res = gpu_model
-            .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+            .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
             .expect("gpu classify");
         let cpu_top5 = cpu_model.classify(path, 5);
 
@@ -1224,6 +1233,7 @@ fn classify_with_raw_input_rgb_succeeds() {
     };
     let center_crop = CenterCropKernel::new(&ctx).expect("compile center_crop kernel");
     let resize = ResizeKernel::new(&ctx).expect("compile resize kernel");
+    let resize_crop = ResizeCropKernel::new(&ctx).expect("compile resize_crop kernel");
     let mut decoder = JpegDecoder::new(&ctx).expect("create JpegDecoder");
     let model = ClassifierModel::load(&ctx, &manifest, &manifest_dir).expect("load classifier");
 
@@ -1253,13 +1263,14 @@ fn classify_with_raw_input_rgb_succeeds() {
             &ctx,
             &center_crop,
             &resize,
+            &resize_crop,
             &mut decoder,
             &encoded_input,
             &opts,
         )
         .expect("classify(ImageInput::Encoded) baseline must succeed");
     let result: ClassifyResult = model
-        .classify(&ctx, &center_crop, &resize, &mut decoder, &input, &opts)
+        .classify(&ctx, &center_crop, &resize, &resize_crop, &mut decoder, &input, &opts)
         .expect("classify(ImageInput::Raw RGB) must succeed post-B9");
 
     assert!(

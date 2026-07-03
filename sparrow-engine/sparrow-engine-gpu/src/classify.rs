@@ -78,6 +78,7 @@ pub fn classify(
                 &engine_inner.ctx,
                 &engine_inner.center_crop,
                 &engine_inner.resize,
+                &engine_inner.resize_crop,
                 &mut decoder_guard,
                 image,
                 opts,

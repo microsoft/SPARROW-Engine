@@ -80,6 +80,7 @@ use sparrow_engine_types::{ClassifyOpts, ClassifyResult, ImageInput};
 use crate::decode::GpuImage;
 use crate::kernels::center_crop::CenterCropKernel;
 use crate::kernels::resize::{resize_gpu, ResizeKernel};
+use crate::kernels::resize_crop::{resize_crop_gpu, ResizeCropKernel};
 use crate::kernels::tiled_preprocess::NormalizeStats;
 use crate::trt::ep::{manifest_cache_material, CudaEpConfig, GpuIdentity, TrtEpBuilder};
 
@@ -665,11 +666,16 @@ impl ClassifierModel {
     /// → ORT CUDA EP (zero-copy via `TensorRefMut::from_raw`) → CPU softmax.
     ///
     /// Preprocess dispatch on `manifest.preprocess_method`:
-    /// - `Resize` → [`resize_gpu`] (plain bilinear, no aspect preservation,
-    ///   matches `sparrow-engine-cpu`'s `resize_direct`). SpeciesNet (`unit`) and
+    /// - `Resize` → [`resize_gpu`] (separable-conv resize honouring the
+    ///   manifest `interpolation`, no aspect preservation; matches
+    ///   `sparrow-engine-cpu`'s `resize_direct`). SpeciesNet (`unit`) and
     ///   Amazon Camera Trap v2 (`imagenet`) both use this path; the
     ///   `manifest.normalization` field selects the per-channel mean/std
     ///   passed to the kernel via `NormalizeStats`.
+    /// - `ResizeCrop` → [`resize_crop_gpu`] (ENG-RESIZE Phase 2): optional
+    ///   pre-crop-square → conv resize (interpolation) → center-crop →
+    ///   normalize + NCHW, matching `sparrow-engine-cpu`'s `resize_crop`
+    ///   (awc135, the YOLOv8-cls trio, nz-species, queensland).
     /// - `Letterbox` → rejected: letterbox is YOLO-family preprocess, not
     ///   classifier preprocess. Misconfiguration.
     /// - `MelSpectrogram` → already rejected at `load` time.
@@ -679,12 +685,12 @@ impl ClassifierModel {
     /// - `Imagenet` → `NormalizeStats::IMAGENET` (torchvision standard stats).
     /// - `None` → rejected; classifier preprocess always normalizes.
     ///
-    /// The `center_crop` kernel parameter is held for forward-compat with
-    /// a future `PreprocessMethod::CenterCropResize` variant in
-    /// `sparrow-engine-types`. Until that variant lands, the parameter is unused
-    /// in the active code path; declaring it keeps the call signature
-    /// stable across the eventual enum extension and matches the Wave 3
-    /// directive's contract.
+    /// The `interpolation` field selects the resize filter (bilinear /
+    /// bicubic / lanczos) for both `Resize` and `ResizeCrop`.
+    ///
+    /// The `center_crop` kernel parameter (the original 2-tap crop+resize
+    /// kernel) is unused in the active path — `ResizeCrop` uses the separate
+    /// `resize_crop` conv kernel. It is retained for signature stability.
     ///
     /// # Errors
     /// - `SparrowEngineError::ImageDecode` if both nvjpeg and CPU fallback decode fail.
@@ -695,11 +701,13 @@ impl ClassifierModel {
     ///   already rejects them at manifest validation time (Phase 3.8 Step 1
     ///   audit-fix R3 M8); reachable only if the manifest mutates post-load.
     /// - I/O errors when `image` is `ImageInput::FilePath`.
+    #[allow(clippy::too_many_arguments)]
     pub fn classify(
         &self,
         ctx: &Arc<CudaContext>,
         center_crop: &CenterCropKernel,
         resize: &ResizeKernel,
+        resize_crop: &ResizeCropKernel,
         decoder: &mut JpegDecoder,
         image: &ImageInput,
         opts: &ClassifyOpts,
@@ -800,16 +808,27 @@ impl ClassifierModel {
                 self.manifest.interpolation.unwrap_or(Interpolation::Bilinear),
             )?,
             PreprocessMethod::ResizeCrop => {
-                // INTERIM (ENG-MULTILABEL-GPU landing): the resize_crop GPU
-                // pipeline (optional square crop → resize → center-crop →
-                // normalize + NCHW) is not yet implemented. It lands next in
-                // ENG-RESIZE Phase 2. Reject explicitly; the CPU flavor supports
-                // resize_crop today.
-                return Err(SparrowEngineError::InvalidManifest(format!(
-                    "ClassifierModel::classify: manifest '{}' uses preprocess method 'resize_crop', \
-                     not yet supported on the GPU flavor (ENG-RESIZE Phase 2). Use the CPU flavor.",
-                    self.manifest.id
-                )));
+                // ENG-RESIZE Phase 2: fused pre-crop-square -> conv resize
+                // (interpolation) -> center-crop -> normalize + NCHW. Mirrors
+                // sparrow-engine-cpu's resize_crop (awc135, YOLOv8-cls trio,
+                // nz-species, queensland).
+                let rc = self.manifest.resize_crop.as_ref().ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(format!(
+                        "ClassifierModel::classify: manifest '{}' uses preprocess method \
+                         'resize_crop' but carries no [resize_crop] config",
+                        self.manifest.id
+                    ))
+                })?;
+                resize_crop_gpu(
+                    &stream,
+                    resize_crop,
+                    &gpu_img,
+                    rc,
+                    [target_w, target_h],
+                    channel_order,
+                    stats,
+                    self.manifest.interpolation.unwrap_or(Interpolation::Bilinear),
+                )?
             }
             PreprocessMethod::Letterbox => {
                 // Defense-in-depth: load() rejects this at manifest validation

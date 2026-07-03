@@ -20,9 +20,11 @@
 pub mod center_crop;
 pub mod letterbox;
 pub mod resize;
+pub mod resize_crop;
 pub mod tiled_preprocess;
 
 pub use center_crop::center_crop_gpu;
 pub use letterbox::letterbox_gpu;
 pub use resize::resize_gpu;
+pub use resize_crop::{resize_crop_gpu, ResizeCropKernel};
 pub use tiled_preprocess::{tiled_preprocess_gpu, NormalizeStats, TiledPreprocessKernel};
