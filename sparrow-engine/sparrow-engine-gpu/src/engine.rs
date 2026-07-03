@@ -47,15 +47,21 @@
 //! never co-exist in the same process.
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cudarc::driver::CudaContext;
-use sparrow_engine_types::error::{Result, SparrowEngineError};
-use sparrow_engine_types::manifest::{self, ModelManifest, PipelineManifest};
-use sparrow_engine_types::{derive_model_type, ModelInfo, ModelType};
+use sparrow_engine_types::error::{Result, SparrowEngineError, TrtWarmupRejection};
+use sparrow_engine_types::manifest::{self, ModelManifest, PipelineManifest, TrtMode};
+use sparrow_engine_types::{
+    derive_model_type, AudioDetectOpts, AudioInput, ClassifyOpts, DetectOpts, ImageInput,
+    ModelInfo, ModelType, PixelFormat, TrtState, TrtStateView, WarmupOutcome,
+};
 
 // Phase 3.8 Phase C Wave 4b: re-export `Device` + `EngineConfig` at the
 // `engine::*` path to mirror `sparrow_engine_cpu::engine::{Device, EngineConfig}`
@@ -68,11 +74,13 @@ use crate::kernels::center_crop::CenterCropKernel;
 use crate::kernels::letterbox::LetterboxKernel;
 use crate::kernels::resize::ResizeKernel;
 use crate::kernels::resize_crop::ResizeCropKernel;
-use crate::models::audio::AudioModel;
+use crate::models::audio::{AudioModel, GpuAudioDetectOpts};
 use crate::models::audio_raw::RawAudioModel;
 use crate::models::classifier::{ClassifierModel, JpegDecoder};
 use crate::models::tiled::TiledModel;
 use crate::models::yolo::YoloModel;
+use crate::trt::ep::{find_tensorrt_runtime, sm_supports_trt, trt_disabled_env_is_set};
+use crate::trt::warm::{BeginWarm, WarmSlot};
 
 // ---------------------------------------------------------------------------
 // Singleton guard
@@ -131,6 +139,7 @@ pub(crate) struct LoadedModel {
     /// `sparrow-engine-cpu`'s `LoadedModel::last_used`. Used by `reap_idle_models` to
     /// identify auto-unload candidates.
     pub(crate) last_used: Arc<AtomicU64>,
+    pub(crate) warm: Arc<WarmSlot>,
 }
 
 impl LoadedModel {
@@ -217,12 +226,14 @@ unsafe impl Sync for EngineInner {}
 pub struct Engine {
     pub(crate) inner: Arc<EngineInner>,
     /// Loaded model handles, keyed by model ID.
-    pub(crate) models: RwLock<HashMap<String, Arc<LoadedModel>>>,
+    pub(crate) models: Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
     /// Registered pipeline configs, keyed by pipeline ID.
     pub(crate) pipelines: Mutex<HashMap<String, PipelineManifest>>,
     /// Serializes first-load operations to prevent TOCTOU double-load
     /// race in [`Engine::get_or_load_model`]. Mirrors `sparrow-engine-cpu`.
     loading_lock: Mutex<()>,
+    trt_build_gate: Arc<Mutex<()>>,
+    trt_hw_capable: bool,
 }
 
 unsafe impl Send for Engine {}
@@ -256,6 +267,334 @@ impl std::fmt::Debug for ModelHandle {
             .field("engine_alive", &self.engine_ref.upgrade().is_some())
             .finish()
     }
+}
+
+fn build_loaded_model_inner(
+    ctx: &Arc<CudaContext>,
+    manifest: &ModelManifest,
+    manifest_dir: &Path,
+) -> Result<LoadedModelInner> {
+    let model_type = derive_model_type(
+        &manifest.preprocess_method,
+        &manifest.postprocess_method,
+        manifest.subtype,
+    );
+    match model_type {
+        ModelType::Detector | ModelType::OverheadDetector => match manifest.inference_strategy {
+            manifest::InferenceStrategy::Tiled { .. } => {
+                Ok(LoadedModelInner::Tiled(TiledModel::load(ctx, manifest, manifest_dir)?))
+            }
+            manifest::InferenceStrategy::Single => {
+                Ok(LoadedModelInner::Yolo(YoloModel::load(ctx, manifest, manifest_dir)?))
+            }
+            manifest::InferenceStrategy::SlidingWindow { .. } => Err(
+                SparrowEngineError::InvalidManifest(format!(
+                    "manifest '{}': sliding_window strategy is reserved for audio models, but model_type = {:?}",
+                    manifest.id, model_type
+                )),
+            ),
+        },
+        ModelType::Classifier => Ok(LoadedModelInner::Classifier(ClassifierModel::load(
+            ctx,
+            manifest,
+            manifest_dir,
+        )?)),
+        ModelType::AudioDetector | ModelType::AudioClassifier => match manifest.preprocess_method {
+            manifest::PreprocessMethod::RawAudio { .. } => Ok(LoadedModelInner::AudioRaw(
+                RawAudioModel::load_from_manifest(ctx, manifest, manifest_dir)?,
+            )),
+            _ => Ok(LoadedModelInner::Audio(Box::new(AudioModel::load_from_manifest(
+                ctx,
+                manifest,
+                manifest_dir,
+            )?))),
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrtWarmupFacts {
+    sm_major: i32,
+    sm_minor: i32,
+    trt_libs_present: bool,
+    trt_disabled: bool,
+}
+
+fn trt_warmup_rejection_for_facts(
+    id: &str,
+    trt: Option<&sparrow_engine_types::manifest::TrtConfig>,
+    facts: TrtWarmupFacts,
+) -> Option<TrtWarmupRejection> {
+    if facts.trt_disabled {
+        return Some(TrtWarmupRejection::Disabled);
+    }
+    let mode = trt
+        .map(|config| config.effective_mode())
+        .unwrap_or(TrtMode::Off);
+    if mode == TrtMode::Off {
+        return Some(TrtWarmupRejection::NotEligible(format!(
+            "model '{id}' does not enable [inference.trt] warm-up"
+        )));
+    }
+    if !sm_supports_trt(facts.sm_major, facts.sm_minor) {
+        return Some(TrtWarmupRejection::HardwareUnsupportedSm(format!(
+            "SM {}.{} is below TensorRT warm-up minimum SM 7.5",
+            facts.sm_major, facts.sm_minor
+        )));
+    }
+    if !facts.trt_libs_present {
+        return Some(TrtWarmupRejection::TrtRuntimeMissing(
+            "libnvinfer, libnvinfer_plugin, or libnvonnxparser was not found on LD_LIBRARY_PATH/system library paths".to_string(),
+        ));
+    }
+    None
+}
+
+fn trt_warmup_rejected(rejection: TrtWarmupRejection) -> SparrowEngineError {
+    SparrowEngineError::TrtWarmupRejected(rejection)
+}
+
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "TensorRT warm-up build panicked".to_string()
+    }
+}
+fn recover_trt_build_gate(build_gate: &Mutex<()>) -> MutexGuard<'_, ()> {
+    match build_gate.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("trt_build_gate was poisoned; recovering because it guards no data");
+            poisoned.into_inner()
+        }
+    }
+}
+
+#[cfg(test)]
+static TRT_VALIDATION_TEST_INJECTION: AtomicU8 = AtomicU8::new(0);
+
+fn run_trt_warmup_build(
+    engine_inner: Arc<EngineInner>,
+    models: Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
+    build_gate: Arc<Mutex<()>>,
+    model_id: String,
+    expected: Arc<LoadedModel>,
+) {
+    let _gate = recover_trt_build_gate(&build_gate);
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<LoadedModelInner> {
+        let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
+        crate::trt::ep::with_trt_warmup_build(expected.manifest.trt.clone(), || {
+            build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
+        })
+    }));
+
+    let trt_inner = match result {
+        Ok(Ok(inner)) => inner,
+        Ok(Err(err)) => {
+            expected.warm.mark_error(err.to_string());
+            return;
+        }
+        Err(payload) => {
+            expected.warm.mark_error(format!(
+                "TensorRT warm-up build panicked: {}",
+                panic_payload_to_string(payload)
+            ));
+            return;
+        }
+    };
+
+    commit_validated_trt_loaded_model(&engine_inner, &models, model_id, &expected, trt_inner);
+}
+
+fn commit_validated_trt_loaded_model(
+    engine_inner: &Arc<EngineInner>,
+    models: &Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
+    model_id: String,
+    expected: &Arc<LoadedModel>,
+    trt_inner: LoadedModelInner,
+) {
+    if let Err(err) = validate_trt_loaded_model(engine_inner, expected, &trt_inner) {
+        expected.warm.mark_error(err.to_string());
+        return;
+    }
+
+    let mut guard = match models.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            expected
+                .warm
+                .mark_error("models lock poisoned while committing TensorRT warm-up".to_string());
+            return;
+        }
+    };
+
+    let still_current = guard
+        .get(&model_id)
+        .is_some_and(|current| Arc::ptr_eq(&current.active, &expected.active));
+    if !still_current || !expected.active.load(Ordering::Acquire) {
+        expected.warm.mark_error(
+            "model was unloaded or reloaded before TensorRT warm-up commit".to_string(),
+        );
+        return;
+    }
+
+    touch_last_used(&expected.last_used);
+    let warmed = Arc::new(LoadedModel {
+        manifest: Arc::clone(&expected.manifest),
+        labels: Arc::clone(&expected.labels),
+        path: expected.path.clone(),
+        active: Arc::clone(&expected.active),
+        inner: trt_inner,
+        last_used: Arc::clone(&expected.last_used),
+        warm: Arc::clone(&expected.warm),
+    });
+    guard.insert(model_id, warmed);
+    expected.warm.mark_ready();
+}
+
+fn validate_trt_loaded_model(
+    engine_inner: &Arc<EngineInner>,
+    expected: &LoadedModel,
+    inner: &LoadedModelInner,
+) -> Result<()> {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        validate_trt_loaded_model_once(engine_inner, expected, inner)
+    }));
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(SparrowEngineError::Ort(format!(
+            "TensorRT warm-up validation failed: {err}"
+        ))),
+        Err(payload) => Err(SparrowEngineError::Ort(format!(
+            "TensorRT warm-up validation panicked: {}",
+            panic_payload_to_string(payload)
+        ))),
+    }
+}
+
+fn validate_trt_loaded_model_once(
+    engine_inner: &Arc<EngineInner>,
+    expected: &LoadedModel,
+    inner: &LoadedModelInner,
+) -> Result<()> {
+    #[cfg(test)]
+    match TRT_VALIDATION_TEST_INJECTION.load(Ordering::Acquire) {
+        1 => {
+            return Err(SparrowEngineError::Ort(
+                "injected TensorRT validation failure".to_string(),
+            ))
+        }
+        2 => panic!("injected TensorRT validation panic"),
+        _ => {}
+    }
+
+    match inner {
+        LoadedModelInner::Yolo(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            model.detect(
+                &engine_inner.ctx,
+                &engine_inner.letterbox,
+                &image,
+                &DetectOpts::default(),
+            )?;
+        }
+        LoadedModelInner::Classifier(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            let mut decoder = JpegDecoder::new(&engine_inner.ctx)?;
+            model.classify(
+                &engine_inner.ctx,
+                &engine_inner.center_crop,
+                &engine_inner.resize,
+                &engine_inner.resize_crop,
+                &mut decoder,
+                &image,
+                &ClassifyOpts::default(),
+            )?;
+        }
+        LoadedModelInner::Tiled(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            model.detect_tiled(&engine_inner.ctx, &image, &DetectOpts::default())?;
+        }
+        LoadedModelInner::Audio(model) => {
+            let audio = canned_audio_input(&expected.manifest)?;
+            let opts = GpuAudioDetectOpts {
+                base: AudioDetectOpts::default(),
+                strategy: GpuAudioDetectOpts::default_strategy(),
+            };
+            model.detect(&audio, &opts)?;
+        }
+        LoadedModelInner::AudioRaw(model) => {
+            let audio = canned_audio_input(&expected.manifest)?;
+            model.detect(&audio, &AudioDetectOpts::default(), &expected.labels)?;
+        }
+    }
+    Ok(())
+}
+
+fn canned_image_input(manifest: &ModelManifest) -> Result<ImageInput> {
+    let [width, height] = manifest.input_size.ok_or_else(|| {
+        SparrowEngineError::InvalidManifest(format!(
+            "manifest '{}' missing input_size",
+            manifest.id
+        ))
+    })?;
+    let stride = width.checked_mul(3).ok_or_else(|| {
+        SparrowEngineError::InvalidManifest(format!(
+            "manifest '{}' input width overflows RGB stride",
+            manifest.id
+        ))
+    })?;
+    let byte_len = (stride as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "manifest '{}' input dimensions overflow validation buffer",
+                manifest.id
+            ))
+        })?;
+    Ok(ImageInput::Raw {
+        data: vec![0; byte_len],
+        width,
+        height,
+        stride,
+        format: PixelFormat::Rgb,
+    })
+}
+
+fn canned_audio_input(manifest: &ModelManifest) -> Result<AudioInput> {
+    let sample_count = match &manifest.preprocess_method {
+        manifest::PreprocessMethod::MelSpectrogram { sample_rate, .. } => {
+            let duration_s = match manifest.inference_strategy {
+                manifest::InferenceStrategy::SlidingWindow {
+                    segment_duration_s, ..
+                } => segment_duration_s,
+                _ => 1.0,
+            };
+            ((*sample_rate as f32) * duration_s.max(0.001)).ceil() as usize
+        }
+        manifest::PreprocessMethod::RawAudio { window_samples, .. } => *window_samples as usize,
+        other => {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "manifest '{}' is not an audio model (preprocess={})",
+                manifest.id,
+                other.as_str()
+            )))
+        }
+    }
+    .max(1);
+
+    let sample_rate = match &manifest.preprocess_method {
+        manifest::PreprocessMethod::MelSpectrogram { sample_rate, .. }
+        | manifest::PreprocessMethod::RawAudio { sample_rate, .. } => *sample_rate,
+        _ => unreachable!("non-audio preprocess returned above"),
+    };
+    Ok(AudioInput::Samples {
+        data: vec![0.0; sample_count],
+        sample_rate,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -310,11 +649,22 @@ impl Engine {
             ENGINE_EXISTS.store(false, Ordering::SeqCst);
         })?;
 
+        let trt_hw_capable =
+            !trt_disabled_env_is_set(std::env::var("SPARROW_ENGINE_TRT_DISABLE").ok().as_deref())
+                && inner
+                    .ctx
+                    .compute_capability()
+                    .map(|(major, minor)| sm_supports_trt(major, minor))
+                    .unwrap_or(false)
+                && find_tensorrt_runtime().present;
+
         Ok(Engine {
             inner: Arc::new(inner),
-            models: RwLock::new(HashMap::new()),
+            models: Arc::new(RwLock::new(HashMap::new())),
             pipelines: Mutex::new(HashMap::new()),
             loading_lock: Mutex::new(()),
+            trt_build_gate: Arc::new(Mutex::new(())),
+            trt_hw_capable,
         })
     }
 
@@ -366,68 +716,13 @@ impl Engine {
             _ => Vec::new(),
         };
 
-        // Dispatch on model type.
-        let model_type = derive_model_type(
-            &manifest_owned.preprocess_method,
-            &manifest_owned.postprocess_method,
-            manifest_owned.subtype,
-        );
-        let inner = match model_type {
-            ModelType::Detector | ModelType::OverheadDetector => {
-                // Tiled vs single-shot dispatch lives inside the GPU
-                // model layer: tiled-strategy manifests build a
-                // `TiledModel`; single-strategy + heatmap-peaks
-                // postprocess (overhead) likewise route through
-                // `TiledModel` if the manifest declares
-                // `inference.strategy = tiled`. Single-shot YOLO
-                // manifests build a `YoloModel`.
-                match manifest_owned.inference_strategy {
-                    manifest::InferenceStrategy::Tiled { .. } => LoadedModelInner::Tiled(
-                        TiledModel::load(&self.inner.ctx, &manifest_owned, manifest_dir)?,
-                    ),
-                    manifest::InferenceStrategy::Single => LoadedModelInner::Yolo(YoloModel::load(
-                        &self.inner.ctx,
-                        &manifest_owned,
-                        manifest_dir,
-                    )?),
-                    manifest::InferenceStrategy::SlidingWindow { .. } => {
-                        return Err(SparrowEngineError::InvalidManifest(format!(
-                            "manifest '{}': sliding_window strategy is reserved for audio models, but model_type = {:?}",
-                            manifest_owned.id, model_type
-                        )));
-                    }
-                }
-            }
-            ModelType::Classifier => LoadedModelInner::Classifier(ClassifierModel::load(
-                &self.inner.ctx,
-                &manifest_owned,
-                manifest_dir,
-            )?),
-            ModelType::AudioDetector | ModelType::AudioClassifier => {
-                // Phase D round 2 B-08: dispatch on preprocess variant.
-                // RawAudio (Perch 2) bypasses the mel pipeline entirely;
-                // MelSpectrogram is the existing AudioModel path.
-                match manifest_owned.preprocess_method {
-                    manifest::PreprocessMethod::RawAudio { .. } => {
-                        LoadedModelInner::AudioRaw(RawAudioModel::load_from_manifest(
-                            &self.inner.ctx,
-                            &manifest_owned,
-                            manifest_dir,
-                        )?)
-                    }
-                    _ => LoadedModelInner::Audio(Box::new(AudioModel::load_from_manifest(
-                        &self.inner.ctx,
-                        &manifest_owned,
-                        manifest_dir,
-                    )?)),
-                }
-            }
-        };
+        let inner = build_loaded_model_inner(&self.inner.ctx, &manifest_owned, manifest_dir)?;
 
         let manifest = Arc::new(manifest_owned);
         let labels = Arc::new(labels);
         let active = Arc::new(AtomicBool::new(true));
         let last_used = Arc::new(AtomicU64::new(now_millis()));
+        let warm = Arc::new(WarmSlot::new());
         let loaded = Arc::new(LoadedModel {
             manifest: Arc::clone(&manifest),
             labels: Arc::clone(&labels),
@@ -435,6 +730,7 @@ impl Engine {
             active,
             inner,
             last_used,
+            warm,
         });
 
         // Insert into the model map. If same ID exists, mark it inactive
@@ -519,7 +815,10 @@ impl Engine {
         let should_remove = match models.get(model_id) {
             Some(entry) => {
                 let current_last_used = entry.last_used.load(Ordering::Relaxed);
-                if !reaper_snapshot_still_matches(
+                if entry.warm.is_warming() {
+                    touch_last_used(&entry.last_used);
+                    false
+                } else if !reaper_snapshot_still_matches(
                     snapshot_active,
                     &entry.active,
                     snapshot_last_used,
@@ -556,7 +855,7 @@ impl Engine {
             };
             models
                 .iter()
-                .filter(|(_, m)| m.active.load(Ordering::Acquire))
+                .filter(|(_, m)| m.active.load(Ordering::Acquire) && !m.warm.is_warming())
                 .map(|(id, m)| {
                     (
                         id.clone(),
@@ -580,6 +879,128 @@ impl Engine {
             }
         }
         unloaded
+    }
+
+    // -----------------------------------------------------------------
+    // TensorRT warm-up
+    // -----------------------------------------------------------------
+
+    fn trt_warmup_gate_for_manifest(&self, id: &str, manifest: &ModelManifest) -> Result<()> {
+        let gpu = crate::trt::ep::GpuIdentity::from_context(&self.inner.ctx)?;
+        let libs_probe = find_tensorrt_runtime();
+        let facts = TrtWarmupFacts {
+            sm_major: gpu.sm_major,
+            sm_minor: gpu.sm_minor,
+            trt_libs_present: libs_probe.present,
+            trt_disabled: trt_disabled_env_is_set(
+                std::env::var("SPARROW_ENGINE_TRT_DISABLE").ok().as_deref(),
+            ),
+        };
+        if let Some(rejection) = trt_warmup_rejection_for_facts(id, manifest.trt.as_ref(), facts) {
+            return Err(trt_warmup_rejected(rejection));
+        }
+        Ok(())
+    }
+
+    fn trt_warmup_gate(&self, id: &str) -> Result<ModelManifest> {
+        sparrow_engine_core::catalog::validate_model_id(id)?;
+        let manifest = {
+            let models = self
+                .models
+                .read()
+                .map_err(|_| SparrowEngineError::Ort("models lock poisoned".into()))?;
+            models
+                .get(id)
+                .filter(|model| model.active.load(Ordering::Acquire))
+                .map(|model| (*model.manifest).clone())
+        };
+        let manifest = match manifest {
+            Some(manifest) => manifest,
+            None => {
+                let manifest_path = self.inner.config.model_dir.join(id).join("manifest.toml");
+                manifest::load_manifest(&manifest_path)?
+            }
+        };
+        self.trt_warmup_gate_for_manifest(id, &manifest)?;
+        Ok(manifest)
+    }
+
+    pub fn trt_hw_capable(&self) -> bool {
+        self.trt_hw_capable
+    }
+
+    pub fn trt_state(&self, id: &str) -> TrtStateView {
+        let models = match self.models.read() {
+            Ok(models) => models,
+            Err(_) => {
+                return TrtStateView {
+                    state: TrtState::TrtError,
+                    detail: Some("models lock poisoned while reading TRT state".to_string()),
+                }
+            }
+        };
+        models
+            .get(id)
+            .filter(|model| model.active.load(Ordering::Acquire))
+            .map(|model| model.warm.view())
+            .unwrap_or(TrtStateView {
+                state: TrtState::NotLoaded,
+                detail: None,
+            })
+    }
+
+    pub fn trt_warmup(&self, id: &str) -> Result<WarmupOutcome> {
+        let _manifest = self.trt_warmup_gate(id)?;
+        let handle = self.get_or_load_model(id)?;
+        self.trt_warmup_gate_for_manifest(id, &handle.inner.manifest)?;
+        match handle.inner.warm.begin_warm() {
+            BeginWarm::AlreadyReady => Ok(WarmupOutcome::AlreadyReady),
+            BeginWarm::Coalesced => Ok(WarmupOutcome::Started),
+            BeginWarm::Owner => {
+                let models = Arc::clone(&self.models);
+                let engine_inner = Arc::clone(&self.inner);
+                let build_gate = Arc::clone(&self.trt_build_gate);
+                let model_id = id.to_string();
+                let loaded = Arc::clone(&handle.inner);
+                match std::thread::Builder::new()
+                    .name(format!("sparrow-trt-warmup-{id}"))
+                    .spawn(move || {
+                        run_trt_warmup_build(engine_inner, models, build_gate, model_id, loaded);
+                    }) {
+                    Ok(_thread) => Ok(WarmupOutcome::Started),
+                    Err(err) => {
+                        let detail = format!("failed to spawn TensorRT warm-up thread: {err}");
+                        handle.inner.warm.mark_error(detail.clone());
+                        Err(SparrowEngineError::Ort(detail))
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn trt_warmup_blocking(&self, id: &str) -> Result<TrtStateView> {
+        let _manifest = self.trt_warmup_gate(id)?;
+        let handle = self.get_or_load_model(id)?;
+        self.trt_warmup_gate_for_manifest(id, &handle.inner.manifest)?;
+        match handle.inner.warm.begin_warm() {
+            BeginWarm::AlreadyReady => Ok(handle.inner.warm.view()),
+            BeginWarm::Coalesced => {
+                while handle.inner.warm.is_warming() {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Ok(handle.inner.warm.view())
+            }
+            BeginWarm::Owner => {
+                run_trt_warmup_build(
+                    Arc::clone(&self.inner),
+                    Arc::clone(&self.models),
+                    Arc::clone(&self.trt_build_gate),
+                    id.to_string(),
+                    Arc::clone(&handle.inner),
+                );
+                Ok(handle.inner.warm.view())
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -992,6 +1413,7 @@ impl ModelHandle {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use sparrow_engine_types::manifest::{TrtConfig, TrtPrecision};
     use std::path::PathBuf;
 
     fn dummy_model_dir() -> PathBuf {
@@ -1002,6 +1424,231 @@ mod tests {
     /// the gating used by other `sparrow-engine-gpu` integration tests.
     fn cuda_available() -> bool {
         CudaContext::new(0).is_ok()
+    }
+
+    fn test_trt_config(mode: Option<TrtMode>, enabled: bool) -> TrtConfig {
+        TrtConfig {
+            enabled,
+            mode,
+            precision: TrtPrecision::Fp16,
+            builder_optimization_level: 3,
+            engine_hw_compatible: false,
+            profile_min: None,
+            profile_opt: None,
+            profile_max: None,
+        }
+    }
+
+    #[test]
+    fn trt_warmup_gate_rejects_synthetic_disabled_first() {
+        let config = test_trt_config(Some(TrtMode::OnDemand), true);
+        let rejection = trt_warmup_rejection_for_facts(
+            "m",
+            Some(&config),
+            TrtWarmupFacts {
+                sm_major: 7,
+                sm_minor: 0,
+                trt_libs_present: false,
+                trt_disabled: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(rejection, TrtWarmupRejection::Disabled));
+    }
+
+    #[test]
+    fn trt_warmup_gate_rejects_synthetic_not_eligible() {
+        let config = test_trt_config(Some(TrtMode::Off), true);
+        let rejection = trt_warmup_rejection_for_facts(
+            "m",
+            Some(&config),
+            TrtWarmupFacts {
+                sm_major: 8,
+                sm_minor: 9,
+                trt_libs_present: true,
+                trt_disabled: false,
+            },
+        )
+        .unwrap();
+        assert!(matches!(rejection, TrtWarmupRejection::NotEligible(_)));
+    }
+
+    #[test]
+    fn trt_build_gate_recovers_after_poison() {
+        let gate = std::sync::Arc::new(std::sync::Mutex::new(()));
+        let worker_gate = std::sync::Arc::clone(&gate);
+        let _ = std::thread::spawn(move || {
+            let _guard = worker_gate.lock().unwrap();
+            panic!("poison gate for test");
+        })
+        .join();
+
+        assert!(gate.is_poisoned());
+        let _guard = recover_trt_build_gate(&gate);
+    }
+
+    fn mel_classifier_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../sparrow-engine-core/tests/fixtures/audio/mel_classifier_tiny")
+    }
+
+    fn load_validation_fixture() -> Option<(Engine, ModelHandle)> {
+        if !cuda_available() {
+            eprintln!("trt validation regression: no CUDA, skipping");
+            return None;
+        }
+        let fixture_dir = mel_classifier_fixture_dir();
+        if !fixture_dir.join("manifest.toml").exists() || !fixture_dir.join("model.onnx").exists() {
+            eprintln!(
+                "trt validation regression: fixture missing at {}, skipping",
+                fixture_dir.display()
+            );
+            return None;
+        }
+
+        ENGINE_EXISTS.store(false, Ordering::SeqCst);
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+        let model_root = fixture_dir
+            .parent()
+            .expect("mel classifier fixture has parent")
+            .to_path_buf();
+        let engine = Engine::new(EngineConfig::new(Device::Auto, model_root)).expect("engine");
+        let handle = engine
+            .load_model(fixture_dir.join("manifest.toml"))
+            .expect("load fixture model");
+        Some((engine, handle))
+    }
+
+    #[test]
+    #[serial]
+    fn trt_validation_failure_keeps_cuda_model_and_publishes_error() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let manifest_dir = original.path.parent().expect("loaded manifest has parent");
+        let replacement =
+            build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
+                .expect("build replacement model for validation test");
+
+        TRT_VALIDATION_TEST_INJECTION.store(1, Ordering::Release);
+        commit_validated_trt_loaded_model(
+            &engine.inner,
+            &engine.models,
+            handle.model_id().to_string(),
+            &original,
+            replacement,
+        );
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+
+        let state = engine.trt_state(handle.model_id());
+        assert_eq!(state.state, TrtState::TrtError);
+        let detail = state.detail.expect("validation failure detail");
+        assert!(detail.contains("TensorRT warm-up validation failed"));
+        assert!(detail.contains("injected TensorRT validation failure"));
+
+        let current = engine
+            .get_model_handle(handle.model_id())
+            .expect("model remains loaded after validation failure");
+        assert!(Arc::ptr_eq(&current.inner, &original));
+        handle
+            .check_valid()
+            .expect("original CUDA handle remains valid");
+        drop(engine);
+    }
+
+    #[test]
+    #[serial]
+    fn trt_validation_panic_keeps_cuda_model_and_publishes_error() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let manifest_dir = original.path.parent().expect("loaded manifest has parent");
+        let replacement =
+            build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
+                .expect("build replacement model for validation panic test");
+
+        TRT_VALIDATION_TEST_INJECTION.store(2, Ordering::Release);
+        commit_validated_trt_loaded_model(
+            &engine.inner,
+            &engine.models,
+            handle.model_id().to_string(),
+            &original,
+            replacement,
+        );
+        TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+
+        let state = engine.trt_state(handle.model_id());
+        assert_eq!(state.state, TrtState::TrtError);
+        let detail = state.detail.expect("validation panic detail");
+        assert!(detail.contains("TensorRT warm-up validation panicked"));
+        assert!(detail.contains("injected TensorRT validation panic"));
+
+        let current = engine
+            .get_model_handle(handle.model_id())
+            .expect("model remains loaded after validation panic");
+        assert!(Arc::ptr_eq(&current.inner, &original));
+        handle
+            .check_valid()
+            .expect("original CUDA handle remains valid");
+        drop(engine);
+    }
+
+    #[test]
+    fn trt_warmup_gate_rejects_synthetic_sm_below_75() {
+        let config = test_trt_config(Some(TrtMode::OnDemand), true);
+        let rejection = trt_warmup_rejection_for_facts(
+            "m",
+            Some(&config),
+            TrtWarmupFacts {
+                sm_major: 7,
+                sm_minor: 0,
+                trt_libs_present: true,
+                trt_disabled: false,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            rejection,
+            TrtWarmupRejection::HardwareUnsupportedSm(_)
+        ));
+    }
+
+    #[test]
+    fn trt_warmup_gate_rejects_synthetic_missing_libs() {
+        let config = test_trt_config(Some(TrtMode::Always), true);
+        let rejection = trt_warmup_rejection_for_facts(
+            "m",
+            Some(&config),
+            TrtWarmupFacts {
+                sm_major: 8,
+                sm_minor: 9,
+                trt_libs_present: false,
+                trt_disabled: false,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            rejection,
+            TrtWarmupRejection::TrtRuntimeMissing(_)
+        ));
+    }
+
+    #[test]
+    fn trt_warmup_gate_accepts_synthetic_capable() {
+        let config = test_trt_config(None, true);
+        let rejection = trt_warmup_rejection_for_facts(
+            "m",
+            Some(&config),
+            TrtWarmupFacts {
+                sm_major: 8,
+                sm_minor: 9,
+                trt_libs_present: true,
+                trt_disabled: false,
+            },
+        );
+        assert!(rejection.is_none());
     }
 
     fn dummy_pipeline_manifest(id: &str) -> PipelineManifest {

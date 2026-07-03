@@ -15,7 +15,10 @@ use ort::session::Session;
 use sparrow_engine_types::manifest::{
     self, ModelManifest, PipelineManifest, PostprocessMethod, PreprocessMethod,
 };
-use sparrow_engine_types::{derive_model_type, ModelInfo, ModelType, Result, SparrowEngineError};
+use sparrow_engine_types::{
+    derive_model_type, ModelInfo, ModelType, Result, SparrowEngineError, TrtState, TrtStateView,
+    TrtWarmupRejection, WarmupOutcome,
+};
 
 // Phase 3.8 Phase A back-compat re-exports: consumers historically imported
 // `sparrow_engine::engine::Device` and `sparrow_engine::engine::EngineConfig`
@@ -629,6 +632,43 @@ impl Engine {
         crate::catalog::list_available_models(&self.inner.config.model_dir)
     }
 
+    fn ensure_model_known_for_trt(&self, id: &str) -> Result<()> {
+        crate::catalog::validate_model_id(id)?;
+        if self.get_model_handle(id).is_some()
+            || self.list_available_models().iter().any(|m| m.id == id)
+        {
+            return Ok(());
+        }
+        Err(SparrowEngineError::ManifestNotFound(
+            self.inner.config.model_dir.join(id).join("manifest.toml"),
+        ))
+    }
+
+    pub fn trt_warmup(&self, id: &str) -> Result<WarmupOutcome> {
+        self.ensure_model_known_for_trt(id)?;
+        Err(SparrowEngineError::TrtWarmupRejected(
+            TrtWarmupRejection::CpuBuild,
+        ))
+    }
+
+    pub fn trt_warmup_blocking(&self, id: &str) -> Result<TrtStateView> {
+        self.ensure_model_known_for_trt(id)?;
+        Err(SparrowEngineError::TrtWarmupRejected(
+            TrtWarmupRejection::CpuBuild,
+        ))
+    }
+
+    pub fn trt_state(&self, _id: &str) -> TrtStateView {
+        TrtStateView {
+            state: TrtState::Unsupported,
+            detail: None,
+        }
+    }
+
+    pub fn trt_hw_capable(&self) -> bool {
+        false
+    }
+
     /// Resolve the default model ID for a given model type.
     ///
     /// Resolution order:
@@ -1150,6 +1190,13 @@ mod tests {
         PathBuf::from("/tmp/bongo_test_models_nonexistent")
     }
 
+    fn tiny_audio_model_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("sparrow-engine-cpu has a workspace parent")
+            .join("sparrow-engine-core/tests/fixtures/audio")
+    }
+
     fn megadet_v5a_method() -> PostprocessMethod {
         PostprocessMethod::MegadetV5a {
             iou_threshold: 0.45,
@@ -1504,6 +1551,42 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, SparrowEngineError::ManifestNotFound(_)));
         drop(engine);
+    }
+
+    #[test]
+    #[serial]
+    fn trt_warmup_cpu_flavor_reports_unsupported_after_model_lookup() {
+        ENGINE_EXISTS.store(false, Ordering::SeqCst);
+        let config = EngineConfig::new(Device::Cpu, tiny_audio_model_dir());
+        let engine = Engine::new(config).unwrap();
+
+        assert!(!engine.trt_hw_capable());
+
+        let err = engine.trt_warmup("mel-classifier-tiny").unwrap_err();
+        assert_cpu_build_rejection(err);
+
+        let err = engine
+            .trt_warmup_blocking("mel-classifier-tiny")
+            .unwrap_err();
+        assert_cpu_build_rejection(err);
+
+        let err = engine.trt_warmup("missing-model").unwrap_err();
+        assert!(matches!(err, SparrowEngineError::ManifestNotFound(_)));
+
+        let state = engine.trt_state("any-model-id");
+        assert_eq!(state.state, TrtState::Unsupported);
+        assert_eq!(state.detail, None);
+
+        drop(engine);
+    }
+
+    fn assert_cpu_build_rejection(err: SparrowEngineError) {
+        match err {
+            SparrowEngineError::TrtWarmupRejected(rejection) => {
+                assert_eq!(rejection.reason(), "cpu_build");
+            }
+            other => panic!("expected CPU-build TRT warm-up rejection, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------------

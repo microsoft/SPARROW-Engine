@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use axum::extract::DefaultBodyLimit;
 use axum::error_handling::HandleErrorLayer;
+use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -22,10 +22,7 @@ pub fn build_router(state: AppState) -> Router {
     let inference = with_timeout(
         Router::new()
             .route("/v1/detect", post(handlers::detect::detect))
-            .route(
-                "/v1/detect/batch",
-                post(handlers::detect::detect_batch),
-            )
+            .route("/v1/detect/batch", post(handlers::detect::detect_batch))
             .route("/v1/classify", post(handlers::classify::classify))
             .route("/v1/pipeline", post(handlers::pipeline::pipeline))
             .route("/v1/audio/detect", post(handlers::audio::audio_detect)),
@@ -39,6 +36,10 @@ pub fn build_router(state: AppState) -> Router {
             .route("/v1/models", get(handlers::models::list_models))
             .route("/v1/models/load", post(handlers::models::load_model))
             .route("/v1/models/{id}", delete(handlers::models::unload_model))
+            .route(
+                "/v1/models/{id}/trt-warmup",
+                post(handlers::models::trt_warmup),
+            )
             .route(
                 "/v1/pipelines",
                 get(handlers::pipelines_mgmt::list_pipelines)
