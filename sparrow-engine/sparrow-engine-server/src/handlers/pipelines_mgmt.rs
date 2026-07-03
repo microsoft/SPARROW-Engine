@@ -872,6 +872,7 @@ mod tests {
         );
         Catalog {
             models,
+            trt_modes: BTreeMap::new(),
             pipelines: BTreeMap::new(),
         }
     }

@@ -9,40 +9,24 @@ use crate::engine_dispatch::{derive_model_type, ModelInfo, TrtMode};
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
     pub models: BTreeMap<String, ModelInfo>,
-    #[cfg(not(test))]
     pub trt_modes: BTreeMap<String, TrtMode>,
     pub pipelines: BTreeMap<String, CatalogPipeline>,
 }
 
 impl Catalog {
     pub fn trt_mode(&self, model_id: &str) -> TrtMode {
-        #[cfg(not(test))]
-        {
-            self.trt_modes
-                .get(model_id)
-                .copied()
-                .unwrap_or(TrtMode::Off)
-        }
-        #[cfg(test)]
-        {
-            let _ = model_id;
-            TrtMode::Off
-        }
+        self.trt_modes
+            .get(model_id)
+            .copied()
+            .unwrap_or(TrtMode::Off)
     }
 
     pub fn trt_always_ids(&self) -> Vec<String> {
-        #[cfg(not(test))]
-        {
-            self.trt_modes
-                .iter()
-                .filter(|(_, mode)| **mode == TrtMode::Always)
-                .map(|(id, _)| id.clone())
-                .collect()
-        }
-        #[cfg(test)]
-        {
-            Vec::new()
-        }
+        self.trt_modes
+            .iter()
+            .filter(|(_, mode)| **mode == TrtMode::Always)
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 }
 
@@ -106,10 +90,7 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                     .as_ref()
                     .map(|trt| trt.effective_mode())
                     .unwrap_or(TrtMode::Off);
-                #[cfg(not(test))]
                 catalog.trt_modes.insert(id.clone(), trt_mode);
-                #[cfg(test)]
-                let _ = trt_mode;
                 catalog.models.insert(
                     id.clone(),
                     ModelInfo {
