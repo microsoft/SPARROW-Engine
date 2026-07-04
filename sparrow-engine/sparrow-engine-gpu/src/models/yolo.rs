@@ -75,6 +75,8 @@ use sparrow_engine_types::{DetectOpts, DetectResult, Detection, ImageInput, Prep
 
 use crate::decode::GpuImage;
 use crate::kernels::letterbox::{letterbox_gpu, LetterboxKernel, LetterboxMeta};
+use crate::kernels::resize::{resize_gpu, ResizeKernel};
+use crate::kernels::tiled_preprocess::NormalizeStats;
 use crate::trt::ep::{manifest_cache_material, CudaEpConfig, GpuIdentity, TrtEpBuilder};
 
 // ===========================================================================
@@ -473,21 +475,30 @@ impl YoloModel {
         manifest: &ModelManifest,
         manifest_dir: &Path,
     ) -> Result<Self> {
-        // Validate this manifest matches the YOLO E2E shape we implement.
-        if !matches!(manifest.preprocess_method, PreprocessMethod::Letterbox) {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "YoloModel requires preprocess_method = letterbox, got {:?}",
-                manifest.preprocess_method
-            )));
-        }
-        if !matches!(
-            manifest.postprocess_method,
-            PostprocessMethod::YoloE2e | PostprocessMethod::MegadetV5a { .. }
-        ) {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "YoloModel requires postprocess_method = yolo_e2e or megadet_v5a, got {:?}",
-                manifest.postprocess_method
-            )));
+        match &manifest.postprocess_method {
+            PostprocessMethod::YoloE2e | PostprocessMethod::MegadetV5a { .. } => {
+                if !matches!(manifest.preprocess_method, PreprocessMethod::Letterbox) {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "YoloModel requires preprocess_method = letterbox for {}, got {:?}",
+                        manifest.postprocess_method.as_str(),
+                        manifest.preprocess_method
+                    )));
+                }
+            }
+            PostprocessMethod::RtDetrTopk { .. } => {
+                if !matches!(manifest.preprocess_method, PreprocessMethod::Resize) {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "YoloModel requires preprocess_method = resize for rtdetr_topk, got {:?}",
+                        manifest.preprocess_method
+                    )));
+                }
+            }
+            _ => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "YoloModel requires postprocess_method = yolo_e2e, megadet_v5a, or rtdetr_topk, got {:?}",
+                    manifest.postprocess_method
+                )));
+            }
         }
 
         let input_size = manifest.input_size.ok_or_else(|| {
@@ -636,6 +647,33 @@ impl YoloModel {
         image: &ImageInput,
         opts: &DetectOpts,
     ) -> Result<DetectResult> {
+        let resize = if matches!(self.manifest.preprocess_method, PreprocessMethod::Resize) {
+            Some(ResizeKernel::new(ctx)?)
+        } else {
+            None
+        };
+        self.detect_impl(ctx, letterbox, resize.as_ref(), image, opts)
+    }
+
+    pub(crate) fn detect_with_resize(
+        &self,
+        ctx: &Arc<CudaContext>,
+        letterbox: &LetterboxKernel,
+        resize: &ResizeKernel,
+        image: &ImageInput,
+        opts: &DetectOpts,
+    ) -> Result<DetectResult> {
+        self.detect_impl(ctx, letterbox, Some(resize), image, opts)
+    }
+
+    fn detect_impl(
+        &self,
+        ctx: &Arc<CudaContext>,
+        letterbox: &LetterboxKernel,
+        resize: Option<&ResizeKernel>,
+        image: &ImageInput,
+        opts: &DetectOpts,
+    ) -> Result<DetectResult> {
         let start = std::time::Instant::now();
         let prof_on = crate::profile::enabled();
 
@@ -694,19 +732,48 @@ impl YoloModel {
         let original_h = decoded.height;
         let t_decode = start.elapsed();
 
-        // 3. CUDA letterbox + normalize + NCHW.
-        let (input_tensor_f32, lb_meta): (CudaSlice<f32>, LetterboxMeta) = letterbox_gpu(
-            &stream,
-            letterbox,
-            &decoded,
-            self.input_w,
-            self.input_h,
-            self.pad_value,
-            self.channel_order,
-            self.manifest
-                .interpolation
-                .unwrap_or(Interpolation::Bilinear),
-        )?;
+        // 3. CUDA preprocess + normalize + NCHW.
+        let (input_tensor_f32, lb_meta): (CudaSlice<f32>, Option<LetterboxMeta>) =
+            match self.manifest.preprocess_method {
+                PreprocessMethod::Letterbox => {
+                    let (input, meta): (CudaSlice<f32>, LetterboxMeta) = letterbox_gpu(
+                        &stream,
+                        letterbox,
+                        &decoded,
+                        self.input_w,
+                        self.input_h,
+                        self.pad_value,
+                        self.channel_order,
+                        self.manifest
+                            .interpolation
+                            .unwrap_or(Interpolation::Bilinear),
+                    )?;
+                    (input, Some(meta))
+                }
+                PreprocessMethod::Resize => {
+                    let resize = resize.ok_or_else(|| {
+                        SparrowEngineError::InvalidManifest(
+                            "rtdetr_topk with resize preprocessing requires a ResizeKernel".into(),
+                        )
+                    })?;
+                    (
+                        resize_gpu(
+                            &stream,
+                            resize,
+                            &decoded,
+                            self.input_w,
+                            self.input_h,
+                            self.channel_order,
+                            NormalizeStats::UNIT,
+                            self.manifest
+                                .interpolation
+                                .unwrap_or(Interpolation::Bilinear),
+                        )?,
+                        None,
+                    )
+                }
+                _ => unreachable!("YoloModel::load rejects other preprocess methods"),
+            };
 
         // Synchronize so the GPU buffer is ready before binding.
         stream
@@ -730,9 +797,18 @@ impl YoloModel {
             "detect stages"
         );
 
-        // 5. Postprocess on CPU. yolo_e2e expects [N, 6] view.
+        // 5. Postprocess on CPU. Detector outputs are small [N, C] views.
         let view: ArrayView2<f32> = raw_output.view();
-        let pp_meta = preprocess_meta_from_letterbox(&lb_meta, original_w, original_h);
+        let pp_meta = lb_meta
+            .as_ref()
+            .map(|meta| preprocess_meta_from_letterbox(meta, original_w, original_h))
+            .unwrap_or(PreprocessMeta {
+                original_width: original_w,
+                original_height: original_h,
+                scale: 1.0,
+                pad_x: 0.0,
+                pad_y: 0.0,
+            });
 
         let t_pre_pp = start.elapsed();
         let detections: Vec<Detection> = match self.manifest.postprocess_method {
@@ -751,6 +827,15 @@ impl YoloModel {
                     &pp_meta,
                     self.default_threshold,
                     iou_threshold,
+                )?
+            }
+            PostprocessMethod::RtDetrTopk { topk } => {
+                sparrow_engine_core::postprocess::try_rtdetr_topk_with_limit(
+                    &view,
+                    &self.labels,
+                    opts,
+                    self.default_threshold,
+                    topk,
                 )?
             }
             _ => unreachable!("YoloModel::load rejects other postprocess methods"),
@@ -992,6 +1077,15 @@ impl YoloModel {
         let mut results = Vec::with_capacity(inputs.len());
         if inputs.is_empty() {
             return Ok(results);
+        }
+        if matches!(
+            self.manifest.postprocess_method,
+            PostprocessMethod::RtDetrTopk { .. }
+        ) || matches!(self.manifest.preprocess_method, PreprocessMethod::Resize)
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "YoloModel::detect_batch_pipelined supports only letterbox YOLO/MegaDet models; use per-image detect for rtdetr_topk".into(),
+            ));
         }
 
         // Validate ctx ordinal once.
@@ -1366,7 +1460,9 @@ fn validate_output_dims(
     }
     let last = dims[dims.len() - 1];
     let static_last_ok = match method {
-        PostprocessMethod::YoloE2e => last == 6 || last == -1,
+        PostprocessMethod::YoloE2e | PostprocessMethod::RtDetrTopk { .. } => {
+            last == 6 || last == -1
+        }
         PostprocessMethod::MegadetV5a { .. } => {
             let _ = num_labels;
             // Runtime MegaDet postprocess accepts any `[N, 5+C]` with `C > 0`
@@ -1375,7 +1471,7 @@ fn validate_output_dims(
             // last dimension to `num_labels`.
             last == -1 || last > 5
         }
-        _ => unreachable!("validated at load: only YoloE2e | MegadetV5a reach here"),
+        _ => unreachable!("validated at load: only detector postprocess methods reach here"),
     };
     if !static_last_ok {
         return Err(SparrowEngineError::OutputShapeMismatch {

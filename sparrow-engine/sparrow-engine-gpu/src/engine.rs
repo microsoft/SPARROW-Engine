@@ -494,9 +494,10 @@ fn validate_trt_loaded_model_once(
     match inner {
         LoadedModelInner::Yolo(model) => {
             let image = canned_image_input(&expected.manifest)?;
-            model.detect(
+            model.detect_with_resize(
                 &engine_inner.ctx,
                 &engine_inner.letterbox,
+                &engine_inner.resize,
                 &image,
                 &DetectOpts::default(),
             )?;

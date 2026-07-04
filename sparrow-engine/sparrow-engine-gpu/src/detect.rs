@@ -76,9 +76,13 @@ pub fn detect(handle: &ModelHandle, image: &ImageInput, opts: &DetectOpts) -> Re
         .ok_or(SparrowEngineError::EngineFreed)?;
 
     match &inner.inner {
-        LoadedModelInner::Yolo(model) => {
-            model.detect(&engine_inner.ctx, &engine_inner.letterbox, image, opts)
-        }
+        LoadedModelInner::Yolo(model) => model.detect_with_resize(
+            &engine_inner.ctx,
+            &engine_inner.letterbox,
+            &engine_inner.resize,
+            image,
+            opts,
+        ),
         LoadedModelInner::Tiled(model) => model.detect_tiled(&engine_inner.ctx, image, opts),
         LoadedModelInner::Classifier(_) => Err(SparrowEngineError::NotADetector {
             id: inner.manifest.id.clone(),

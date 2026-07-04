@@ -12,7 +12,7 @@ use ort::session::Session;
 use ort::value::TensorRef;
 
 use crate::engine::ModelHandle;
-use crate::error::{SparrowEngineError, Result};
+use crate::error::{Result, SparrowEngineError};
 use crate::manifest::{InferenceStrategy, ModelManifest, PostprocessMethod, PreprocessMethod};
 use crate::postprocess::{self, HeatmapConfig};
 use crate::preprocess::PreprocessMeta;
@@ -224,6 +224,15 @@ pub fn detect_batch(
                             meta,
                             default_threshold.unwrap_or(0.2),
                         )?,
+                        PostprocessMethod::RtDetrTopk { topk } => {
+                            postprocess::try_rtdetr_topk_with_limit(
+                                &per_image.view(),
+                                labels,
+                                opts,
+                                default_threshold.unwrap_or(0.2),
+                                *topk,
+                            )?
+                        }
                         PostprocessMethod::MegadetV5a { iou_threshold } => {
                             postprocess::try_megadet_v5a(
                                 &per_image.view(),
@@ -235,6 +244,7 @@ pub fn detect_batch(
                             )?
                         }
                         // HeatmapPeaks: tiled only (falls back above).
+                        // RtDetrTopk: handled above.
                         // Sigmoid: audio only (rejected at entry).
                         // Softmax: rejected at entry.
                         _ => {
@@ -269,9 +279,9 @@ pub fn detect_batch(
             for (i, prep) in preps.into_iter().enumerate() {
                 let input_value =
                     TensorRef::from_array_view(&prep.tensor).map_err(crate::engine::ort_err)?;
-                let mut guard = session
-                    .lock()
-                    .map_err(|_| SparrowEngineError::Ort("detector session lock poisoned".into()))?;
+                let mut guard = session.lock().map_err(|_| {
+                    SparrowEngineError::Ort("detector session lock poisoned".into())
+                })?;
                 let outputs = guard
                     .run(ort::inputs![input_value])
                     .map_err(crate::engine::ort_err)?;
@@ -669,6 +679,40 @@ fn dispatch_postprocess(
                 default_threshold.unwrap_or(0.2),
             )
         }
+        PostprocessMethod::RtDetrTopk { topk } => {
+            if outputs.len() == 0 {
+                return Err(SparrowEngineError::Ort(
+                    "rtdetr_topk session returned no outputs".to_string(),
+                ));
+            }
+            let output_view: ArrayViewD<'_, f32> = outputs[0]
+                .try_extract_array::<f32>()
+                .map_err(crate::engine::ort_err)?;
+
+            let shape = output_view.shape();
+            let view_2d: ArrayView2<f32> = if shape.len() == 2 {
+                output_view
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(crate::engine::ort_err)?
+            } else if shape.len() == 3 {
+                let squeezed = output_view.index_axis(Axis(0), 0);
+                squeezed
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(crate::engine::ort_err)?
+            } else {
+                return Err(SparrowEngineError::Ort(format!(
+                    "Unexpected rtdetr_topk output shape: {shape:?}",
+                )));
+            };
+
+            postprocess::try_rtdetr_topk_with_limit(
+                &view_2d,
+                labels,
+                opts,
+                default_threshold.unwrap_or(0.2),
+                *topk,
+            )
+        }
         PostprocessMethod::MegadetV5a { iou_threshold } => {
             if outputs.len() == 0 {
                 return Err(SparrowEngineError::Ort(
@@ -773,16 +817,18 @@ pub(crate) fn preprocess_config_from_manifest(
                 id: manifest.id.clone(),
                 method: format!("{:?}", manifest.preprocess_method),
             })?,
-        layout: manifest.layout.ok_or_else(|| SparrowEngineError::NotAnAudioModel {
-            id: manifest.id.clone(),
-            method: format!("{:?}", manifest.preprocess_method),
-        })?,
-        normalization: manifest
-            .normalization
+        layout: manifest
+            .layout
             .ok_or_else(|| SparrowEngineError::NotAnAudioModel {
                 id: manifest.id.clone(),
                 method: format!("{:?}", manifest.preprocess_method),
             })?,
+        normalization: manifest.normalization.ok_or_else(|| {
+            SparrowEngineError::NotAnAudioModel {
+                id: manifest.id.clone(),
+                method: format!("{:?}", manifest.preprocess_method),
+            }
+        })?,
         pad_value: manifest.pad_value.unwrap_or(0.0),
         channel_order: manifest.channel_order.unwrap_or_default(),
         interpolation: manifest.interpolation.unwrap_or_default(),

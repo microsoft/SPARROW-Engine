@@ -302,6 +302,11 @@ pub enum PostprocessMethod {
         adaptive: bool,
         point_to_box_half_size: u32,
     },
+    /// RT-DETR packed TopK detector output: [cx, cy, w, h, score, class_id].
+    RtDetrTopk {
+        /// Optional manifest cap for fixed-query outputs after score sorting.
+        topk: Option<usize>,
+    },
     /// Softmax → argmax → label lookup (classifiers).
     Softmax,
     /// Sigmoid activation for binary audio detection.
@@ -349,6 +354,7 @@ impl PostprocessMethod {
             PostprocessMethod::YoloE2e => "yolo_e2e",
             PostprocessMethod::MegadetV5a { .. } => "megadet_v5a",
             PostprocessMethod::HeatmapPeaks { .. } => "heatmap_peaks",
+            PostprocessMethod::RtDetrTopk { .. } => "rtdetr_topk",
             PostprocessMethod::Softmax => "softmax",
             PostprocessMethod::Sigmoid { .. } => "sigmoid",
         }
@@ -627,6 +633,7 @@ struct RawPostprocessing {
     peak_threshold: Option<f32>,
     adaptive: Option<bool>,
     point_to_box_half_size: Option<u32>,
+    topk: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -1112,6 +1119,16 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 point_to_box_half_size,
             }
         }
+        "rtdetr_topk" => {
+            if matches!(raw.postprocessing.topk, Some(0)) {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "rtdetr_topk topk must be >= 1 when set".to_string(),
+                ));
+            }
+            PostprocessMethod::RtDetrTopk {
+                topk: raw.postprocessing.topk,
+            }
+        }
         "softmax" => PostprocessMethod::Softmax,
         "sigmoid" => {
             let confidence_threshold =
@@ -1194,6 +1211,16 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     {
         return Err(SparrowEngineError::InvalidManifest(format!(
             "postprocessing method '{}' requires preprocessing method 'letterbox'",
+            raw.postprocessing.method
+        )));
+    }
+
+    // -- RT-DETR TopK emits normalized direct-resize coordinates --
+    if matches!(postprocess_method, PostprocessMethod::RtDetrTopk { .. })
+        && preprocess_method != PreprocessMethod::Resize
+    {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "postprocessing method '{}' requires preprocessing method 'resize'",
             raw.postprocessing.method
         )));
     }
@@ -1609,6 +1636,90 @@ format = "one_per_line"
         assert_eq!(manifest.confidence_threshold, Some(0.2));
         assert_eq!(manifest.label_format, Some(LabelFormat::OnePerLine));
         assert_eq!(manifest.trt, None);
+    }
+
+    #[test]
+    fn test_load_valid_rtdetr_topk_resize_manifest() {
+        let toml = r#"
+[model]
+id = "mdv6-rtdetr"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [1280, 1280]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "rtdetr_topk"
+confidence_threshold = 0.25
+topk = 300
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        assert_eq!(manifest.preprocess_method, PreprocessMethod::Resize);
+        assert!(matches!(
+            manifest.postprocess_method,
+            PostprocessMethod::RtDetrTopk { topk: Some(300) }
+        ));
+        assert_eq!(
+            crate::model_type::derive_model_type(
+                &manifest.preprocess_method,
+                &manifest.postprocess_method,
+                manifest.subtype,
+            ),
+            crate::types::ModelType::Detector,
+        );
+    }
+
+    #[test]
+    fn test_rtdetr_topk_rejects_non_resize_preprocess() {
+        for method in ["letterbox", "resize_crop"] {
+            let extra = if method == "resize_crop" {
+                "resize_size = [1280, 1280]
+"
+            } else {
+                ""
+            };
+            let toml = format!(
+                r#"
+[model]
+id = "mdv6-rtdetr"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "{method}"
+input_size = [1280, 1280]
+layout = "nchw"
+normalization = "unit"
+{extra}
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "rtdetr_topk"
+confidence_threshold = 0.25
+"#,
+            );
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml"))
+                .expect_err("rtdetr_topk must require resize preprocessing");
+            assert!(
+                matches!(err, SparrowEngineError::InvalidManifest(ref msg) if msg.contains("requires preprocessing method 'resize'")),
+                "unexpected error for {method}: {err:?}"
+            );
+        }
     }
 
     #[test]

@@ -46,9 +46,7 @@ pub fn derive_model_type(
         // falls through to Detector. MelSpectrogram+Sigmoid (AudioDetector) is
         // matched above; RawAudio+Sigmoid is rejected by manifest validation.
         (
-            PreprocessMethod::Letterbox
-            | PreprocessMethod::Resize
-            | PreprocessMethod::ResizeCrop,
+            PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop,
             PostprocessMethod::Sigmoid { .. },
         ) => ModelType::Classifier,
         _ => ModelType::Detector,
@@ -191,7 +189,7 @@ mod phase_a_r1_model_type_tests {
 
     #[test]
     fn detector_for_image_preprocess_plus_non_softmax_postprocess() {
-        // Letterbox + {YoloE2e, MegadetV5a, HeatmapPeaks} → Detector when Standard.
+        // Letterbox + {YoloE2e, MegadetV5a, HeatmapPeaks, RtDetrTopk} → Detector when Standard.
         // (Sigmoid is intentionally NOT here — image+Sigmoid is now a multi-label
         // Classifier; see multilabel_classifier_when_sigmoid_with_image_preprocess.)
         let postprocess_methods: Vec<PostprocessMethod> = vec![
@@ -200,6 +198,7 @@ mod phase_a_r1_model_type_tests {
                 iou_threshold: 0.45,
             },
             heatmap(),
+            PostprocessMethod::RtDetrTopk { topk: Some(300) },
         ];
         for pp in &postprocess_methods {
             assert_eq!(
@@ -252,6 +251,7 @@ mod phase_a_r1_model_type_tests {
                 iou_threshold: 0.45,
             },
             heatmap(),
+            PostprocessMethod::RtDetrTopk { topk: Some(300) },
         ];
         for pp in &postprocess_methods {
             assert_eq!(
@@ -271,7 +271,7 @@ mod phase_a_r1_model_type_tests {
 
     #[test]
     fn cartesian_full_matrix_no_panic_and_no_unknown_variants() {
-        // Exhaustive cartesian: 4 preprocess × 5 postprocess × 2 subtype = 40 combos.
+        // Exhaustive cartesian: 4 preprocess × 6 postprocess × 2 subtype = 48 combos.
         // The point of this test is twofold:
         //   1) every combo derives without panicking,
         //   2) every result is one of the 5 known ModelType variants (sanity for refactor regressions).
@@ -289,6 +289,7 @@ mod phase_a_r1_model_type_tests {
             heatmap(),
             PostprocessMethod::Softmax,
             sigmoid(),
+            PostprocessMethod::RtDetrTopk { topk: Some(300) },
         ];
         let subtypes: [ModelSubtype; 2] = [ModelSubtype::Standard, ModelSubtype::Overhead];
 
@@ -310,7 +311,7 @@ mod phase_a_r1_model_type_tests {
                 }
             }
         }
-        assert_eq!(combo_count, 4 * 5 * 2);
+        assert_eq!(combo_count, 4 * 6 * 2);
     }
 
     #[test]

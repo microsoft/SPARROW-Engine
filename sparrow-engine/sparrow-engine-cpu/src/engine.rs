@@ -1034,7 +1034,7 @@ fn validate_output_dims(shape: &[i64], model_id: &str, method: &PostprocessMetho
     let method_str = method.as_str().to_string();
 
     match method {
-        PostprocessMethod::YoloE2e => {
+        PostprocessMethod::YoloE2e | PostprocessMethod::RtDetrTopk { .. } => {
             // Expected: [N, 6] or [1, N, 6] where N is dynamic (-1) or
             // positive.
             if shape.len() != 2 && shape.len() != 3 {

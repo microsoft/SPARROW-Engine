@@ -202,6 +202,121 @@ pub fn try_yolo_e2e(
     Ok(detections)
 }
 
+/// Postprocess RT-DETR packed TopK output.
+///
+/// `output` shape: `[N, 6]` — columns: normalized cx, cy, w, h, score, class_id.
+/// Coordinates are already normalized to the direct-resize / scale-fill input frame.
+pub fn rtdetr_topk(
+    output: &ArrayView2<f32>,
+    labels: &[String],
+    opts: &DetectOpts,
+    default_threshold: f32,
+) -> Vec<Detection> {
+    try_rtdetr_topk(output, labels, opts, default_threshold).unwrap_or_default()
+}
+
+/// Fallible RT-DETR TopK postprocessor without a manifest-level TopK cap.
+pub fn try_rtdetr_topk(
+    output: &ArrayView2<f32>,
+    labels: &[String],
+    opts: &DetectOpts,
+    default_threshold: f32,
+) -> Result<Vec<Detection>> {
+    try_rtdetr_topk_with_limit(output, labels, opts, default_threshold, None)
+}
+
+/// Fallible RT-DETR TopK postprocessor used by runtime inference paths.
+pub fn try_rtdetr_topk_with_limit(
+    output: &ArrayView2<f32>,
+    labels: &[String],
+    opts: &DetectOpts,
+    default_threshold: f32,
+    manifest_topk: Option<usize>,
+) -> Result<Vec<Detection>> {
+    let threshold = resolve_confidence_threshold(opts.confidence_threshold, default_threshold)?;
+    let ncols = output.ncols();
+    if ncols != 6 {
+        return Err(SparrowEngineError::Ort(format!(
+            "rtdetr_topk expects exactly [N, 6], got {ncols} columns"
+        )));
+    }
+
+    let mut detections = Vec::new();
+
+    for row in output.rows() {
+        if !row.iter().all(|v| v.is_finite()) {
+            return Err(SparrowEngineError::Ort(
+                "rtdetr_topk output contains non-finite values".to_string(),
+            ));
+        }
+        let confidence = row[4];
+        if !(0.0..=1.0).contains(&confidence) {
+            return Err(SparrowEngineError::Ort(
+                "rtdetr_topk output contains scores outside [0.0, 1.0]".to_string(),
+            ));
+        }
+
+        if confidence < threshold {
+            continue;
+        }
+
+        let cx = row[0];
+        let cy = row[1];
+        let w = row[2];
+        let h = row[3];
+        let bbox = BBox {
+            x_min: (cx - w / 2.0).clamp(0.0, 1.0),
+            y_min: (cy - h / 2.0).clamp(0.0, 1.0),
+            x_max: (cx + w / 2.0).clamp(0.0, 1.0),
+            y_max: (cy + h / 2.0).clamp(0.0, 1.0),
+        };
+        if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
+            return Err(SparrowEngineError::Ort(
+                "rtdetr_topk output contains degenerate normalized boxes".to_string(),
+            ));
+        }
+
+        if row[5] < 0.0 {
+            return Err(SparrowEngineError::Ort(format!(
+                "rtdetr_topk class_id must be non-negative, got {}",
+                row[5]
+            )));
+        }
+        if row[5].fract() != 0.0 {
+            return Err(SparrowEngineError::Ort(format!(
+                "rtdetr_topk class_id must be an integer, got {}",
+                row[5]
+            )));
+        }
+        let class_id = row[5] as u32;
+        let label = label_for_id(labels, class_id);
+
+        detections.push(Detection {
+            bbox,
+            label,
+            label_id: class_id,
+            confidence,
+        });
+    }
+
+    detections.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let request_cap = opts.max_detections.map(|v| v as usize);
+    let cap = match (request_cap, manifest_topk) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    if let Some(cap) = cap {
+        detections.truncate(cap);
+    }
+    Ok(detections)
+}
+
 /// Postprocess MegaDetector v5a output (objectness * class_scores).
 ///
 /// `output` shape: `[N, 5+num_classes]` — columns: cx, cy, w, h, objectness, class_scores...
@@ -961,6 +1076,96 @@ mod tests {
     }
 
     #[test]
+    fn test_rtdetr_topk_decodes_normalized_cxcywh() {
+        let data = array![[0.5, 0.5, 0.4, 0.2, 0.9, 1.0]];
+        let opts = DetectOpts::default();
+
+        let dets = rtdetr_topk(&data.view(), &test_labels(), &opts, 0.1);
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].label, "person");
+        assert!((dets[0].bbox.x_min - 0.3).abs() < 1e-5);
+        assert!((dets[0].bbox.y_min - 0.4).abs() < 1e-5);
+        assert!((dets[0].bbox.x_max - 0.7).abs() < 1e-5);
+        assert!((dets[0].bbox.y_max - 0.6).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_rtdetr_topk_filters_by_threshold_before_geometry_validation() {
+        let data = array![[2.0, 0.5, 0.1, 0.1, 0.1, 0.0]];
+        let opts = DetectOpts::default();
+
+        let dets = try_rtdetr_topk(&data.view(), &test_labels(), &opts, 0.5)
+            .expect("low-confidence degenerate boxes should be skipped");
+        assert!(dets.is_empty());
+    }
+
+    #[test]
+    fn test_rtdetr_topk_caps_by_manifest_topk_and_max_detections() {
+        let data = array![
+            [0.5, 0.5, 0.2, 0.2, 0.9, 0.0],
+            [0.5, 0.5, 0.2, 0.2, 0.8, 1.0],
+            [0.5, 0.5, 0.2, 0.2, 0.7, 2.0],
+        ];
+        let opts = DetectOpts {
+            max_detections: Some(2),
+            ..Default::default()
+        };
+
+        let dets = try_rtdetr_topk_with_limit(&data.view(), &test_labels(), &opts, 0.1, Some(1))
+            .expect("valid rtdetr rows should decode");
+        assert_eq!(dets.len(), 1);
+        assert!((dets[0].confidence - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_rtdetr_topk_unknown_class_fallback() {
+        let data = array![[0.5, 0.5, 0.2, 0.2, 0.9, 7.0]];
+        let opts = DetectOpts::default();
+
+        let dets = rtdetr_topk(&data.view(), &test_labels(), &opts, 0.1);
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].label, "unknown_7");
+        assert_eq!(dets[0].label_id, 7);
+    }
+
+    #[test]
+    fn test_rtdetr_topk_rejects_fractional_class_id() {
+        let data = array![[0.5, 0.5, 0.2, 0.2, 0.9, 1.5]];
+        let opts = DetectOpts::default();
+
+        let err = try_rtdetr_topk(&data.view(), &test_labels(), &opts, 0.5)
+            .expect_err("fractional class ids should fail");
+        assert!(
+            matches!(err, SparrowEngineError::Ort(msg) if msg.contains("class_id must be an integer"))
+        );
+    }
+
+    #[test]
+    fn test_rtdetr_topk_rejects_high_confidence_degenerate_boxes() {
+        let data = array![[2.0, 0.5, 0.1, 0.1, 0.9, 0.0]];
+        let opts = DetectOpts::default();
+
+        let err = try_rtdetr_topk(&data.view(), &test_labels(), &opts, 0.5)
+            .expect_err("high-confidence degenerate boxes should fail");
+        assert!(
+            matches!(err, SparrowEngineError::Ort(msg) if msg.contains("degenerate normalized boxes"))
+        );
+    }
+
+    #[test]
+    fn test_rtdetr_topk_clamps_out_of_range_coordinates() {
+        let data = array![[0.05, 0.95, 0.4, 0.4, 0.9, 0.0]];
+        let opts = DetectOpts::default();
+
+        let dets = rtdetr_topk(&data.view(), &test_labels(), &opts, 0.1);
+        assert_eq!(dets.len(), 1);
+        assert!((dets[0].bbox.x_min - 0.0).abs() < 1e-5);
+        assert!((dets[0].bbox.y_min - 0.75).abs() < 1e-5);
+        assert!((dets[0].bbox.x_max - 0.25).abs() < 1e-5);
+        assert!((dets[0].bbox.y_max - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
     fn test_megadet_v5a_confidence_product() {
         // objectness=0.8, class_scores=[0.5, 0.9, 0.1] -> conf = 0.8*0.9 = 0.72, class=1
         // Coordinates (10, 10, 90, 90) are interpreted as (cx, cy, w, h) per the
@@ -1199,7 +1404,7 @@ mod tests {
         // Ranked descending: class 1 (logit 2) highest.
         assert_eq!(results[0].label_id, 1);
         assert!((results[0].confidence - 0.880_797).abs() < 1e-4); // sigmoid(2)
-        // The logit-0 class must score ~0.5 (softmax would not).
+                                                                   // The logit-0 class must score ~0.5 (softmax would not).
         let c0 = results.iter().find(|c| c.label_id == 0).unwrap();
         assert!(
             (c0.confidence - 0.5).abs() < 1e-6,
