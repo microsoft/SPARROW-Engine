@@ -855,6 +855,7 @@ fn try_postprocess_batched_output(
     Ok(Some(chunk_results))
 }
 
+#[allow(clippy::type_complexity)]
 fn emit_chunk_results(
     chunk_start: usize,
     chunk_results: Vec<DetectResult>,
@@ -1067,6 +1068,7 @@ mod tests {
         let mut cb = |idx: usize, result: &DetectResult| {
             seen.push((idx, result.detections.len()));
         };
+        #[allow(clippy::type_complexity)]
         let mut cb_opt: Option<&mut dyn FnMut(usize, &DetectResult)> = Some(&mut cb);
         let mut all_results = Vec::new();
 
