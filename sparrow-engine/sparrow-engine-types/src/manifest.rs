@@ -967,7 +967,22 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             Some(input_size),
             Some(layout),
             Some(normalization),
-            Some(raw.preprocessing.pad_value.unwrap_or(0.0)),
+            Some(raw.preprocessing.pad_value.unwrap_or_else(|| {
+                // Letterbox models are trained with the YOLO-standard 114/255 gray fill
+                // (Ultralytics / MegaDetector convention). Default to GRAY when the manifest
+                // omits pad_value, so a missing field never silently pads BLACK — that black
+                // padding was the ONB-2-MIT-E root cause (2026-07-04): it suppressed
+                // bottom-edge detections vs the gray-padded training + parity reference.
+                // pad_value is in post-normalization scale; 114/255 assumes unit normalization
+                // (true for every current letterbox model). An imagenet-normalized letterbox
+                // model must set pad_value explicitly. Non-letterbox methods (resize /
+                // resize_crop) do not pad, so the value is unused there.
+                if raw.preprocessing.method == "letterbox" {
+                    114.0 / 255.0
+                } else {
+                    0.0
+                }
+            })),
             Some(channel_order),
         )
     };
@@ -2603,7 +2618,10 @@ format = "one_per_line"
     }
 
     #[test]
-    fn test_pad_value_defaults_to_zero() {
+    fn test_pad_value_defaults_to_gray_for_letterbox() {
+        // Letterbox models omitting pad_value must default to YOLO-standard 114/255 gray,
+        // NOT black — the ONB-2-MIT-E fix (2026-07-04). Black padding suppressed bottom-edge
+        // detections vs the gray-padded training + parity reference.
         let toml = r#"
 [model]
 id = "test"
@@ -2621,6 +2639,36 @@ strategy = "single"
 
 [postprocessing]
 method = "yolo_e2e"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert!((manifest.pad_value.unwrap() - 114.0 / 255.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_pad_value_defaults_to_zero_for_non_letterbox() {
+        // Non-letterbox methods (resize) do not pad; the default stays 0.0 (unused).
+        let toml = r#"
+[model]
+id = "test"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "rtdetr_topk"
 
 [labels]
 file = "labels.txt"
