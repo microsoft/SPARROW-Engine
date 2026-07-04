@@ -91,21 +91,7 @@ fn project_trt_state_from(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine_dispatch::{ModelInfo, ModelType};
-    use std::path::PathBuf;
-
-    fn model_info(id: &str, model_type: ModelType) -> ModelInfo {
-        ModelInfo {
-            id: id.to_string(),
-            path: PathBuf::from(format!("/models/{id}/manifest.toml")),
-            model_type,
-            default: false,
-            version: None,
-            description: None,
-            onnx_sha256: None,
-            onnx_size_bytes: None,
-        }
-    }
+    use crate::engine_dispatch::ModelType;
 
     #[test]
     fn catalog_entry_serializes_loaded_flag_and_unsupported_trt_state() {

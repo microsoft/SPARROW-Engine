@@ -25,12 +25,6 @@ use crate::types::{DetectOpts, DetectResult, ImageInput};
 
 /// Validate that a manifest represents a vision detection model (not a classifier, not audio).
 pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
-    if matches!(manifest.postprocess_method, PostprocessMethod::Softmax) {
-        return Err(SparrowEngineError::NotADetector {
-            id: manifest.id.clone(),
-            method: "softmax".to_string(),
-        });
-    }
     if matches!(
         manifest.preprocess_method,
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
@@ -38,6 +32,15 @@ pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
         return Err(SparrowEngineError::IsAudioModel {
             id: manifest.id.clone(),
             method: manifest.preprocess_method.as_str().to_string(),
+        });
+    }
+    if matches!(
+        manifest.postprocess_method,
+        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+    ) {
+        return Err(SparrowEngineError::NotADetector {
+            id: manifest.id.clone(),
+            method: manifest.postprocess_method.as_str().to_string(),
         });
     }
     Ok(())
@@ -199,74 +202,25 @@ pub fn detect_batch(
                 })();
 
             if let Some(output_owned) = batch_output {
-                let shape: Vec<usize> = output_owned.shape().to_vec();
-
-                // Validate batch output is rank-3 [N, ...] with correct batch size.
-                if shape.len() != 3 || shape[0] != chunk_len {
-                    return Err(SparrowEngineError::Ort(format!(
-                        "Unexpected batched output shape: {shape:?} for batch {chunk_len}"
-                    )));
+                if let Some(chunk_results) = try_postprocess_batched_output(
+                    &output_owned,
+                    &preps,
+                    labels,
+                    opts,
+                    &manifest.postprocess_method,
+                    default_threshold,
+                    start.elapsed().as_secs_f32() * 1000.0,
+                )? {
+                    emit_chunk_results(
+                        chunk_start,
+                        chunk_results,
+                        &mut all_results,
+                        &mut on_result,
+                    );
+                    true
+                } else {
+                    false
                 }
-
-                for (i, prep) in preps.iter().enumerate() {
-                    let meta = &prep.meta;
-                    let per_image = output_owned
-                        .view()
-                        .index_axis(Axis(0), i)
-                        .into_dimensionality::<ndarray::Ix2>()
-                        .map_err(crate::engine::ort_err)?
-                        .to_owned();
-                    let detections = match &manifest.postprocess_method {
-                        PostprocessMethod::YoloE2e => postprocess::try_yolo_e2e(
-                            &per_image.view(),
-                            labels,
-                            opts,
-                            meta,
-                            default_threshold.unwrap_or(0.2),
-                        )?,
-                        PostprocessMethod::RtDetrTopk { topk } => {
-                            postprocess::try_rtdetr_topk_with_limit(
-                                &per_image.view(),
-                                labels,
-                                opts,
-                                default_threshold.unwrap_or(0.2),
-                                *topk,
-                            )?
-                        }
-                        PostprocessMethod::MegadetV5a { iou_threshold } => {
-                            postprocess::try_megadet_v5a(
-                                &per_image.view(),
-                                labels,
-                                opts,
-                                meta,
-                                default_threshold.unwrap_or(0.1),
-                                *iou_threshold,
-                            )?
-                        }
-                        // HeatmapPeaks: tiled only (falls back above).
-                        // RtDetrTopk: handled above.
-                        // Sigmoid: audio only (rejected at entry).
-                        // Softmax: rejected at entry.
-                        _ => {
-                            return Err(SparrowEngineError::Ort(format!(
-                                "Batch detection not supported for {:?}",
-                                manifest.postprocess_method,
-                            )))
-                        }
-                    };
-                    let elapsed = start.elapsed();
-                    let result = DetectResult {
-                        detections,
-                        image_width: meta.original_width,
-                        image_height: meta.original_height,
-                        processing_time_ms: elapsed.as_secs_f32() * 1000.0,
-                    };
-                    if let Some(ref mut cb) = on_result {
-                        cb(chunk_start + i, &result);
-                    }
-                    all_results.push(result);
-                }
-                true
             } else {
                 false // Model doesn't support batching — fall back
             }
@@ -791,7 +745,7 @@ fn dispatch_postprocess(
             // This branch is unreachable because we check for Softmax at entry.
             unreachable!("Softmax models are rejected at the start of detect()");
         }
-        PostprocessMethod::Sigmoid { .. } => Err(SparrowEngineError::IsAudioModel {
+        PostprocessMethod::Sigmoid { .. } => Err(SparrowEngineError::NotADetector {
             id: manifest.id.clone(),
             method: manifest.postprocess_method.as_str().to_string(),
         }),
@@ -834,6 +788,86 @@ pub(crate) fn preprocess_config_from_manifest(
         interpolation: manifest.interpolation.unwrap_or_default(),
         resize_crop: manifest.resize_crop,
     })
+}
+
+fn try_postprocess_batched_output(
+    output_owned: &ndarray::ArrayD<f32>,
+    preps: &[preprocess::PreprocessResult],
+    labels: &[String],
+    opts: &DetectOpts,
+    postprocess_method: &PostprocessMethod,
+    default_threshold: Option<f32>,
+    processing_time_ms: f32,
+) -> Result<Option<Vec<DetectResult>>> {
+    let shape: Vec<usize> = output_owned.shape().to_vec();
+    if shape.len() != 3 || shape[0] != preps.len() {
+        return Ok(None);
+    }
+
+    let mut chunk_results = Vec::with_capacity(preps.len());
+    for (i, prep) in preps.iter().enumerate() {
+        let meta = &prep.meta;
+        let per_image = match output_owned
+            .view()
+            .index_axis(Axis(0), i)
+            .into_dimensionality::<ndarray::Ix2>()
+        {
+            Ok(per_image) => per_image.to_owned(),
+            Err(_) => return Ok(None),
+        };
+        let detections = match postprocess_method {
+            PostprocessMethod::YoloE2e => postprocess::try_yolo_e2e(
+                &per_image.view(),
+                labels,
+                opts,
+                meta,
+                default_threshold.unwrap_or(0.2),
+            )?,
+            PostprocessMethod::MegadetV5a { iou_threshold } => postprocess::try_megadet_v5a(
+                &per_image.view(),
+                labels,
+                opts,
+                meta,
+                default_threshold.unwrap_or(0.1),
+                *iou_threshold,
+            )?,
+            PostprocessMethod::RtDetrTopk { topk } => postprocess::try_rtdetr_topk_with_limit(
+                &per_image.view(),
+                labels,
+                opts,
+                default_threshold.unwrap_or(0.2),
+                *topk,
+            )?,
+            _ => {
+                return Err(SparrowEngineError::Ort(format!(
+                    "Batch detection not supported for {postprocess_method:?}",
+                )))
+            }
+        };
+        chunk_results.push(DetectResult {
+            detections,
+            image_width: meta.original_width,
+            image_height: meta.original_height,
+            processing_time_ms,
+        });
+    }
+
+    Ok(Some(chunk_results))
+}
+
+#[allow(clippy::type_complexity)]
+fn emit_chunk_results(
+    chunk_start: usize,
+    chunk_results: Vec<DetectResult>,
+    all_results: &mut Vec<DetectResult>,
+    on_result: &mut Option<&mut dyn FnMut(usize, &DetectResult)>,
+) {
+    for (i, result) in chunk_results.into_iter().enumerate() {
+        if let Some(cb) = on_result.as_deref_mut() {
+            cb(chunk_start + i, &result);
+        }
+        all_results.push(result);
+    }
 }
 
 /// Deduplicate detections from overlapping tiles by center proximity.
@@ -903,8 +937,19 @@ pub(crate) fn decode_image(image: &ImageInput) -> Result<image::DynamicImage> {
 
 #[cfg(test)]
 mod tests {
-    use super::deduplicate_tiled;
-    use crate::types::{BBox, Detection};
+    use super::{
+        deduplicate_tiled, emit_chunk_results, try_postprocess_batched_output,
+        validate_vision_detector, PreprocessMeta,
+    };
+    use crate::error::SparrowEngineError;
+    use crate::manifest::{
+        InferenceStrategy, Layout, Normalization, PostprocessMethod, Precision, PreprocessMethod,
+    };
+    use crate::preprocess::PreprocessResult;
+    use crate::types::{BBox, DetectOpts, DetectResult, Detection};
+    use ndarray::{Array, Array4};
+    use sparrow_engine_types::manifest::ModelManifest;
+    use sparrow_engine_types::types::ModelSubtype;
 
     /// Helper: create a Detection at the given normalized bbox center with a
     /// fixed half-size (for 6000x4000 image, half=10px → bbox width = 20/6000).
@@ -923,6 +968,114 @@ mod tests {
             label_id: 0,
             confidence,
         }
+    }
+
+    fn image_sigmoid_manifest() -> ModelManifest {
+        ModelManifest {
+            id: "image-sigmoid".into(),
+            format: "onnx".into(),
+            model_file: "model.onnx".into(),
+            preprocess_method: PreprocessMethod::Resize,
+            input_size: Some([224, 224]),
+            layout: Some(Layout::Nchw),
+            normalization: Some(Normalization::Unit),
+            pad_value: None,
+            channel_order: None,
+            interpolation: None,
+            resize_crop: None,
+            precision: Precision::Fp32,
+            model_file_fp16: None,
+            inference_strategy: InferenceStrategy::Single,
+            trt: None,
+            postprocess_method: PostprocessMethod::Sigmoid {
+                confidence_threshold: 0.5,
+            },
+            confidence_threshold: Some(0.5),
+            label_file: Some("labels.txt".into()),
+            label_format: None,
+            default: false,
+            subtype: ModelSubtype::Standard,
+            onnx_sha256: None,
+            onnx_size_bytes: None,
+            version: None,
+            description: None,
+            provenance: None,
+            drift_reference: None,
+        }
+    }
+
+    #[test]
+    fn validate_vision_detector_rejects_image_sigmoid_manifest_as_classifier() {
+        let err = validate_vision_detector(&image_sigmoid_manifest()).unwrap_err();
+        assert!(matches!(err, SparrowEngineError::NotADetector { .. }));
+    }
+
+    fn test_meta() -> PreprocessMeta {
+        PreprocessMeta {
+            original_width: 640,
+            original_height: 480,
+            scale: 1.0,
+            pad_x: 0.0,
+            pad_y: 0.0,
+        }
+    }
+
+    #[test]
+    fn batched_output_shape_mismatch_requests_fallback_without_results() {
+        let output = Array::zeros((2, 6)).into_dyn();
+        let preps = vec![
+            PreprocessResult {
+                tensor: Array4::zeros((1, 3, 2, 2)),
+                meta: test_meta(),
+            },
+            PreprocessResult {
+                tensor: Array4::zeros((1, 3, 2, 2)),
+                meta: test_meta(),
+            },
+        ];
+
+        let results = try_postprocess_batched_output(
+            &output,
+            &preps,
+            &[],
+            &DetectOpts::default(),
+            &PostprocessMethod::YoloE2e,
+            Some(0.2),
+            1.0,
+        )
+        .unwrap();
+
+        assert!(results.is_none());
+    }
+
+    #[test]
+    fn emit_chunk_results_invokes_callback_once_per_result() {
+        let chunk_results = vec![
+            DetectResult {
+                detections: vec![make_det(10.0, 20.0, 0.9)],
+                image_width: 640,
+                image_height: 480,
+                processing_time_ms: 1.0,
+            },
+            DetectResult {
+                detections: vec![make_det(30.0, 40.0, 0.8)],
+                image_width: 640,
+                image_height: 480,
+                processing_time_ms: 1.0,
+            },
+        ];
+        let mut seen = Vec::new();
+        let mut cb = |idx: usize, result: &DetectResult| {
+            seen.push((idx, result.detections.len()));
+        };
+        #[allow(clippy::type_complexity)]
+        let mut cb_opt: Option<&mut dyn FnMut(usize, &DetectResult)> = Some(&mut cb);
+        let mut all_results = Vec::new();
+
+        emit_chunk_results(5, chunk_results, &mut all_results, &mut cb_opt);
+
+        assert_eq!(all_results.len(), 2);
+        assert_eq!(seen, vec![(5, 1), (6, 1)]);
     }
 
     #[test]

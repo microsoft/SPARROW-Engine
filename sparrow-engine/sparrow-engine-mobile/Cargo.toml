@@ -1,6 +1,6 @@
 [package]
 name = "sparrow-engine-mobile"
-version = "0.1.18"
+version = "0.1.19"
 edition = "2021"
 description = "RP-25 — sparrow-engine mobile pipeline using the LiteRT/TensorFlow Lite backend."
 links = "LiteRt"

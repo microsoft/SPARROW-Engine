@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-cli"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "clap",
  "image",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "ab_glyph",
  "hound",
@@ -2615,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-cpu"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "cbindgen",
  "csbindgen",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-gpu"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "cbindgen",
  "csbindgen",
@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-mobile"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -2677,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-python"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "image",
  "pyo3",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-server"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "chrono",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "sparrow-engine-types"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "serde",
  "serde_json",

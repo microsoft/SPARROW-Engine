@@ -94,24 +94,12 @@ fn to_pyerr(e: sparrow_engine::SparrowEngineError) -> PyErr {
     }
 }
 
-fn trt_state_name(state: sparrow_engine::TrtState) -> &'static str {
-    match state {
-        sparrow_engine::TrtState::NotLoaded => "not_loaded",
-        sparrow_engine::TrtState::CudaReady => "cuda_ready",
-        sparrow_engine::TrtState::TrtWarming => "trt_warming",
-        sparrow_engine::TrtState::TrtReady => "trt_ready",
-        sparrow_engine::TrtState::TrtError => "trt_error",
-        sparrow_engine::TrtState::Unsupported => "unsupported",
-        _ => "unknown",
-    }
-}
-
 fn trt_state_view_to_dict(
     py: Python<'_>,
     view: sparrow_engine::TrtStateView,
 ) -> PyResult<PyObject> {
     let dict = pyo3::types::PyDict::new(py);
-    dict.set_item("state", trt_state_name(view.state))?;
+    dict.set_item("state", view.state.as_token())?;
     dict.set_item("detail", view.detail)?;
     Ok(dict.into())
 }

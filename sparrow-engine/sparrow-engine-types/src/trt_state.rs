@@ -15,6 +15,20 @@ pub enum TrtState {
     Unsupported,
 }
 
+impl TrtState {
+    /// Stable snake_case token; mirrors this enum's serde rename_all output.
+    pub fn as_token(&self) -> &'static str {
+        match self {
+            Self::NotLoaded => "not_loaded",
+            Self::CudaReady => "cuda_ready",
+            Self::TrtWarming => "trt_warming",
+            Self::TrtReady => "trt_ready",
+            Self::TrtError => "trt_error",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
 /// Result of a blocking warm-up / a trt_state() query.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrtStateView {
