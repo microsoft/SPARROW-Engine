@@ -121,6 +121,8 @@ pub async fn unload_model(
     State(state): State<AppState>,
     Path(model_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    super::validate_id(&model_id, "model_id")?;
+
     // Non-loading lookup: unloading a model that isn't loaded is a 404 by
     // design (lazy-load on the inference path doesn't apply to unload).
     let handle = state
@@ -137,6 +139,8 @@ pub async fn trt_warmup(
     State(state): State<AppState>,
     Path(model_id): Path<String>,
 ) -> Result<Response, AppError> {
+    super::validate_id(&model_id, "model_id")?;
+
     let engine = state.engine.clone();
     let outcome = super::run_blocking({
         let id = model_id.clone();
@@ -231,6 +235,20 @@ mod tests {
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         let body = response_json(unknown).await;
         assert_eq!(body["error"]["code"], "MANIFEST_NOT_FOUND");
+    }
+
+    #[test]
+    fn malformed_path_model_ids_are_bad_requests() {
+        for model_id in ["", "../model", "nested/model", r"nested\model"] {
+            let err = crate::handlers::validate_id(model_id, "model_id").unwrap_err();
+            assert!(matches!(
+                err,
+                AppError::Http {
+                    status: StatusCode::BAD_REQUEST,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]

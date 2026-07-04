@@ -30,12 +30,6 @@ use crate::engine::{LoadedModelInner, ModelHandle};
 /// Validate that a manifest represents a vision detection model (not a
 /// classifier, not audio). Mirrors `sparrow_engine_cpu::detect::validate_vision_detector`.
 pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
-    if matches!(manifest.postprocess_method, PostprocessMethod::Softmax) {
-        return Err(SparrowEngineError::NotADetector {
-            id: manifest.id.clone(),
-            method: manifest.postprocess_method.as_str().to_string(),
-        });
-    }
     if matches!(
         manifest.preprocess_method,
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
@@ -43,6 +37,15 @@ pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
         return Err(SparrowEngineError::IsAudioModel {
             id: manifest.id.clone(),
             method: manifest.preprocess_method.as_str().to_string(),
+        });
+    }
+    if matches!(
+        manifest.postprocess_method,
+        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+    ) {
+        return Err(SparrowEngineError::NotADetector {
+            id: manifest.id.clone(),
+            method: manifest.postprocess_method.as_str().to_string(),
         });
     }
     Ok(())
@@ -215,6 +218,20 @@ mod tests {
         let m = fake_audio_manifest();
         let err = validate_vision_detector(&m).unwrap_err();
         assert!(matches!(err, SparrowEngineError::IsAudioModel { .. }));
+    }
+
+    #[test]
+    fn validate_vision_detector_rejects_image_sigmoid_manifest_as_classifier() {
+        let mut m = fake_audio_manifest();
+        m.id = "fake_image_sigmoid".into();
+        m.preprocess_method = PreprocessMethod::Resize;
+        m.input_size = Some([224, 224]);
+        m.layout = Some(Layout::Nchw);
+        m.normalization = Some(Normalization::Unit);
+        m.inference_strategy = InferenceStrategy::Single;
+
+        let err = validate_vision_detector(&m).unwrap_err();
+        assert!(matches!(err, SparrowEngineError::NotADetector { .. }));
     }
 
     #[test]

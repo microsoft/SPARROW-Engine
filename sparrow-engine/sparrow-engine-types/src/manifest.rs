@@ -1102,6 +1102,11 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                     "heatmap_peaks requires 'peak_threshold' field".to_string(),
                 )
             })?;
+            if !peak_threshold.is_finite() || !(0.0..=1.0).contains(&peak_threshold) {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "heatmap_peaks peak_threshold must be finite and in [0.0, 1.0], got {peak_threshold}"
+                )));
+            }
             let adaptive = raw.postprocessing.adaptive.ok_or_else(|| {
                 SparrowEngineError::InvalidManifest(
                     "heatmap_peaks requires 'adaptive' field".to_string(),
@@ -1137,6 +1142,11 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                         "sigmoid requires 'confidence_threshold' field".to_string(),
                     )
                 })?;
+            if !confidence_threshold.is_finite() || !(0.0..=1.0).contains(&confidence_threshold) {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "sigmoid confidence_threshold must be finite and in [0.0, 1.0], got {confidence_threshold}"
+                )));
+            }
             PostprocessMethod::Sigmoid {
                 confidence_threshold,
             }
@@ -1163,13 +1173,26 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         }
     }
 
-    // -- Parse labels (optional for binary detectors) --
+    // -- Parse labels (optional for binary detectors and audio models) --
     let (label_file, label_format) = if let Some(ref labels) = raw.labels {
         let fmt = parse_label_format(&labels.format)?;
         (Some(labels.file.clone()), Some(fmt))
     } else {
         (None, None)
     };
+
+    if !is_audio
+        && matches!(
+            postprocess_method,
+            PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+        )
+        && label_file.is_none()
+    {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "{} image classifier requires [labels]",
+            postprocess_method.as_str()
+        )));
+    }
 
     // -- Validate tile dimensions when tiled --
     if let InferenceStrategy::Tiled {
@@ -1479,6 +1502,41 @@ fn validate_trt_config(trt: &Option<TrtConfig>) -> Result<()> {
                 "inference.trt profile_min/profile_opt/profile_max must have identical input keys"
                     .to_string(),
             ));
+        }
+
+        for (input_name, min_dims) in profile_min {
+            let opt_dims = profile_opt.get(input_name).expect("keys validated above");
+            let max_dims = profile_max.get(input_name).expect("keys validated above");
+            if min_dims.is_empty() {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "inference.trt profile for input '{input_name}' must have non-empty dimensions"
+                )));
+            }
+            if min_dims.len() != opt_dims.len() || min_dims.len() != max_dims.len() {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "inference.trt profile for input '{input_name}' must use equal ranks: min={}, opt={}, max={}",
+                    min_dims.len(),
+                    opt_dims.len(),
+                    max_dims.len()
+                )));
+            }
+            for (dim_idx, ((min_dim, opt_dim), max_dim)) in min_dims
+                .iter()
+                .zip(opt_dims.iter())
+                .zip(max_dims.iter())
+                .enumerate()
+            {
+                if *min_dim <= 0 || *opt_dim <= 0 || *max_dim <= 0 {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "inference.trt profile for input '{input_name}' dimension {dim_idx} must be positive: min={min_dim}, opt={opt_dim}, max={max_dim}"
+                    )));
+                }
+                if min_dim > opt_dim || opt_dim > max_dim {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "inference.trt profile for input '{input_name}' dimension {dim_idx} must satisfy min <= opt <= max: min={min_dim}, opt={opt_dim}, max={max_dim}"
+                    )));
+                }
+            }
         }
     }
 
@@ -1933,6 +1991,77 @@ builder_optimization_level = 0
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
         assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
         assert!(err.to_string().contains("builder_optimization_level"));
+    }
+
+    #[test]
+    fn test_trt_profiles_reject_invalid_dimensions() {
+        let cases = [
+            (
+                "empty rank",
+                r#"
+[inference.trt]
+[inference.trt.profile_min]
+image = []
+[inference.trt.profile_opt]
+image = []
+[inference.trt.profile_max]
+image = []
+"#,
+                "non-empty",
+            ),
+            (
+                "rank mismatch",
+                r#"
+[inference.trt]
+[inference.trt.profile_min]
+image = [1, 3, 224, 224]
+[inference.trt.profile_opt]
+image = [1, 3, 224]
+[inference.trt.profile_max]
+image = [1, 3, 224, 224]
+"#,
+                "equal ranks",
+            ),
+            (
+                "non-positive",
+                r#"
+[inference.trt]
+[inference.trt.profile_min]
+image = [1, 3, 0, 224]
+[inference.trt.profile_opt]
+image = [1, 3, 224, 224]
+[inference.trt.profile_max]
+image = [1, 3, 224, 224]
+"#,
+                "positive",
+            ),
+            (
+                "bad ordering",
+                r#"
+[inference.trt]
+[inference.trt.profile_min]
+image = [1, 3, 640, 640]
+[inference.trt.profile_opt]
+image = [1, 3, 320, 320]
+[inference.trt.profile_max]
+image = [1, 3, 640, 640]
+"#,
+                "min <= opt <= max",
+            ),
+        ];
+
+        for (name, trt_section, expected) in cases {
+            let mut toml = make_model_toml(&[]);
+            toml.push_str(trt_section);
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml"))
+                .expect_err(&format!("{name} should fail"));
+            assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+            assert!(
+                err.to_string().contains(expected),
+                "{name} error should contain {expected:?}, got {err}"
+            );
+        }
     }
 
     #[test]
@@ -2695,6 +2824,11 @@ format = {label_format}
         )
     }
 
+    fn remove_labels_section(toml: &str) -> String {
+        let labels_start = toml.find("\n[labels]\n").expect("test TOML has labels");
+        toml[..labels_start].to_string()
+    }
+
     #[test]
     fn test_empty_model_id() {
         let toml = make_model_toml(&[("id", r#""""#)]);
@@ -2751,6 +2885,63 @@ format = {label_format}
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
         assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
         assert!(err.to_string().contains("tile_overlap"));
+    }
+
+    #[test]
+    fn test_heatmap_peak_threshold_must_be_unit_range() {
+        for value in ["-0.1", "1.1", "nan"] {
+            let post_extra = format!(
+                "peak_threshold = {value}\nadaptive = true\npoint_to_box_half_size = 10"
+            );
+            let toml = make_model_toml(&[
+                ("strategy", r#""tiled""#),
+                ("tile_size", "[512, 512]"),
+                ("tile_overlap", "0"),
+                ("input_size", "[512, 512]"),
+                ("method", r#""resize""#),
+                ("postmethod", r#""heatmap_peaks""#),
+                ("post_extra", post_extra.as_str()),
+            ]);
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+            assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+            assert!(err.to_string().contains("peak_threshold"));
+        }
+    }
+
+    #[test]
+    fn test_sigmoid_confidence_threshold_must_be_unit_range() {
+        for value in ["-0.1", "1.1", "nan"] {
+            let post_extra = format!("confidence_threshold = {value}");
+            let toml = make_model_toml(&[
+                ("method", r#""resize""#),
+                ("postmethod", r#""sigmoid""#),
+                ("post_extra", post_extra.as_str()),
+            ]);
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+            assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+            assert!(err.to_string().contains("confidence_threshold"));
+        }
+    }
+
+    #[test]
+    fn test_image_classifiers_require_labels() {
+        for (postmethod, post_extra) in [
+            (r#""softmax""#, ""),
+            (r#""sigmoid""#, "confidence_threshold = 0.5"),
+        ] {
+            let toml = make_model_toml(&[
+                ("method", r#""resize""#),
+                ("postmethod", postmethod),
+                ("post_extra", post_extra),
+            ]);
+            let toml = remove_labels_section(&toml);
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+            assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+            assert!(err.to_string().contains("requires [labels]"));
+        }
     }
 
     #[test]
