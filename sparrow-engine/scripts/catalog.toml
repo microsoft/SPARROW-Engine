@@ -29,9 +29,9 @@
 schema_version = "1.0"
 
 [zenodo]
-record = "21152904"
+record = "21195617"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.11.0"
+version = "0.12.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -120,6 +120,106 @@ family = []
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__sub_saharan.zip"
+
+# --- MegaDetector variants added v0.12.0 (ONB-2) ---
+[[model]]
+id = "MDV5b"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v5b"
+status = "active"
+license = "MIT"
+zip = "camera_trap__detector__MDV5b.zip"
+
+[[model]]
+id = "MD1000-redwood"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v1000-redwood"
+status = "active"
+license = "GPL-3.0"
+zip = "camera_trap__detector__MD1000-redwood.zip"
+
+[[model]]
+id = "MD1000-spruce"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v1000-spruce"
+status = "active"
+license = "GPL-3.0"
+zip = "camera_trap__detector__MD1000-spruce.zip"
+
+[[model]]
+id = "MD1000-larch"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v1000-larch"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MD1000-larch.zip"
+
+[[model]]
+id = "MD1000-cedar"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v1000-cedar"
+status = "active"
+license = "GPL-3.0"
+zip = "camera_trap__detector__MD1000-cedar.zip"
+
+[[model]]
+id = "MD1000-sorrel"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v1000-sorrel"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MD1000-sorrel.zip"
+
+[[model]]
+id = "MDV6-yolov9-c"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-yolov9-c.zip"
+
+[[model]]
+id = "MDV6-yolov9-e"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-yolov9-e.zip"
+
+[[model]]
+id = "MDV6-rtdetr-c"
+domain = "camera_trap"
+task = "detector"
+format = "onnx"
+family = ["MegaDetector"]
+version = "v6"
+status = "active"
+license = "AGPL-3.0"
+zip = "camera_trap__detector__MDV6-rtdetr-c.zip"
 
 # ============================ Camera Trap — Classifier ==========================
 
