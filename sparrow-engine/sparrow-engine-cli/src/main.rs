@@ -770,18 +770,6 @@ fn make_trt_warmup_spinner(model_id: &str, quiet: bool) -> ProgressBar {
     bar
 }
 
-fn trt_state_token(state: TrtState) -> &'static str {
-    match state {
-        TrtState::NotLoaded => "not_loaded",
-        TrtState::CudaReady => "cuda_ready",
-        TrtState::TrtWarming => "trt_warming",
-        TrtState::TrtReady => "trt_ready",
-        TrtState::TrtError => "trt_error",
-        TrtState::Unsupported => "unsupported",
-        _ => "unknown",
-    }
-}
-
 fn trt_warmup_result_exit_code(result: &engine_dispatch::Result<TrtStateView>) -> i32 {
     match result {
         Ok(view) => match view.state {
@@ -825,7 +813,7 @@ fn print_trt_warmup_failure(
         Err(e) => eprintln!("{model_id}: TensorRT warm-up build error: {e}"),
         Ok(view) => eprintln!(
             "{model_id}: TensorRT warm-up did not become ready: {}{}",
-            trt_state_token(view.state),
+            view.state.as_token(),
             view.detail
                 .as_deref()
                 .map(|d| format!(": {d}"))
@@ -865,7 +853,7 @@ fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
 }
 
 fn print_trt_state(view: TrtStateView) {
-    println!("{}", trt_state_token(view.state));
+    println!("{}", view.state.as_token());
     if let Some(detail) = view.detail {
         println!("detail: {detail}");
     }
