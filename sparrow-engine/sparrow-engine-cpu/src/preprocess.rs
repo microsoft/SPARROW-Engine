@@ -10,7 +10,7 @@ use ndarray::Array4;
 use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
 use sparrow_engine_types::ImageInput;
 
-use crate::error::{SparrowEngineError, Result};
+use crate::error::{Result, SparrowEngineError};
 
 // ---------------------------------------------------------------------------
 // Configuration types
@@ -74,7 +74,6 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
     let target_h = config.input_size[1];
 
     // 2. Resize / letterbox
-    let filter = interp_filter(config.interpolation);
     let (canvas, scale, pad_x, pad_y) = match config.method {
         PreprocessMethod::Letterbox => letterbox(
             &rgb,
@@ -82,16 +81,16 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
             target_h,
             config.pad_value,
             &config.normalization,
-            filter,
+            config.interpolation,
         )?,
-        PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h, filter)?,
+        PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h, config.interpolation)?,
         PreprocessMethod::ResizeCrop => {
             let rc = config.resize_crop.ok_or_else(|| {
                 crate::error::SparrowEngineError::InvalidManifest(
                     "resize_crop method requires resize_crop config".to_string(),
                 )
             })?;
-            resize_crop(&rgb, [target_w, target_h], &rc, filter)?
+            resize_crop(&rgb, [target_w, target_h], &rc, config.interpolation)?
         }
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             return Err(crate::error::SparrowEngineError::InvalidManifest(format!(
@@ -163,7 +162,7 @@ fn letterbox(
     target_h: u32,
     pad_value: f32,
     norm: &Normalization,
-    filter: image::imageops::FilterType,
+    interp: Interpolation,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
     let (img_w, img_h) = (img.width() as f32, img.height() as f32);
     let scale = (target_w as f32 / img_w).min(target_h as f32 / img_h);
@@ -171,8 +170,8 @@ fn letterbox(
     let new_w = (img_w * scale).round().max(1.0).min(target_w as f32) as u32;
     let new_h = (img_h * scale).round().max(1.0).min(target_h as f32) as u32;
 
-    // Resize using the manifest-selected PIL/torchvision-matching filter (ENG-RESIZE)
-    let resized = resize_pil(img, new_w, new_h, filter)?;
+    // Resize using the manifest-selected interpolation family.
+    let resized = resize_image(img, new_w, new_h, interp)?;
 
     let pad_x = (target_w as f32 - new_w as f32) / 2.0;
     let pad_y = (target_h as f32 - new_h as f32) / 2.0;
@@ -216,6 +215,18 @@ fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
         Interpolation::Bilinear => image::imageops::FilterType::Triangle,
         Interpolation::Bicubic => image::imageops::FilterType::CatmullRom,
         Interpolation::Lanczos => image::imageops::FilterType::Lanczos3,
+        Interpolation::Cv2Bilinear => {
+            panic!("cv2_bilinear uses resize_cv2_bilinear, not image crate filters")
+        }
+    }
+}
+
+fn resize_image(img: &RgbImage, new_w: u32, new_h: u32, interp: Interpolation) -> Result<RgbImage> {
+    match interp {
+        Interpolation::Cv2Bilinear => Ok(resize_cv2_bilinear(img, new_w, new_h)),
+        Interpolation::Bilinear | Interpolation::Bicubic | Interpolation::Lanczos => {
+            resize_pil(img, new_w, new_h, interp_filter(interp))
+        }
     }
 }
 
@@ -237,6 +248,40 @@ fn resize_pil(
     Ok(image::imageops::resize(img, new_w, new_h, filter))
 }
 
+fn resize_cv2_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> RgbImage {
+    let src_w = img.width();
+    let src_h = img.height();
+    let scale_x = src_w as f32 / new_w as f32;
+    let scale_y = src_h as f32 / new_h as f32;
+
+    RgbImage::from_fn(new_w, new_h, |ox, oy| {
+        let src_x = (ox as f32 + 0.5) * scale_x - 0.5;
+        let src_y = (oy as f32 + 0.5) * scale_y - 0.5;
+        let x0f = src_x.floor();
+        let y0f = src_y.floor();
+        let fx = src_x - x0f;
+        let fy = src_y - y0f;
+
+        let x0 = (x0f as i32).clamp(0, src_w as i32 - 1) as u32;
+        let y0 = (y0f as i32).clamp(0, src_h as i32 - 1) as u32;
+        let x1 = (x0f as i32 + 1).clamp(0, src_w as i32 - 1) as u32;
+        let y1 = (y0f as i32 + 1).clamp(0, src_h as i32 - 1) as u32;
+
+        let p00 = img.get_pixel(x0, y0);
+        let p10 = img.get_pixel(x1, y0);
+        let p01 = img.get_pixel(x0, y1);
+        let p11 = img.get_pixel(x1, y1);
+
+        let mut out = [0u8; 3];
+        for c in 0..3 {
+            let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+            let bottom = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+            out[c] = (top * (1.0 - fy) + bottom * fy).round().clamp(0.0, 255.0) as u8;
+        }
+        image::Rgb(out)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Direct resize
 // ---------------------------------------------------------------------------
@@ -254,9 +299,9 @@ fn resize_direct(
     img: &RgbImage,
     target_w: u32,
     target_h: u32,
-    filter: image::imageops::FilterType,
+    interp: Interpolation,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
-    let resized = resize_pil(img, target_w, target_h, filter)?;
+    let resized = resize_image(img, target_w, target_h, interp)?;
 
     // Store as raw f32 (u8 cast) — normalization happens in build_tensor
     let total = checked_tensor_len_3hw(target_h, target_w)?;
@@ -278,7 +323,7 @@ fn resize_direct(
 // ---------------------------------------------------------------------------
 
 /// Resize + center-crop pipeline: optional center-square crop -> resize (per
-/// `resize_mode` + `filter`) -> optional center-crop to `input_size`.
+/// `resize_mode` + `interp`) -> optional center-crop to `input_size`.
 ///
 /// Covers the Ultralytics YOLOv8-cls idiom (`pre_crop_square` + exact resize),
 /// torchvision `Resize(S)+CenterCrop(C)` (`ShorterSide` + `center_crop`), and
@@ -290,7 +335,7 @@ fn resize_crop(
     img: &RgbImage,
     input_size: [u32; 2],
     rc: &ResizeCropConfig,
-    filter: image::imageops::FilterType,
+    interp: Interpolation,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
     // 1. optional center-square crop (Ultralytics / alita)
     let base: RgbImage = if rc.pre_crop_square {
@@ -315,7 +360,7 @@ fn resize_crop(
             )
         }
     };
-    let resized = resize_pil(&base, rw, rh, filter)?;
+    let resized = resize_image(&base, rw, rh, interp)?;
 
     // 3. optional center-crop to input_size
     let (target_w, target_h) = (input_size[0], input_size[1]);
@@ -530,7 +575,8 @@ mod tests {
     #[test]
     fn test_resize_direct_shape() {
         let img = red_image(100, 50);
-        let (canvas, scale, pad_x, pad_y) = resize_direct(&img, 64, 64, image::imageops::FilterType::Triangle).unwrap();
+        let (canvas, scale, pad_x, pad_y) =
+            resize_direct(&img, 64, 64, Interpolation::Bilinear).unwrap();
         assert_eq!(canvas.len(), 64 * 64 * 3);
         assert!((scale - 1.0).abs() < 1e-6);
         assert!(pad_x.abs() < 1e-6);
@@ -562,10 +608,10 @@ mod tests {
                 img.put_pixel(x, y, image::Rgb([v, v, v]));
             }
         }
-        let bil = resize_direct(&img, 24, 24, interp_filter(Interpolation::Bilinear))
+        let bil = resize_direct(&img, 24, 24, Interpolation::Bilinear)
             .unwrap()
             .0;
-        let bic = resize_direct(&img, 24, 24, interp_filter(Interpolation::Bicubic))
+        let bic = resize_direct(&img, 24, 24, Interpolation::Bicubic)
             .unwrap()
             .0;
         assert_eq!(bil.len(), bic.len());
@@ -585,6 +631,25 @@ mod tests {
     }
 
     #[test]
+    fn test_resize_cv2_bilinear_known_values() {
+        let mut img = RgbImage::new(4, 4);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                img.put_pixel(
+                    x,
+                    y,
+                    image::Rgb([(x * 10 + y * 40) as u8, (x * 20) as u8, (y * 30) as u8]),
+                );
+            }
+        }
+
+        let resized = resize_cv2_bilinear(&img, 2, 2);
+        assert_eq!(resized.dimensions(), (2, 2));
+        assert_eq!(resized.get_pixel(0, 0).0, [25, 10, 15]);
+        assert_eq!(resized.get_pixel(1, 1).0, [125, 50, 75]);
+    }
+
+    #[test]
     fn test_resize_crop_ultralytics_style() {
         // pre-crop center square -> exact resize to input_size, no center-crop
         // (Ultralytics YOLOv8-cls idiom). Rectangular input -> square output.
@@ -596,7 +661,7 @@ mod tests {
             center_crop: false,
         };
         let (canvas, scale, _, _) =
-            resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).unwrap();
+            resize_crop(&img, [64, 64], &rc, Interpolation::Bilinear).unwrap();
         assert_eq!(canvas.len(), 64 * 64 * 3);
         assert!((scale - 1.0).abs() < 1e-6);
     }
@@ -612,8 +677,7 @@ mod tests {
             resize_mode: ResizeMode::ShorterSide,
             center_crop: true,
         };
-        let (canvas, _, _, _) =
-            resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).unwrap();
+        let (canvas, _, _, _) = resize_crop(&img, [64, 64], &rc, Interpolation::Bilinear).unwrap();
         assert_eq!(canvas.len(), 64 * 64 * 3);
     }
 
@@ -627,15 +691,22 @@ mod tests {
             resize_mode: ResizeMode::Exact,
             center_crop: true,
         };
-        assert!(resize_crop(&img, [64, 64], &rc, image::imageops::FilterType::Triangle).is_err());
+        assert!(resize_crop(&img, [64, 64], &rc, Interpolation::Bilinear).is_err());
     }
 
     #[test]
     fn test_letterbox_preserves_aspect() {
         // 200x100 image → 640x640 letterbox
         let img = red_image(200, 100);
-        let (_canvas, scale, pad_x, pad_y) =
-            letterbox(&img, 640, 640, 0.0, &Normalization::Unit, image::imageops::FilterType::Triangle).unwrap();
+        let (_canvas, scale, pad_x, pad_y) = letterbox(
+            &img,
+            640,
+            640,
+            0.0,
+            &Normalization::Unit,
+            Interpolation::Bilinear,
+        )
+        .unwrap();
 
         // scale = min(640/200, 640/100) = min(3.2, 6.4) = 3.2
         assert!((scale - 3.2).abs() < 1e-4);

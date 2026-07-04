@@ -16,13 +16,13 @@
 
 use std::sync::Arc;
 
-use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
-use sparrow_engine_types::error::{SparrowEngineError, Result};
-use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::compile_ptx;
+use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
+use sparrow_engine_types::error::{Result, SparrowEngineError};
+use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 
 use crate::decode::GpuImage;
 use crate::kernels::tiled_preprocess::NormalizeStats;
@@ -117,12 +117,14 @@ pub fn resize_gpu(
     // (e.g., mean=[0,0,0], std=[1.0,1.0,1.0001]) take the general path,
     // which is the correct behaviour.
     let unit_flag: i32 = if stats == NormalizeStats::UNIT { 1 } else { 0 };
-    // Interpolation filter selector — mirrors sparrow-engine-cpu's interp_filter:
-    // Bilinear -> Triangle, Bicubic -> CatmullRom, Lanczos -> Lanczos3.
+    // Interpolation filter selector — mirrors sparrow-engine-cpu's resize dispatch:
+    // Bilinear -> Triangle, Bicubic -> CatmullRom, Lanczos -> Lanczos3,
+    // Cv2Bilinear -> cv2 INTER_LINEAR fixed 2x2.
     let interp_flag: i32 = match interp {
         Interpolation::Bilinear => 0,
         Interpolation::Bicubic => 1,
         Interpolation::Lanczos => 2,
+        Interpolation::Cv2Bilinear => 3,
     };
 
     launch
@@ -204,6 +206,39 @@ mod tests {
         out
     }
 
+    fn cpu_ref_cv2_nchw(img: &RgbImage, tw: u32, th: u32) -> Vec<f32> {
+        let scale_x = img.width() as f32 / tw as f32;
+        let scale_y = img.height() as f32 / th as f32;
+        let plane = (tw * th) as usize;
+        let mut out = vec![0f32; 3 * plane];
+        for oy in 0..th {
+            for ox in 0..tw {
+                let src_x = (ox as f32 + 0.5) * scale_x - 0.5;
+                let src_y = (oy as f32 + 0.5) * scale_y - 0.5;
+                let x0f = src_x.floor();
+                let y0f = src_y.floor();
+                let fx = src_x - x0f;
+                let fy = src_y - y0f;
+                let x0 = (x0f as i32).clamp(0, img.width() as i32 - 1) as u32;
+                let x1 = (x0f as i32 + 1).clamp(0, img.width() as i32 - 1) as u32;
+                let y0 = (y0f as i32).clamp(0, img.height() as i32 - 1) as u32;
+                let y1 = (y0f as i32 + 1).clamp(0, img.height() as i32 - 1) as u32;
+                let p00 = img.get_pixel(x0, y0);
+                let p10 = img.get_pixel(x1, y0);
+                let p01 = img.get_pixel(x0, y1);
+                let p11 = img.get_pixel(x1, y1);
+                let idx = (oy * tw + ox) as usize;
+                for (c, plane_offset) in [0, plane, 2 * plane].into_iter().enumerate() {
+                    let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+                    let bottom = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+                    out[plane_offset + idx] =
+                        (top * (1.0 - fy) + bottom * fy).round().clamp(0.0, 255.0) / 255.0;
+                }
+            }
+        }
+        out
+    }
+
     fn run_case(name: &str, interp: Interpolation, filter: image::imageops::FilterType) {
         let ctx = match cuda_or_skip(name) {
             Some(c) => c,
@@ -273,6 +308,51 @@ mod tests {
             "lanczos",
             Interpolation::Lanczos,
             image::imageops::FilterType::Lanczos3,
+        );
+    }
+
+    #[test]
+    fn resize_gpu_matches_cv2_bilinear() {
+        let ctx = match cuda_or_skip("cv2_bilinear") {
+            Some(c) => c,
+            None => return,
+        };
+        let stream = ctx.default_stream();
+        let kernel = ResizeKernel::new(&ctx).expect("compile resize kernel");
+        let (sw, sh, tw, th) = (40u32, 32u32, 17u32, 13u32);
+        let img = synthetic(sw, sh);
+        let host_rgb: Vec<u8> = img.as_raw().clone();
+        let data = stream.clone_htod(&host_rgb).expect("htod");
+        let gpu_img = GpuImage {
+            data,
+            width: sw,
+            height: sh,
+        };
+        let dev = resize_gpu(
+            &stream,
+            &kernel,
+            &gpu_img,
+            tw,
+            th,
+            ChannelOrder::Rgb,
+            NormalizeStats::UNIT,
+            Interpolation::Cv2Bilinear,
+        )
+        .expect("resize_gpu");
+        let got: Vec<f32> = stream.clone_dtoh(&dev).expect("dtoh");
+        stream.synchronize().expect("sync");
+        let want = cpu_ref_cv2_nchw(&img, tw, th);
+        assert_eq!(got.len(), want.len());
+        let maxd = got
+            .iter()
+            .zip(want.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        // CUDA arithmetic can differ by one final u8 rounding step versus the
+        // CPU f32 reference; larger gaps indicate a coordinate/filter mismatch.
+        assert!(
+            maxd <= 1.0 / 255.0,
+            "cv2_bilinear max abs diff {maxd} exceeds 1/255"
         );
     }
 }

@@ -69,6 +69,7 @@
 //   interp = 0 → Triangle   (bilinear, support 1)  — PIL BILINEAR
 //   interp = 1 → CatmullRom (bicubic,  support 2)  — PIL BICUBIC (b=0, c=0.5)
 //   interp = 2 → Lanczos3   (support 3)            — PIL LANCZOS
+//   interp = 3 → cv2 INTER_LINEAR non-antialiased fixed 2x2 bilinear
 //
 // image crate resize is a two-pass separable filter with a full-precision f32
 // intermediate (`vertical_sample -> Rgba32FImage -> horizontal_sample`), so a
@@ -160,6 +161,50 @@ extern "C" __global__ void resize_kernel(
 
     float scale_x = (float)src_w / (float)tgt_w;
     float scale_y = (float)src_h / (float)tgt_h;
+
+    float r_acc = 0.0f, g_acc = 0.0f, b_acc = 0.0f;
+    int row_stride = src_w * 3;
+
+    if (interp == 3) {
+        float src_x = ((float)ox + 0.5f) * scale_x - 0.5f;
+        float src_y = ((float)oy + 0.5f) * scale_y - 0.5f;
+        float x0f = floorf(src_x);
+        float y0f = floorf(src_y);
+        float fx = src_x - x0f;
+        float fy = src_y - y0f;
+
+        int x0 = (int)x0f;
+        if (x0 < 0) x0 = 0;
+        if (x0 > src_w - 1) x0 = src_w - 1;
+        int x1 = (int)x0f + 1;
+        if (x1 < 0) x1 = 0;
+        if (x1 > src_w - 1) x1 = src_w - 1;
+        int y0 = (int)y0f;
+        if (y0 < 0) y0 = 0;
+        if (y0 > src_h - 1) y0 = src_h - 1;
+        int y1 = (int)y0f + 1;
+        if (y1 < 0) y1 = 0;
+        if (y1 > src_h - 1) y1 = src_h - 1;
+
+        const unsigned char* p00 = src + y0 * row_stride + x0 * 3;
+        const unsigned char* p10 = src + y0 * row_stride + x1 * 3;
+        const unsigned char* p01 = src + y1 * row_stride + x0 * 3;
+        const unsigned char* p11 = src + y1 * row_stride + x1 * 3;
+
+        float r_top = (float)p00[0] * (1.0f - fx) + (float)p10[0] * fx;
+        float r_bottom = (float)p01[0] * (1.0f - fx) + (float)p11[0] * fx;
+        float g_top = (float)p00[1] * (1.0f - fx) + (float)p10[1] * fx;
+        float g_bottom = (float)p01[1] * (1.0f - fx) + (float)p11[1] * fx;
+        float b_top = (float)p00[2] * (1.0f - fx) + (float)p10[2] * fx;
+        float b_bottom = (float)p01[2] * (1.0f - fx) + (float)p11[2] * fx;
+        r_acc = r_top * (1.0f - fy) + r_bottom * fy;
+        g_acc = g_top * (1.0f - fy) + g_bottom * fy;
+        b_acc = b_top * (1.0f - fy) + b_bottom * fy;
+
+        r_acc = floorf(fminf(255.0f, fmaxf(0.0f, r_acc)) + 0.5f);
+        g_acc = floorf(fminf(255.0f, fmaxf(0.0f, g_acc)) + 0.5f);
+        b_acc = floorf(fminf(255.0f, fmaxf(0.0f, b_acc)) + 0.5f);
+    } else {
     float fscale_x = fmaxf(1.0f, scale_x);
     float fscale_y = fmaxf(1.0f, scale_y);
     float recip_x = 1.0f / fscale_x;
@@ -211,8 +256,6 @@ extern "C" __global__ void resize_kernel(
     // image crate's separately-normalized wx[i]*wy[j]; the j-outer / i-inner
     // order + `acc += w*p` match the pre-Phase-2 bilinear kernel exactly, so
     // interp=0 output is byte-identical for realistic inputs.
-    float r_acc = 0.0f, g_acc = 0.0f, b_acc = 0.0f;
-    int row_stride = src_w * 3;
     for (int j = 0; j < n_y; j++) {
         int sy = ymin + j;
         const unsigned char* row = src + sy * row_stride;
@@ -237,6 +280,7 @@ extern "C" __global__ void resize_kernel(
     r_acc = fminf(255.0f, fmaxf(0.0f, r_acc));
     g_acc = fminf(255.0f, fmaxf(0.0f, g_acc));
     b_acc = fminf(255.0f, fmaxf(0.0f, b_acc));
+    }
 
     // /255 + per-channel (mean, std).
     // Unit fast path (`unit_norm == 1`): out = px / 255 directly. This is

@@ -39,7 +39,8 @@
 //   off_x/y    — center-crop offset in resized space ((rw-tgt_w)/2, (rh-tgt_h)/2).
 //   mean_*/std_* + unit_norm — normalization (see resize.cu).
 //   bgr        — 0 RGB plane order, 1 BGR.
-//   interp     — 0 Triangle(bilinear) / 1 CatmullRom(bicubic) / 2 Lanczos3.
+//   interp     — 0 Triangle(bilinear) / 1 CatmullRom(bicubic) / 2 Lanczos3 /
+//                3 cv2 INTER_LINEAR fixed 2x2.
 
 __device__ __forceinline__ float rc_sinc(float x) {
     if (x == 0.0f) return 1.0f;
@@ -108,6 +109,50 @@ extern "C" __global__ void resize_crop_kernel(
     // Resize scale: pre-crop base -> resized.
     float scale_x = (float)crop_w / (float)rw;
     float scale_y = (float)crop_h / (float)rh;
+
+    int row_stride = src_w * 3;
+    float r_acc = 0.0f, g_acc = 0.0f, b_acc = 0.0f;
+
+    if (interp == 3) {
+        float src_x = ((float)rx + 0.5f) * scale_x - 0.5f;
+        float src_y = ((float)ry + 0.5f) * scale_y - 0.5f;
+        float x0f = floorf(src_x);
+        float y0f = floorf(src_y);
+        float fx = src_x - x0f;
+        float fy = src_y - y0f;
+
+        int x0 = (int)x0f;
+        if (x0 < 0) x0 = 0;
+        if (x0 > crop_w - 1) x0 = crop_w - 1;
+        int x1 = (int)x0f + 1;
+        if (x1 < 0) x1 = 0;
+        if (x1 > crop_w - 1) x1 = crop_w - 1;
+        int y0 = (int)y0f;
+        if (y0 < 0) y0 = 0;
+        if (y0 > crop_h - 1) y0 = crop_h - 1;
+        int y1 = (int)y0f + 1;
+        if (y1 < 0) y1 = 0;
+        if (y1 > crop_h - 1) y1 = crop_h - 1;
+
+        const unsigned char* p00 = src + (crop_y + y0) * row_stride + (crop_x + x0) * 3;
+        const unsigned char* p10 = src + (crop_y + y0) * row_stride + (crop_x + x1) * 3;
+        const unsigned char* p01 = src + (crop_y + y1) * row_stride + (crop_x + x0) * 3;
+        const unsigned char* p11 = src + (crop_y + y1) * row_stride + (crop_x + x1) * 3;
+
+        float r_top = (float)p00[0] * (1.0f - fx) + (float)p10[0] * fx;
+        float r_bottom = (float)p01[0] * (1.0f - fx) + (float)p11[0] * fx;
+        float g_top = (float)p00[1] * (1.0f - fx) + (float)p10[1] * fx;
+        float g_bottom = (float)p01[1] * (1.0f - fx) + (float)p11[1] * fx;
+        float b_top = (float)p00[2] * (1.0f - fx) + (float)p10[2] * fx;
+        float b_bottom = (float)p01[2] * (1.0f - fx) + (float)p11[2] * fx;
+        r_acc = r_top * (1.0f - fy) + r_bottom * fy;
+        g_acc = g_top * (1.0f - fy) + g_bottom * fy;
+        b_acc = b_top * (1.0f - fy) + b_bottom * fy;
+
+        r_acc = floorf(fminf(255.0f, fmaxf(0.0f, r_acc)) + 0.5f);
+        g_acc = floorf(fminf(255.0f, fmaxf(0.0f, g_acc)) + 0.5f);
+        b_acc = floorf(fminf(255.0f, fmaxf(0.0f, b_acc)) + 0.5f);
+    } else {
     float fscale_x = fmaxf(1.0f, scale_x);
     float fscale_y = fmaxf(1.0f, scale_y);
     float recip_x = 1.0f / fscale_x;
@@ -151,8 +196,6 @@ extern "C" __global__ void resize_crop_kernel(
     float inv_wx = wx_sum != 0.0f ? 1.0f / wx_sum : 0.0f;
     float inv_wy = wy_sum != 0.0f ? 1.0f / wy_sum : 0.0f;
 
-    int row_stride = src_w * 3;
-    float r_acc = 0.0f, g_acc = 0.0f, b_acc = 0.0f;
     for (int j = 0; j < n_y; j++) {
         int sy = crop_y + ymin + j;
         const unsigned char* row = src + sy * row_stride;
@@ -172,6 +215,7 @@ extern "C" __global__ void resize_crop_kernel(
     r_acc = fminf(255.0f, fmaxf(0.0f, r_acc));
     g_acc = fminf(255.0f, fmaxf(0.0f, g_acc));
     b_acc = fminf(255.0f, fmaxf(0.0f, b_acc));
+    }
 
     float r, g, b;
     if (unit_norm) {

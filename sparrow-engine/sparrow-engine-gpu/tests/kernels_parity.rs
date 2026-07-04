@@ -25,15 +25,15 @@
 
 use std::path::Path;
 
+use cudarc::driver::CudaContext;
+use fast_image_resize::images::Image as FirImage;
+use fast_image_resize::{FilterType as FirFilter, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use sparrow_engine::decode::GpuImage;
 use sparrow_engine::kernels::{
     center_crop::{center_crop_gpu, CenterCropKernel},
     letterbox::{letterbox_gpu, LetterboxKernel},
 };
-use sparrow_engine_types::manifest::ChannelOrder;
-use cudarc::driver::CudaContext;
-use fast_image_resize::images::Image as FirImage;
-use fast_image_resize::{FilterType as FirFilter, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 
 const CORPUS: &str = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
 
@@ -53,7 +53,10 @@ const EPSILON_MEAN: f32 = 1e-4;
 const EPSILON_MAX: f32 = 5e-3;
 
 fn gpu_tests_enabled() -> bool {
-    !matches!(std::env::var("SPARROW_ENGINE_GPU_TESTS").as_deref(), Ok("0"))
+    !matches!(
+        std::env::var("SPARROW_ENGINE_GPU_TESTS").as_deref(),
+        Ok("0")
+    )
 }
 
 fn corpus_jpegs() -> Vec<std::path::PathBuf> {
@@ -287,9 +290,17 @@ fn letterbox_gpu_vs_cpu_2tap_parity() {
             .expect("decode")
             .to_rgb8();
         let gpu_img = upload_cpu_image(&stream, &cpu_img);
-        let (gpu_dst, _meta) =
-            letterbox_gpu(&stream, &kernel, &gpu_img, TGT, TGT, PAD, ChannelOrder::Rgb)
-                .expect("letterbox_gpu");
+        let (gpu_dst, _meta) = letterbox_gpu(
+            &stream,
+            &kernel,
+            &gpu_img,
+            TGT,
+            TGT,
+            PAD,
+            ChannelOrder::Rgb,
+            Interpolation::Bilinear,
+        )
+        .expect("letterbox_gpu");
         let gpu_buf: Vec<f32> = stream.clone_dtoh(&gpu_dst).expect("clone_dtoh");
         stream.synchronize().expect("stream synchronize");
         let cpu_buf = cpu_letterbox_2tap(&cpu_img, TGT, TGT, PAD, false);
@@ -358,6 +369,7 @@ fn letterbox_gpu_metadata_uses_fractional_padding() {
         8,
         114.0 / 255.0,
         ChannelOrder::Rgb,
+        Interpolation::Bilinear,
     )
     .expect("letterbox_gpu");
 
@@ -442,8 +454,17 @@ fn channel_order_bgr_swaps_planes() {
     let img = image::RgbImage::from_pixel(1, 1, image::Rgb([200u8, 100u8, 50u8]));
     let gpu_img = upload_cpu_image(&stream, &img);
 
-    let (gpu_dst, _meta) = letterbox_gpu(&stream, &kernel, &gpu_img, 1, 1, 0.0, ChannelOrder::Bgr)
-        .expect("letterbox_gpu");
+    let (gpu_dst, _meta) = letterbox_gpu(
+        &stream,
+        &kernel,
+        &gpu_img,
+        1,
+        1,
+        0.0,
+        ChannelOrder::Bgr,
+        Interpolation::Bilinear,
+    )
+    .expect("letterbox_gpu");
     let gpu_buf: Vec<f32> = stream.clone_dtoh(&gpu_dst).expect("clone_dtoh");
     stream.synchronize().expect("stream synchronize");
 

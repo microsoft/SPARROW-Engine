@@ -38,11 +38,9 @@ impl ResizeCropKernel {
         let module = ctx
             .load_module(ptx)
             .map_err(|e| SparrowEngineError::Ort(format!("cudarc load_module resize_crop: {e}")))?;
-        let func = module
-            .load_function(KERNEL_NAME)
-            .map_err(|e| {
-                SparrowEngineError::Ort(format!("cudarc load_function resize_crop: {e}"))
-            })?;
+        let func = module.load_function(KERNEL_NAME).map_err(|e| {
+            SparrowEngineError::Ort(format!("cudarc load_function resize_crop: {e}"))
+        })?;
         Ok(Self { func })
     }
 }
@@ -153,6 +151,7 @@ pub fn resize_crop_gpu(
         Interpolation::Bilinear => 0,
         Interpolation::Bicubic => 1,
         Interpolation::Lanczos => 2,
+        Interpolation::Cv2Bilinear => 3,
     };
     let unit_flag: i32 = if stats == NormalizeStats::UNIT { 1 } else { 0 };
 

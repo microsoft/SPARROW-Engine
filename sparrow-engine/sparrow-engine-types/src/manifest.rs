@@ -125,6 +125,9 @@ pub enum Interpolation {
     /// models whose upstream runner downsamples with cv2 `INTER_LANCZOS4` (e.g.
     /// NZ-Species / alita's 600px crop stage).
     Lanczos,
+    /// cv2 INTER_LINEAR: non-antialiased 2x2 bilinear; matches OpenCV/YOLO
+    /// upstream preprocessing.
+    Cv2Bilinear,
 }
 
 /// Resize strategy for the `resize_crop` preprocessing method.
@@ -556,7 +559,8 @@ struct RawPreprocessing {
     /// models trained via Ultralytics (which use BGR per cv2 default).
     #[serde(default)]
     channel_order: Option<String>,
-    /// Resize interpolation: "bilinear" (default) | "bicubic" | "lanczos".
+    /// Resize interpolation: "bilinear" (default) | "bicubic" | "lanczos" |
+    /// "cv2_bilinear".
     #[serde(default)]
     interpolation: Option<String>,
     // resize_crop-specific fields (used only when method = "resize_crop").
@@ -1233,9 +1237,10 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         Some("bilinear") => Some(Interpolation::Bilinear),
         Some("bicubic") => Some(Interpolation::Bicubic),
         Some("lanczos") => Some(Interpolation::Lanczos),
+        Some("cv2_bilinear") => Some(Interpolation::Cv2Bilinear),
         Some(other) => {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "Unknown interpolation: '{other}' (expected 'bilinear', 'bicubic', or 'lanczos')"
+                "Unknown interpolation: '{other}' (expected 'bilinear', 'bicubic', 'lanczos', or 'cv2_bilinear')"
             )))
         }
     };
@@ -1251,11 +1256,15 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 )))
             }
         };
-        let resize_size = raw.preprocessing.resize_size.or(input_size).ok_or_else(|| {
-            SparrowEngineError::InvalidManifest(
-                "resize_crop requires 'resize_size' or 'input_size'".to_string(),
-            )
-        })?;
+        let resize_size = raw
+            .preprocessing
+            .resize_size
+            .or(input_size)
+            .ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "resize_crop requires 'resize_size' or 'input_size'".to_string(),
+                )
+            })?;
         Some(ResizeCropConfig {
             pre_crop_square: raw.preprocessing.pre_crop_square.unwrap_or(false),
             resize_size,
@@ -1628,7 +1637,7 @@ audio = [1, 1, 224, 90]
         assert!(trt.enabled);
         assert_eq!(trt.precision, TrtPrecision::Fp16);
         assert_eq!(trt.builder_optimization_level, 3);
-        assert_eq!(trt.engine_hw_compatible, false);
+        assert!(!trt.engine_hw_compatible);
         assert_eq!(
             trt.profile_min
                 .as_ref()
@@ -2402,6 +2411,10 @@ format = "one_per_line"
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "lanczos""#));
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
         assert_eq!(m.interpolation, Some(Interpolation::Lanczos));
+        // OpenCV/YOLO non-antialiased bilinear is valid for detector manifests.
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "cv2_bilinear""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::Cv2Bilinear));
         // Invalid -> InvalidManifest error.
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "nearest""#));
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();

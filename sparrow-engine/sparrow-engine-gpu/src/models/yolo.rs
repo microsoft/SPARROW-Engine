@@ -68,8 +68,8 @@ use ort::session::Session;
 use ort::value::{Shape, TensorRef, TensorRefMut};
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{
-    self, ChannelOrder, Layout, ModelManifest, Normalization, PostprocessMethod, Precision,
-    PreprocessMethod,
+    self, ChannelOrder, Interpolation, Layout, ModelManifest, Normalization, PostprocessMethod,
+    Precision, PreprocessMethod,
 };
 use sparrow_engine_types::{DetectOpts, DetectResult, Detection, ImageInput, PreprocessMeta};
 
@@ -703,6 +703,9 @@ impl YoloModel {
             self.input_h,
             self.pad_value,
             self.channel_order,
+            self.manifest
+                .interpolation
+                .unwrap_or(Interpolation::Bilinear),
         )?;
 
         // Synchronize so the GPU buffer is ready before binding.
@@ -874,6 +877,9 @@ impl YoloModel {
                 self.input_h,
                 self.pad_value,
                 self.channel_order,
+                self.manifest
+                    .interpolation
+                    .unwrap_or(Interpolation::Bilinear),
             )?;
             slot.pending = Some(PreparedPreprocess {
                 input_tensor_f32: next_in,
@@ -1052,6 +1058,9 @@ impl YoloModel {
             self.input_h,
             self.pad_value,
             self.channel_order,
+            self.manifest
+                .interpolation
+                .unwrap_or(Interpolation::Bilinear),
         )?;
         slot.pending = Some(PreparedPreprocess {
             input_tensor_f32: in_tensor,

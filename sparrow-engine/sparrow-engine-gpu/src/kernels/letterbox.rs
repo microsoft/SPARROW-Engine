@@ -8,13 +8,13 @@
 
 use std::sync::Arc;
 
-use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
-use sparrow_engine_types::error::{SparrowEngineError, Result};
-use sparrow_engine_types::manifest::ChannelOrder;
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::compile_ptx;
+use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
+use sparrow_engine_types::error::{Result, SparrowEngineError};
+use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 
 use crate::decode::GpuImage;
 
@@ -61,6 +61,7 @@ pub fn letterbox_gpu(
     tgt_h: u32,
     pad_value: f32,
     channel_order: ChannelOrder,
+    interp: Interpolation,
 ) -> Result<(CudaSlice<f32>, LetterboxMeta)> {
     let (img_w, img_h) = (src.width as f32, src.height as f32);
     let scale = (tgt_w as f32 / img_w).min(tgt_h as f32 / img_h);
@@ -83,6 +84,15 @@ pub fn letterbox_gpu(
     let bgr_flag: i32 = match channel_order {
         ChannelOrder::Rgb => 0,
         ChannelOrder::Bgr => 1,
+    };
+    let cv2_flag: i32 = match interp {
+        Interpolation::Bilinear => 0,
+        Interpolation::Cv2Bilinear => 1,
+        Interpolation::Bicubic | Interpolation::Lanczos => {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "GPU letterbox supports interpolation 'bilinear' or 'cv2_bilinear', got {interp:?}"
+            )));
+        }
     };
 
     // 16x16 thread block ⇒ 256 threads/block. tgt_w/tgt_h % 16 ≠ 0 is
@@ -118,7 +128,8 @@ pub fn letterbox_gpu(
         .arg(&pad_y_i)
         .arg(&scale)
         .arg(&pad_value)
-        .arg(&bgr_flag);
+        .arg(&bgr_flag)
+        .arg(&cv2_flag);
 
     // SAFETY: kernel signature matches the args bound above; bounds check
     // inside the kernel guards out-of-grid threads.
