@@ -57,7 +57,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cudarc::driver::CudaContext;
 use sparrow_engine_types::error::{Result, SparrowEngineError, TrtWarmupRejection};
-use sparrow_engine_types::manifest::{self, ModelManifest, PipelineManifest, TrtMode};
+use sparrow_engine_types::manifest::{
+    self, ModelManifest, PipelineManifest, PostprocessMethod, TrtMode,
+};
 use sparrow_engine_types::{
     derive_model_type, AudioDetectOpts, AudioInput, ClassifyOpts, DetectOpts, ImageInput,
     ModelInfo, ModelType, PixelFormat, TrtState, TrtStateView, WarmupOutcome,
@@ -167,6 +169,13 @@ impl LoadedModel {
             description: self.manifest.description.clone(),
             onnx_sha256: self.manifest.onnx_sha256.clone(),
             onnx_size_bytes: self.manifest.onnx_size_bytes,
+            embedding_version: self.manifest.embedding_version.clone(),
+            embedding_dim: self.manifest.embedding_dim,
+            normalized: match self.manifest.postprocess_method {
+                PostprocessMethod::Embedding { normalize } => Some(normalize),
+                _ => None,
+            },
+            embedding_metric: self.manifest.embedding_metric,
         }
     }
 }

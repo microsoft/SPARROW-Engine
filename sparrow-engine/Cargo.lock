@@ -1533,6 +1533,21 @@ dependencies = [
 
 [[package]]
 name = "ndarray"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
+]
+
+[[package]]
+name = "ndarray"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
@@ -1663,6 +1678,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
+name = "numpy"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29f1dee9aa8d3f6f8e8b9af3803006101bb3653866ef056d530d53ae68587191"
+dependencies = [
+ "libc",
+ "ndarray 0.16.1",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "pyo3",
+ "pyo3-build-config",
+ "rustc-hash",
+]
+
+[[package]]
 name = "nvjpeg-sys"
 version = "0.1.0"
 dependencies = [
@@ -1689,7 +1720,7 @@ checksum = "d7de3af33d24a745ffb8fab904b13478438d1cd52868e6f17735ef6e1f8bf133"
 dependencies = [
  "half",
  "libloading 0.9.0",
- "ndarray",
+ "ndarray 0.17.2",
  "ort-sys",
  "smallvec",
  "tracing",
@@ -2586,6 +2617,7 @@ name = "sparrow-engine-cli"
 version = "0.1.19"
 dependencies = [
  "clap",
+ "glob",
  "image",
  "indicatif",
  "serde",
@@ -2603,7 +2635,7 @@ dependencies = [
  "ab_glyph",
  "hound",
  "image",
- "ndarray",
+ "ndarray 0.17.2",
  "realfft",
  "rubato",
  "serde_json",
@@ -2623,7 +2655,7 @@ dependencies = [
  "half",
  "image",
  "log",
- "ndarray",
+ "ndarray 0.17.2",
  "ort",
  "serde",
  "serde_json",
@@ -2644,7 +2676,7 @@ dependencies = [
  "fast_image_resize",
  "half",
  "image",
- "ndarray",
+ "ndarray 0.17.2",
  "nvjpeg-sys",
  "ort",
  "realfft",
@@ -2669,7 +2701,7 @@ dependencies = [
  "clap",
  "csbindgen",
  "image",
- "ndarray",
+ "ndarray 0.17.2",
  "npyz",
  "serde",
  "serde_json",
@@ -2683,6 +2715,7 @@ name = "sparrow-engine-python"
 version = "0.1.19"
 dependencies = [
  "image",
+ "numpy",
  "pyo3",
  "pyo3-log",
  "sparrow-engine-cpu",

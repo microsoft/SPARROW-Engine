@@ -106,6 +106,10 @@ class ModelInfo:
     description: Optional[str] = None
     onnx_sha256: Optional[str] = None
     onnx_size_bytes: Optional[int] = None
+    embedding_version: Optional[str] = None
+    embedding_dim: Optional[int] = None
+    normalized: Optional[bool] = None
+    metric: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

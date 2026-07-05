@@ -243,6 +243,10 @@ pub struct ModelInfo {
     pub description: Option<String>,
     pub onnx_sha256: Option<String>,
     pub onnx_size_bytes: Option<u64>,
+    pub embedding_version: Option<String>,
+    pub embedding_dim: Option<usize>,
+    pub normalized: Option<bool>,
+    pub embedding_metric: Option<EmbeddingMetric>,
 }
 
 /// Inferred model type based on preprocessing + postprocessing method + subtype.

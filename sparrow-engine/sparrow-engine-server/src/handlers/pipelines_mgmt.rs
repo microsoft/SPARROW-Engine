@@ -892,6 +892,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 

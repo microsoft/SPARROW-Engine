@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use sparrow_engine_core::pipeline_compat::validate_pipeline_compat;
-use sparrow_engine_types::error::{SparrowEngineError, Result};
+use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{PipelineManifest, PipelineRole};
 use sparrow_engine_types::types::{
     BBox, ClassifyOpts, DetectOpts, ImageInput, ModelInfo, PipelineDetection, PipelineResult,
@@ -349,6 +349,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 
@@ -356,7 +360,10 @@ mod tests {
     fn adhoc_compat_rejects_known_incompatible_pair_before_load() {
         let available = vec![
             info("owl-t", sparrow_engine_types::ModelType::OverheadDetector),
-            info("speciesnet-crop", sparrow_engine_types::ModelType::Classifier),
+            info(
+                "speciesnet-crop",
+                sparrow_engine_types::ModelType::Classifier,
+            ),
         ];
         let err = validate_adhoc_model_types(&available, "owl-t", "speciesnet-crop").unwrap_err();
         match err {
@@ -372,7 +379,10 @@ mod tests {
 
     #[test]
     fn adhoc_compat_defers_unknown_ids_to_load_path() {
-        let available = vec![info("speciesnet-crop", sparrow_engine_types::ModelType::Classifier)];
+        let available = vec![info(
+            "speciesnet-crop",
+            sparrow_engine_types::ModelType::Classifier,
+        )];
         validate_adhoc_model_types(&available, "missing", "speciesnet-crop").unwrap();
     }
 }

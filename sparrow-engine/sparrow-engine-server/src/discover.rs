@@ -128,6 +128,13 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                         description: m.description,
                         onnx_sha256: m.onnx_sha256,
                         onnx_size_bytes: m.onnx_size_bytes,
+                        embedding_version: m.embedding_version,
+                        embedding_dim: m.embedding_dim,
+                        normalized: match m.postprocess_method {
+                            manifest::PostprocessMethod::Embedding { normalize } => Some(normalize),
+                            _ => None,
+                        },
+                        embedding_metric: m.embedding_metric,
                     },
                 );
             }
@@ -390,6 +397,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 

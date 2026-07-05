@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::classify;
 use crate::detect;
 use crate::engine::{Engine, ModelHandle};
-use crate::error::{SparrowEngineError, Result};
+use crate::error::{Result, SparrowEngineError};
 use crate::manifest::{PipelineManifest, PipelineRole};
 use sparrow_engine_core::pipeline_compat::validate_pipeline_compat;
 
@@ -320,6 +320,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 

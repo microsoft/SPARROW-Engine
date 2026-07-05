@@ -117,8 +117,8 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         NotADetector { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
         NotAClassifier { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
         NotAnEncoder { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
-        EmbeddingNotFinite { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_EMBEDDING"),
-        ZeroNormEmbedding { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_EMBEDDING"),
+        EmbeddingNotFinite { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "EMBEDDING_NOT_FINITE"),
+        ZeroNormEmbedding { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "ZERO_NORM_EMBEDDING"),
         // Pipeline
         PipelineNotFound { .. } => (StatusCode::NOT_FOUND, "PIPELINE_NOT_FOUND"),
         PipelineMissingModels { .. } => (

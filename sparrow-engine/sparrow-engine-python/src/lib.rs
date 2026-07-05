@@ -41,6 +41,7 @@ use crate::engine_dispatch as sparrow_engine;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use numpy::PyArray1;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -307,6 +308,47 @@ impl ClassifyResult {
     }
 }
 
+/// Full image-embedding output for a single image.
+#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+pub struct EmbedResult {
+    #[pyo3(get)]
+    pub vector: Py<PyArray1<f32>>,
+    #[pyo3(get)]
+    pub dim: usize,
+    #[pyo3(get)]
+    pub normalized: bool,
+    #[pyo3(get)]
+    pub metric: String,
+    #[pyo3(get)]
+    pub model_id: String,
+    #[pyo3(get)]
+    pub embedding_version: String,
+    #[pyo3(get)]
+    pub model_hash: String,
+    #[pyo3(get)]
+    pub embed_schema_version: String,
+    #[pyo3(get)]
+    pub image_width: u32,
+    #[pyo3(get)]
+    pub image_height: u32,
+    #[pyo3(get)]
+    pub processing_time_ms: f32,
+}
+
+#[pymethods]
+impl EmbedResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "EmbedResult(model_id='{}', dim={}, normalized={}, metric='{}')",
+            self.model_id, self.dim, self.normalized, self.metric
+        )
+    }
+
+    fn __len__(&self) -> usize {
+        self.dim
+    }
+}
+
 /// A detection with an optional classification (from pipeline).
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
@@ -477,6 +519,14 @@ pub struct ModelInfo {
     pub onnx_sha256: Option<String>,
     #[pyo3(get)]
     pub onnx_size_bytes: Option<u64>,
+    #[pyo3(get)]
+    pub embedding_version: Option<String>,
+    #[pyo3(get)]
+    pub embedding_dim: Option<usize>,
+    #[pyo3(get)]
+    pub normalized: Option<bool>,
+    #[pyo3(get)]
+    pub metric: Option<String>,
 }
 
 #[pymethods]
@@ -543,6 +593,7 @@ fn convert_model_type(mt: ModelType) -> &'static str {
         ModelType::Classifier => "classifier",
         ModelType::AudioDetector => "audio_detector",
         ModelType::AudioClassifier => "audio_classifier",
+        ModelType::ImageEncoder => "image_encoder",
     }
 }
 
@@ -567,6 +618,27 @@ fn convert_model_info(m: &sparrow_engine::ModelInfo) -> ModelInfo {
         description: m.description.clone(),
         onnx_sha256: m.onnx_sha256.clone(),
         onnx_size_bytes: m.onnx_size_bytes,
+        embedding_version: m.embedding_version.clone(),
+        embedding_dim: m.embedding_dim,
+        normalized: m.normalized,
+        metric: m.embedding_metric.map(|metric| metric.as_str().to_string()),
+    }
+}
+
+fn py_embed_result(py: Python<'_>, r: sparrow_engine::EmbedResult) -> EmbedResult {
+    let vector = PyArray1::from_vec(py, r.embedding).unbind();
+    EmbedResult {
+        vector,
+        dim: r.dim,
+        normalized: r.normalized,
+        metric: r.metric.as_str().to_string(),
+        model_id: r.model_id,
+        embedding_version: r.embedding_version,
+        model_hash: r.model_hash,
+        embed_schema_version: "1.0".to_string(),
+        image_width: r.image_width,
+        image_height: r.image_height,
+        processing_time_ms: r.processing_time_ms,
     }
 }
 
@@ -913,6 +985,37 @@ impl PyEngine {
             }
             Ok(results)
         })
+    }
+
+    /// Run image embedding on a list of image paths.
+    #[pyo3(signature = (paths, model, progress_callback=None))]
+    fn embed(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        model: &str,
+        progress_callback: Option<PyObject>,
+    ) -> PyResult<Vec<EmbedResult>> {
+        let engine = &self.engine;
+        let model_id = model.to_owned();
+        let total = paths.len();
+        let images: Vec<ImageInput> = paths
+            .iter()
+            .map(|path| ImageInput::FilePath(PathBuf::from(path)))
+            .collect();
+
+        let native_results = py.allow_threads(move || {
+            let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
+            sparrow_engine::embed::embed_batch(&handle, &images).map_err(to_pyerr)
+        })?;
+
+        for (i, path) in paths.iter().enumerate() {
+            invoke_progress(progress_callback.as_ref(), i, total, path)?;
+        }
+        Ok(native_results
+            .into_iter()
+            .map(|r| py_embed_result(py, r))
+            .collect())
     }
 
     /// Run audio detection on a list of audio file paths.
@@ -1814,6 +1917,7 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DetectResult>()?;
     m.add_class::<Classification>()?;
     m.add_class::<ClassifyResult>()?;
+    m.add_class::<EmbedResult>()?;
     m.add_class::<PipelineDetection>()?;
     m.add_class::<PipelineResult>()?;
     m.add_class::<AudioClass>()?;
@@ -1843,6 +1947,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 
@@ -2445,6 +2553,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         };
         let dst = convert_model_info(&src);
         assert_eq!(dst.id, "mdv6");
@@ -2463,6 +2575,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         };
         let dst = convert_model_info(&src);
         assert_eq!(dst.id, "speciesnet");

@@ -32,6 +32,14 @@ pub struct ModelResponse {
     pub onnx_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub onnx_size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_dim: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metric: Option<String>,
 }
 
 impl From<ModelInfo> for ModelResponse {
@@ -44,6 +52,10 @@ impl From<ModelInfo> for ModelResponse {
             description: m.description,
             onnx_sha256: m.onnx_sha256,
             onnx_size_bytes: m.onnx_size_bytes,
+            embedding_version: m.embedding_version,
+            embedding_dim: m.embedding_dim,
+            normalized: m.normalized,
+            metric: m.embedding_metric.map(|metric| metric.as_str().to_string()),
         }
     }
 }
@@ -112,6 +124,10 @@ pub async fn load_model(
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            metric: None,
         },
     };
     Ok(Json(response))
@@ -200,6 +216,10 @@ mod tests {
             description: Some("MegaDetector v6".to_string()),
             onnx_sha256: Some("abc123".to_string()),
             onnx_size_bytes: Some(104857600),
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         };
         let resp = ModelResponse::from(info);
         let json = serde_json::to_value(&resp).unwrap();
@@ -263,6 +283,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         };
         let resp = ModelResponse::from(info);
         let json = serde_json::to_value(&resp).unwrap();

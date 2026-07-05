@@ -3,7 +3,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use sparrow_engine_types::manifest::{self, ModelManifest};
-use sparrow_engine_types::{SparrowEngineError, ModelInfo, Result, derive_model_type};
+use sparrow_engine_types::{derive_model_type, ModelInfo, Result, SparrowEngineError};
 
 /// Validate that a model ID is a flat directory name (no traversal, no separators).
 pub fn validate_model_id(model_id: &str) -> Result<()> {
@@ -183,6 +183,13 @@ pub fn list_available_models(model_dir: &Path) -> Vec<ModelInfo> {
                     description: m.description,
                     onnx_sha256: m.onnx_sha256,
                     onnx_size_bytes: m.onnx_size_bytes,
+                    embedding_version: m.embedding_version,
+                    embedding_dim: m.embedding_dim,
+                    normalized: match m.postprocess_method {
+                        manifest::PostprocessMethod::Embedding { normalize } => Some(normalize),
+                        _ => None,
+                    },
+                    embedding_metric: m.embedding_metric,
                 });
             }
             Err(e) => {
@@ -220,13 +227,13 @@ pub fn write_checksum(model_dir: &Path, model_id: &str) -> Result<(String, u64)>
     let model_table = doc
         .get_mut("model")
         .and_then(|v| v.as_table_mut())
-        .ok_or_else(|| SparrowEngineError::InvalidManifest("missing [model] section".to_string()))?;
-    model_table.insert(
-        "onnx_sha256".to_string(),
-        toml::Value::String(hash.clone()),
-    );
-    let size_i64 = i64::try_from(size)
-        .map_err(|_| SparrowEngineError::InvalidManifest(format!("file size {size} exceeds i64::MAX")))?;
+        .ok_or_else(|| {
+            SparrowEngineError::InvalidManifest("missing [model] section".to_string())
+        })?;
+    model_table.insert("onnx_sha256".to_string(), toml::Value::String(hash.clone()));
+    let size_i64 = i64::try_from(size).map_err(|_| {
+        SparrowEngineError::InvalidManifest(format!("file size {size} exceeds i64::MAX"))
+    })?;
     model_table.insert(
         "onnx_size_bytes".to_string(),
         toml::Value::Integer(size_i64),

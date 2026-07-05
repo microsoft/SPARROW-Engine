@@ -1,12 +1,15 @@
 """sparrow_engine: Camera trap animal detection powered by sparrow-engine-cpu."""
 from __future__ import annotations
 
+import glob
 import os
 import sys
 import threading
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import Callable, Optional, Union
+
+import numpy as np
 
 
 # Public package version. Single-sourced from the wheel METADATA (which
@@ -214,6 +217,7 @@ from sparrow_engine._sparrow_engine_core import (
     SparrowEngineError,
     Classification,
     ClassifyResult,
+    EmbedResult,
     Detection,
     DetectResult,
     ModelInfo,
@@ -236,9 +240,12 @@ __all__ = [
     "init",
     "detect",
     "classify",
+    "embed",
+    "embed_with_meta",
     "detect_audio",
     "pipeline",
     "list_models",
+    "list_models_extended",
     "model_info",
     "active_device",
     # Phase 3 standalone functions
@@ -256,6 +263,7 @@ __all__ = [
     "DetectResult",
     "Classification",
     "ClassifyResult",
+    "EmbedResult",
     "AudioClass",
     "AudioSegment",
     "AudioResult",
@@ -319,6 +327,11 @@ def _resolve_inputs(
                 files.extend(
                     str(f) for f in p.iterdir() if f.suffix.lower() in extensions
                 )
+        elif any(ch in str(item) for ch in "*?["):
+            for match in glob.glob(str(item), recursive=recursive):
+                f = Path(match)
+                if f.is_file() and f.suffix.lower() in extensions:
+                    files.append(str(f))
         else:
             files.append(str(p))
     return sorted(files)
@@ -395,6 +408,62 @@ def classify(
     return _get_engine().classify(paths, model, top_k, progress_callback)
 
 
+def embed(
+    input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
+    model: str,
+    *,
+    recursive: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> np.ndarray:
+    """Compute image embeddings as a NumPy array.
+
+    ``input`` can be a file path, directory, glob pattern, or list of paths.
+    A single file path returns shape ``[dim]``; directories, glob patterns,
+    and lists return shape ``[N, dim]``. The dtype is ``float32`` and the returned array is
+    owned and writable.
+
+    This bare array intentionally drops identity fields such as
+    ``embedding_version`` and ``model_hash``. Pin identity with
+    ``model_info(model)`` or use ``embed_with_meta()`` before sending vectors
+    to sparrow-data or any persistent embedding index.
+    """
+    single_file_input = isinstance(input, (str, Path)) and Path(input).is_file()
+    results = embed_with_meta(
+        input, model, recursive=recursive, progress_callback=progress_callback
+    )
+    result_list = results if isinstance(results, list) else [results]
+    if not result_list:
+        return np.empty((0, 0), dtype="<f4")
+    if single_file_input:
+        return np.array(result_list[0].vector, dtype="<f4", copy=True)
+    return np.stack([np.asarray(r.vector, dtype="<f4") for r in result_list]).astype(
+        "<f4", copy=True
+    )
+
+
+def embed_with_meta(
+    input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
+    model: str,
+    *,
+    recursive: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> Union[EmbedResult, list[EmbedResult]]:
+    """Compute image embeddings and keep the full identity metadata."""
+    single_path_input = isinstance(input, (str, Path))
+    single_file_input = single_path_input and Path(input).is_file()
+    if single_path_input and not Path(input).exists() and not any(ch in str(input) for ch in "*?["):
+        raise SparrowEngineError("No image files found.")
+    paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive)
+    if single_path_input and not paths and not Path(input).is_dir():
+        raise SparrowEngineError("No image files found.")
+    results = _get_engine().embed(paths, model, progress_callback)
+    if single_file_input:
+        if not results:
+            raise SparrowEngineError("No image files found.")
+        return results[0]
+    return results
+
+
 def detect_audio(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
     model: str,
@@ -461,6 +530,11 @@ def pipeline(
 def list_models() -> list[ModelInfo]:
     """List all available models in the model directory."""
     return _get_engine().list_models()
+
+
+def list_models_extended() -> list[ModelInfo]:
+    """List models with optional encoder metadata when present."""
+    return list_models()
 
 
 def model_info(model_id: str) -> ModelInfo:
