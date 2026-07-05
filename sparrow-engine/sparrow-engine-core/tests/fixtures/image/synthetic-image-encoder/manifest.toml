@@ -1,0 +1,26 @@
+[model]
+id = "synthetic-image-encoder"
+format = "onnx"
+file = "model.onnx"
+version = "test-fixture-1"
+description = "Tiny deterministic image encoder test fixture"
+onnx_sha256 = "35ea407376bb864e45bcc9696e4faee97c40fa2a9aec62ceeeba7bfb1be42219"
+
+[preprocessing]
+method = "resize"
+input_size = [16, 16]
+layout = "nchw"
+normalization = "unit"
+channel_order = "rgb"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "embedding"
+normalize = true
+
+[embedding]
+version = "synthetic-encoder-v1"
+dim = 8
+metric = "cosine"

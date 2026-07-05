@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use reqwest::Client;
+use serde::Deserialize;
 use sparrow_engine_server::config::{Config, LogFormat};
 use sparrow_engine_server::engine_dispatch::{Device, Engine, EngineConfig};
 use sparrow_engine_server::router;
 use sparrow_engine_server::state::AppState;
-use reqwest::Client;
-use serde::Deserialize;
 use tokio::net::TcpListener;
 
 // ---------------------------------------------------------------------------
@@ -87,12 +87,13 @@ pub async fn server() -> &'static TestServer {
 
 impl TestServer {
     pub async fn start() -> Self {
-        let engine_config = EngineConfig::new(Device::Cpu, onnx_dir());
+        let model_dir = onnx_dir();
+        let engine_config = EngineConfig::new(Device::Cpu, model_dir.clone());
         let engine = Engine::new(engine_config).expect("failed to create Engine");
 
         // Auto-load all manifests from test onnx dir.
         // Test files are flat (e.g., mdv6_manifest.toml), not in subdirectories.
-        for entry in std::fs::read_dir(onnx_dir()).unwrap().flatten() {
+        for entry in std::fs::read_dir(&model_dir).unwrap().flatten() {
             let path = entry.path();
             let name = path.file_name().unwrap().to_str().unwrap_or("");
             if name.ends_with("_manifest.toml") {
@@ -106,9 +107,27 @@ impl TestServer {
             }
         }
 
+        Self::start_with_engine_and_model_dir(engine, model_dir).await
+    }
+
+    pub async fn start_with_fixture_manifests(
+        model_dir: PathBuf,
+        manifest_paths: &[PathBuf],
+    ) -> Self {
+        let engine_config = EngineConfig::new(Device::Cpu, model_dir.clone());
+        let engine = Engine::new(engine_config).expect("failed to create Engine");
+        for path in manifest_paths {
+            engine
+                .load_model(path)
+                .unwrap_or_else(|e| panic!("failed to load fixture {}: {e}", path.display()));
+        }
+        Self::start_with_engine_and_model_dir(engine, model_dir).await
+    }
+
+    async fn start_with_engine_and_model_dir(engine: Engine, model_dir: PathBuf) -> Self {
         let config = Config {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
-            model_dir: onnx_dir(),
+            model_dir,
             log_format: LogFormat::Pretty,
             log_level: "warn".to_string(),
             max_body_size: 250 * 1024 * 1024,
@@ -182,11 +201,7 @@ impl TestServer {
             .unwrap()
     }
 
-    pub async fn detect_batch(
-        &self,
-        model: &str,
-        image_paths: &[PathBuf],
-    ) -> reqwest::Response {
+    pub async fn detect_batch(&self, model: &str, image_paths: &[PathBuf]) -> reqwest::Response {
         let mut form = reqwest::multipart::Form::new();
         for path in image_paths {
             let bytes = std::fs::read(path).unwrap();
