@@ -79,13 +79,17 @@ fn resolve_geometry(
     let (rw, rh) = match rc.resize_mode {
         ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
         ResizeMode::ShorterSide => {
-            let s = rc.resize_size[0] as f32;
-            let (w, h) = (crop_w as f32, crop_h as f32);
-            let scale = s / w.min(h);
-            (
-                (w * scale).round().max(1.0) as u32,
-                (h * scale).round().max(1.0) as u32,
-            )
+            // torchvision Resize(s): shorter side EXACTLY s, longer side truncated
+            // int(s * long / short) — matches PIL/timm/open_clip (see the CPU
+            // preprocess note; BioCLIP2 ONB-5 parity fix).
+            let s = rc.resize_size[0];
+            let (w, h) = (crop_w, crop_h);
+            let new_long = (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
+            if w <= h {
+                (s.max(1), new_long)
+            } else {
+                (new_long, s.max(1))
+            }
         }
     };
 
@@ -256,13 +260,18 @@ mod tests {
         let (rw, rh) = match rc.resize_mode {
             ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
             ResizeMode::ShorterSide => {
-                let s = rc.resize_size[0] as f32;
-                let (w, h) = (base.width() as f32, base.height() as f32);
-                let scale = s / w.min(h);
-                (
-                    (w * scale).round().max(1.0) as u32,
-                    (h * scale).round().max(1.0) as u32,
-                )
+                // torchvision Resize(s): shorter side EXACTLY s, longer side
+                // truncated int(s * long / short) — matches PIL/timm/open_clip
+                // (BioCLIP2 ONB-5 parity fix; mirrors CPU preprocess + kernel path).
+                let s = rc.resize_size[0];
+                let (w, h) = (base.width(), base.height());
+                let new_long =
+                    (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
+                if w <= h {
+                    (s.max(1), new_long)
+                } else {
+                    (new_long, s.max(1))
+                }
             }
         };
         let resized = image::imageops::resize(&base, rw, rh, filter);

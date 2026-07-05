@@ -322,6 +322,21 @@ fn resize_direct(
 // Resize + center-crop (ONB-1 center-crop classifiers)
 // ---------------------------------------------------------------------------
 
+/// torchvision `Resize(s)` shorter-side dimensions: the shorter side becomes
+/// EXACTLY `s`, the longer side is `int(s * long / short)` — **truncated, not
+/// rounded** — matching torchvision / PIL / timm / open_clip. Rounding produced
+/// a 1-px resize mismatch on some aspect ratios that misaligned the downstream
+/// center-crop (BioCLIP2 ONB-5 parity: worst-image cosine 0.972 -> 0.9994).
+/// Mirrored bit-for-bit by the GPU `resize_crop` kernel + CPU-fallback paths.
+fn shorter_side_dims(w: u32, h: u32, s: u32) -> (u32, u32) {
+    let new_long = (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
+    if w <= h {
+        (s.max(1), new_long)
+    } else {
+        (new_long, s.max(1))
+    }
+}
+
 /// Resize + center-crop pipeline: optional center-square crop -> resize (per
 /// `resize_mode` + `interp`) -> optional center-crop to `input_size`.
 ///
@@ -350,15 +365,7 @@ fn resize_crop(
     // 2. resize
     let (rw, rh) = match rc.resize_mode {
         ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
-        ResizeMode::ShorterSide => {
-            let s = rc.resize_size[0] as f32;
-            let (w, h) = (base.width() as f32, base.height() as f32);
-            let scale = s / w.min(h);
-            (
-                (w * scale).round().max(1.0) as u32,
-                (h * scale).round().max(1.0) as u32,
-            )
-        }
+        ResizeMode::ShorterSide => shorter_side_dims(base.width(), base.height(), rc.resize_size[0]),
     };
     let resized = resize_image(&base, rw, rh, interp)?;
 
@@ -679,6 +686,22 @@ mod tests {
         };
         let (canvas, _, _, _) = resize_crop(&img, [64, 64], &rc, Interpolation::Bilinear).unwrap();
         assert_eq!(canvas.len(), 64 * 64 * 3);
+    }
+
+    #[test]
+    fn test_shorter_side_dims_truncates_like_torchvision() {
+        // torchvision Resize(s) truncates the long side: int(s*long/short), NOT round.
+        // 800x600 shorter=600 -> 224: long = int(224*800/600) = 298 (round would give 299).
+        assert_eq!(shorter_side_dims(800, 600, 224), (298, 224));
+        assert_eq!(shorter_side_dims(600, 800, 224), (224, 298));
+        // 1024x768 -> 298x224; 1280x960 -> 298x224 (the ONB-5 parity outliers).
+        assert_eq!(shorter_side_dims(1024, 768, 224), (298, 224));
+        assert_eq!(shorter_side_dims(1280, 960, 224), (298, 224));
+        // exact ratios stay exact; square stays square.
+        assert_eq!(shorter_side_dims(200, 100, 64), (128, 64));
+        assert_eq!(shorter_side_dims(500, 500, 224), (224, 224));
+        // shorter side is EXACTLY s even when s*long/short would round the short side down.
+        assert_eq!(shorter_side_dims(600, 600, 224), (224, 224));
     }
 
     #[test]
