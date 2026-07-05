@@ -29,9 +29,9 @@
 schema_version = "1.0"
 
 [zenodo]
-record = "21197775"
+record = "21199707"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.14.0"
+version = "0.15.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -501,6 +501,47 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__nz-species.zip"
+
+# ONB-3: AddaxAI TF/Keras classifiers (tf2onnx from .h5/.keras; softmax stripped -> engine softmax)
+[[model]]
+id = "tropicam-ai"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "CC-BY-NC-ND-4.0"
+zip = "camera_trap__classifier__tropicam-ai.zip"
+
+[[model]]
+id = "terai-nepal"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "MEWC"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__terai-nepal.zip"
+
+[[model]]
+id = "tasmanian-vertebrates"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI", "MEWC"]
+status = "active"
+license = "CC-BY-4.0"
+zip = "camera_trap__classifier__tasmanian-vertebrates.zip"
+
+[[model]]
+id = "peruvian-amazon-sdzwa"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+family = ["AddaxAI"]
+status = "active"
+license = "MIT"
+zip = "camera_trap__classifier__peruvian-amazon-sdzwa.zip"
 
 # ============================ Acoustics — Detector ==============================
 
