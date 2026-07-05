@@ -29,9 +29,9 @@
 schema_version = "1.0"
 
 [zenodo]
-record = "21199707"
+record = "21211015"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.15.0"
+version = "0.16.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -668,3 +668,16 @@ family = []
 status = "active"
 license = "MIT"
 zip = "overhead__detector__OWL.zip"
+
+# ============================ General — Encoder ============================
+
+[[model]]
+id = "bioclip-2"
+domain = "general"
+task = "encoder"
+format = "onnx"
+family = ["BioCLIP"]
+version = "v2"
+status = "active"
+license = "MIT"
+zip = "general__encoder__bioclip-2.zip"
