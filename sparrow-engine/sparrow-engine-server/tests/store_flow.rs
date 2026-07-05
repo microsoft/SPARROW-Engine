@@ -277,3 +277,34 @@ fn sha256_lower_hex_empty_input_64_chars() {
     );
     assert_eq!(h.len(), 64);
 }
+
+#[test]
+fn build_embedding_log_record_omits_drift_metrics_and_vector() {
+    let _engine_guard = engine_test_lock();
+    let state = test_state_with_sink(Arc::new(CollectingSink::new()));
+    let result = serde_json::json!({
+        "embed_schema_version": "1.0",
+        "model_id": "encoder-a",
+        "embedding_version": "encoder-space-1",
+        "model_hash": "abc123",
+        "embedding_dim": 3,
+        "normalized": true,
+        "metric": "cosine",
+        "count": 2
+    });
+    let record = sparrow_engine_server::handlers::build_embedding_log_record(
+        &state,
+        "media123".to_string(),
+        "encoder-a".to_string(),
+        result,
+        5.0,
+        None,
+    );
+    assert_eq!(record.schema_version, "1.0");
+    assert_eq!(record.media_hash, "media123");
+    assert_eq!(record.model_id, "encoder-a");
+    assert!(record.drift_metrics.is_none());
+    assert!(record.result.get("embedding").is_none());
+    assert!(record.result.get("results").is_none());
+    assert_eq!(record.result["count"], 2);
+}

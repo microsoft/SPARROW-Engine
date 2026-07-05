@@ -19,6 +19,14 @@ pub struct CatalogEntryResponse {
     pub trt_state: TrtState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trt_detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_dim: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metric: Option<String>,
 }
 
 /// GET /v1/catalog — available models discovered at boot, plus loaded state.
@@ -43,6 +51,7 @@ fn catalog_entries(
         .map(|model| {
             let loaded = loaded.contains(&model.id);
             let trt = project_trt_state(catalog, engine, &model.id, loaded);
+            let encoder = catalog.encoder_fields.get(&model.id);
             CatalogEntryResponse {
                 model_id: model.id.clone(),
                 model_type: model.model_type.to_string(),
@@ -50,6 +59,10 @@ fn catalog_entries(
                 loaded,
                 trt_state: trt.state,
                 trt_detail: trt.detail,
+                embedding_dim: encoder.and_then(|e| e.embedding_dim),
+                embedding_version: encoder.and_then(|e| e.embedding_version.clone()),
+                normalized: encoder.and_then(|e| e.normalized),
+                metric: encoder.and_then(|e| e.metric.map(|m| m.to_string())),
             }
         })
         .collect()
@@ -102,6 +115,10 @@ mod tests {
             loaded: true,
             trt_state: TrtState::Unsupported,
             trt_detail: None,
+            embedding_dim: None,
+            embedding_version: None,
+            normalized: None,
+            metric: None,
         };
 
         let json = serde_json::to_value(&entry).unwrap();
@@ -109,6 +126,29 @@ mod tests {
         assert_eq!(json["framework"], "onnx");
         assert_eq!(json["trt_state"], "unsupported");
         assert!(json.get("trt_detail").is_none());
+    }
+
+    #[test]
+    fn catalog_entry_serializes_optional_encoder_fields() {
+        let entry = CatalogEntryResponse {
+            model_id: "encoder-a".to_string(),
+            model_type: ModelType::ImageEncoder.to_string(),
+            framework: "onnx".to_string(),
+            loaded: false,
+            trt_state: TrtState::Unsupported,
+            trt_detail: None,
+            embedding_dim: Some(768),
+            embedding_version: Some("bioclip2-vitL14-1.0".to_string()),
+            normalized: Some(true),
+            metric: Some("cosine".to_string()),
+        };
+
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["model_type"], "image_encoder");
+        assert_eq!(json["embedding_dim"], 768);
+        assert_eq!(json["embedding_version"], "bioclip2-vitL14-1.0");
+        assert_eq!(json["normalized"], true);
+        assert_eq!(json["metric"], "cosine");
     }
 
     #[test]
