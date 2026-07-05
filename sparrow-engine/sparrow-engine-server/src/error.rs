@@ -108,6 +108,7 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         InvalidManifest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_MANIFEST"),
         UnsupportedFormat { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "UNSUPPORTED_FORMAT"),
         OutputShapeMismatch { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "OUTPUT_SHAPE_MISMATCH"),
+        ModelHashMismatch { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "MODEL_HASH_MISMATCH"),
         PathTraversal(_) => (StatusCode::BAD_REQUEST, "PATH_TRAVERSAL"),
         LabelFileNotFound(_) => (StatusCode::UNPROCESSABLE_ENTITY, "LABEL_FILE_NOT_FOUND"),
         InvalidLabelFormat(_) => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_LABEL_FORMAT"),
@@ -115,6 +116,9 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         ModelUnloaded => (StatusCode::GONE, "MODEL_UNLOADED"),
         NotADetector { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
         NotAClassifier { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
+        NotAnEncoder { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
+        EmbeddingNotFinite { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_EMBEDDING"),
+        ZeroNormEmbedding { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_EMBEDDING"),
         // Pipeline
         PipelineNotFound { .. } => (StatusCode::NOT_FOUND, "PIPELINE_NOT_FOUND"),
         PipelineMissingModels { .. } => (
@@ -271,6 +275,40 @@ mod tests {
             assert_eq!(body["error"]["code"], code);
             assert_eq!(body["error"]["reason"], reason);
         }
+    }
+
+    #[tokio::test]
+    async fn encoder_errors_map_to_design_status_codes() {
+        let wrong = AppError::from(SparrowEngineError::NotAnEncoder {
+            id: "classifier".to_string(),
+            method: "softmax".to_string(),
+        })
+        .into_response();
+        assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+        let body = error_body(wrong).await;
+        assert_eq!(body["error"]["code"], "WRONG_MODEL_TYPE");
+
+        let zero = AppError::from(SparrowEngineError::ZeroNormEmbedding {
+            id: "encoder".to_string(),
+        })
+        .into_response();
+        assert_eq!(zero.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let non_finite = AppError::from(SparrowEngineError::EmbeddingNotFinite {
+            id: "encoder".to_string(),
+        })
+        .into_response();
+        assert_eq!(non_finite.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let hash = AppError::from(SparrowEngineError::ModelHashMismatch {
+            model_id: "encoder".to_string(),
+            expected: "a".to_string(),
+            actual: "b".to_string(),
+        })
+        .into_response();
+        assert_eq!(hash.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = error_body(hash).await;
+        assert_eq!(body["error"]["code"], "MODEL_HASH_MISMATCH");
     }
 
     async fn error_body(response: Response) -> serde_json::Value {

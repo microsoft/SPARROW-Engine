@@ -60,6 +60,7 @@ fn model_type_str(mt: ModelType) -> &'static str {
         ModelType::Classifier => "classifier",
         ModelType::AudioDetector => "audio_detector",
         ModelType::AudioClassifier => "audio_classifier",
+        ModelType::ImageEncoder => "image_encoder",
     }
 }
 

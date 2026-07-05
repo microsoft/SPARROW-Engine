@@ -23,6 +23,8 @@ pub fn build_router(state: AppState) -> Router {
         Router::new()
             .route("/v1/detect", post(handlers::detect::detect))
             .route("/v1/detect/batch", post(handlers::detect::detect_batch))
+            .route("/v1/embed", post(handlers::embed::embed))
+            .route("/v1/embed/batch", post(handlers::embed::embed_batch))
             .route("/v1/classify", post(handlers::classify::classify))
             .route("/v1/pipeline", post(handlers::pipeline::pipeline))
             .route("/v1/audio/detect", post(handlers::audio::audio_detect)),

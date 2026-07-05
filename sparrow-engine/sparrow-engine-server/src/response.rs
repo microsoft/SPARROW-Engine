@@ -1,6 +1,8 @@
 use serde::Serialize;
 
-use crate::engine_dispatch::{AudioSegment, BBox, Classification, Detection, PipelineDetection};
+use crate::engine_dispatch::{
+    AudioSegment, BBox, Classification, Detection, EmbedResult, PipelineDetection,
+};
 
 // ---------------------------------------------------------------------------
 // Bbox (object format with named fields)
@@ -102,6 +104,65 @@ pub struct ClassifyResponse {
     pub image_size: [u32; 2],
     pub processing_time_ms: f32,
     pub classifications: Vec<ClassificationResponse>,
+}
+
+// ---------------------------------------------------------------------------
+// Embeddings
+// ---------------------------------------------------------------------------
+
+pub const EMBED_SCHEMA_VERSION: &str = "1.0";
+
+#[derive(Serialize)]
+pub struct EmbedResponse {
+    pub embed_schema_version: &'static str,
+    pub model_id: String,
+    pub embedding_version: String,
+    pub model_hash: String,
+    pub embedding_dim: usize,
+    pub normalized: bool,
+    pub metric: String,
+    pub image_size: [u32; 2],
+    pub processing_time_ms: f32,
+    pub embedding: Vec<f32>,
+}
+
+impl From<EmbedResult> for EmbedResponse {
+    fn from(result: EmbedResult) -> Self {
+        Self {
+            embed_schema_version: EMBED_SCHEMA_VERSION,
+            model_id: result.model_id,
+            embedding_version: result.embedding_version,
+            model_hash: result.model_hash,
+            embedding_dim: result.dim,
+            normalized: result.normalized,
+            metric: result.metric.to_string(),
+            image_size: [result.image_width, result.image_height],
+            processing_time_ms: result.processing_time_ms,
+            embedding: result.embedding,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct BatchEmbedResultItem {
+    pub index: usize,
+    pub image_size: [u32; 2],
+    pub processing_time_ms: f32,
+    pub embedding: Vec<f32>,
+}
+
+#[derive(Serialize)]
+pub struct EmbedBatchResponse {
+    pub embed_schema_version: &'static str,
+    pub model_id: String,
+    pub embedding_version: String,
+    pub model_hash: String,
+    pub embedding_dim: usize,
+    pub normalized: bool,
+    pub metric: String,
+    pub count: usize,
+    pub processing_time_ms: f32,
+    pub results: Vec<BatchEmbedResultItem>,
 }
 
 // ---------------------------------------------------------------------------
@@ -298,4 +359,36 @@ pub struct HealthResponse {
     /// from "discovery failed" (catalog_size = 0).
     pub catalog_size: usize,
     pub version: String,
+}
+
+#[cfg(test)]
+mod embed_response_tests {
+    use super::*;
+    use crate::engine_dispatch::EmbeddingMetric;
+
+    #[test]
+    fn embed_response_echoes_identity_and_vector() {
+        let response = EmbedResponse::from(EmbedResult {
+            embedding: vec![0.0, 1.0],
+            dim: 2,
+            normalized: true,
+            metric: EmbeddingMetric::Cosine,
+            model_id: "encoder-a".to_string(),
+            embedding_version: "space-1".to_string(),
+            model_hash: "hash-a".to_string(),
+            image_width: 10,
+            image_height: 20,
+            processing_time_ms: 3.5,
+        });
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["embed_schema_version"], "1.0");
+        assert_eq!(json["model_id"], "encoder-a");
+        assert_eq!(json["embedding_version"], "space-1");
+        assert_eq!(json["model_hash"], "hash-a");
+        assert_eq!(json["embedding_dim"], 2);
+        assert_eq!(json["normalized"], true);
+        assert_eq!(json["metric"], "cosine");
+        assert_eq!(json["image_size"], serde_json::json!([10, 20]));
+        assert_eq!(json["embedding"], serde_json::json!([0.0, 1.0]));
+    }
 }
