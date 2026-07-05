@@ -620,6 +620,13 @@ impl Engine {
                 description: m.manifest.description.clone(),
                 onnx_sha256: m.manifest.onnx_sha256.clone(),
                 onnx_size_bytes: m.manifest.onnx_size_bytes,
+                embedding_version: m.manifest.embedding_version.clone(),
+                embedding_dim: m.manifest.embedding_dim,
+                normalized: match m.manifest.postprocess_method {
+                    PostprocessMethod::Embedding { normalize } => Some(normalize),
+                    _ => None,
+                },
+                embedding_metric: m.manifest.embedding_metric,
             })
             .collect()
     }

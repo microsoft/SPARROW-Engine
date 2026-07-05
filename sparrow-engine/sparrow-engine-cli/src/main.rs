@@ -54,9 +54,10 @@ use std::time::Duration;
 // this file uses `engine_dispatch::*` paths directly — no backward-compat
 // alias.
 use crate::engine_dispatch::{
-    classify, detect, detect_audio, AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts,
-    ClassifyResult, DetectOpts, DetectResult, Device, Engine, EngineConfig, ImageInput, ModelInfo,
-    ModelType, PipelineResult, SparrowEngineError, TrtState, TrtStateView, TrtWarmupRejection,
+    classify, detect, detect_audio, embed, AudioDetectOpts, AudioDetectResult, AudioInput,
+    ClassifyOpts, ClassifyResult, DetectOpts, DetectResult, Device, EmbedResult, Engine,
+    EngineConfig, ImageInput, ModelInfo, ModelType, PipelineResult, SparrowEngineError, TrtState,
+    TrtStateView, TrtWarmupRejection,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -99,6 +100,8 @@ enum Commands {
     Detect(DetectArgs),
     /// Run classification on images
     Classify(ClassifyArgs),
+    /// Compute image embeddings with an image encoder
+    Embed(EmbedArgs),
     /// Run audio detection on audio files
     DetectAudio(DetectAudioArgs),
     /// Run detect -> classify pipeline on images
@@ -201,6 +204,32 @@ struct ClassifyArgs {
     /// Render `"{label} {conf:.2}"` text above each bbox (default off).
     #[arg(long, requires = "visualize")]
     show_labels: bool,
+}
+
+#[derive(clap::Args)]
+struct EmbedArgs {
+    /// Input files, directories, or glob patterns
+    #[arg(required = true)]
+    input: Vec<PathBuf>,
+    /// Image encoder model ID to use
+    #[arg(long)]
+    model: String,
+    /// Output format
+    #[arg(long, default_value = "ndjson")]
+    format: EmbedFormat,
+    /// Output directory. JSON/NDJSON use stdout when omitted; NPY defaults to the current directory.
+    #[arg(long)]
+    output: Option<PathBuf>,
+    /// Recurse into subdirectories
+    #[arg(long)]
+    recursive: bool,
+}
+
+#[derive(Clone, clap::ValueEnum, PartialEq, Eq)]
+enum EmbedFormat {
+    Ndjson,
+    Json,
+    Npy,
 }
 
 #[derive(clap::Args)]
@@ -397,6 +426,33 @@ struct ClassificationOutput {
     confidence: f32,
 }
 
+#[derive(Serialize)]
+struct EmbedRowOutput {
+    file: String,
+    model_id: String,
+    embedding_version: String,
+    model_hash: String,
+    embedding_dim: usize,
+    normalized: bool,
+    metric: String,
+    embed_schema_version: String,
+    image_size: [u32; 2],
+    processing_time_ms: f32,
+    embedding: Vec<f32>,
+}
+
+#[derive(Serialize)]
+struct EmbedIndexOutput {
+    embed_schema_version: String,
+    model_id: String,
+    embedding_version: String,
+    model_hash: String,
+    embedding_dim: usize,
+    normalized: bool,
+    metric: String,
+    files: Vec<String>,
+}
+
 /// Per-window audio output (pre-Phase-3.5 default; now opt-in via
 /// `--raw-segments`). Schema: `segments: [{start_time_s, end_time_s,
 /// confidence, classes?}]`; `classes` is emitted only for multi-class
@@ -478,6 +534,14 @@ struct ModelInfoOutput {
     onnx_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     onnx_size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding_dim: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metric: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -551,6 +615,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Classify(args)) => {
             cmd_classify(&cli.device, &cli.model_dir, cli.quiet, args)
         }
+        Some(Commands::Embed(args)) => cmd_embed(&cli.device, &cli.model_dir, cli.quiet, args),
         Some(Commands::DetectAudio(args)) => {
             cmd_detect_audio(&cli.device, &cli.model_dir, cli.quiet, args)
         }
@@ -579,6 +644,7 @@ fn dispatch_command_with_engine(
     match command {
         Some(Commands::Detect(args)) => cmd_detect_with_engine(engine, quiet, args),
         Some(Commands::Classify(args)) => cmd_classify_with_engine(engine, quiet, args),
+        Some(Commands::Embed(args)) => cmd_embed_with_engine(engine, quiet, args),
         Some(Commands::DetectAudio(args)) => cmd_detect_audio_with_engine(engine, quiet, args),
         Some(Commands::Pipeline(args)) => cmd_pipeline_with_engine(engine, quiet, args),
         Some(Commands::Models {
@@ -867,10 +933,17 @@ fn model_type_display(mt: &ModelType) -> &'static str {
         ModelType::Classifier => "classifier",
         ModelType::AudioDetector => "audio_detector",
         ModelType::AudioClassifier => "audio_classifier",
+        ModelType::ImageEncoder => "image_encoder",
     }
 }
 
-/// Resolve input paths: expand directories, collect files.
+fn path_has_glob_magic(path: &Path) -> bool {
+    path.to_string_lossy()
+        .chars()
+        .any(|c| matches!(c, '*' | '?' | '['))
+}
+
+/// Resolve input paths: expand directories, glob patterns, collect files.
 fn resolve_inputs(inputs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
     let image_exts: &[&str] = &["jpg", "jpeg", "png", "bmp", "tiff", "tif"];
     let mut files = Vec::new();
@@ -881,6 +954,19 @@ fn resolve_inputs(inputs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
             files.push(input.clone());
         } else if input.is_dir() {
             collect_files_from_dir(input, image_exts, recursive, &mut files, &mut visited);
+        } else if path_has_glob_magic(input) {
+            match glob::glob(&input.to_string_lossy()) {
+                Ok(paths) => {
+                    for path in paths.flatten().filter(|p| p.is_file()) {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if image_exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) {
+                                files.push(path);
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("warning: invalid glob pattern {}: {e}", input.display()),
+            }
         } else {
             eprintln!("warning: skipping non-existent path: {}", input.display());
         }
@@ -901,6 +987,19 @@ fn resolve_audio_inputs(inputs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
             files.push(input.clone());
         } else if input.is_dir() {
             collect_files_from_dir(input, audio_exts, recursive, &mut files, &mut visited);
+        } else if path_has_glob_magic(input) {
+            match glob::glob(&input.to_string_lossy()) {
+                Ok(paths) => {
+                    for path in paths.flatten().filter(|p| p.is_file()) {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if audio_exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) {
+                                files.push(path);
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("warning: invalid glob pattern {}: {e}", input.display()),
+            }
         } else {
             eprintln!("warning: skipping non-existent path: {}", input.display());
         }
@@ -1604,6 +1703,178 @@ fn write_classify_output(
                 )?;
             }
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Command: embed
+// ---------------------------------------------------------------------------
+
+const EMBED_SCHEMA_VERSION: &str = "1.0";
+
+fn cmd_embed(
+    device_str: &str,
+    model_dir: &Option<PathBuf>,
+    quiet: bool,
+    args: EmbedArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_embed_with_engine(&engine, quiet, args)
+}
+
+fn cmd_embed_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: EmbedArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let files = resolve_inputs(&args.input, args.recursive);
+    if files.is_empty() {
+        return Err("No image files found.".into());
+    }
+
+    let handle = engine.get_or_load_model(&args.model)?;
+    let images: Vec<ImageInput> = files.iter().cloned().map(ImageInput::FilePath).collect();
+    let bar = make_progress_bar(files.len() as u64, quiet);
+    for file in &files {
+        bar.set_message(file.display().to_string());
+        bar.inc(1);
+    }
+    let results = embed::embed_batch(&handle, &images)?;
+    bar.finish_and_clear();
+
+    match args.format {
+        EmbedFormat::Ndjson | EmbedFormat::Json => {
+            let rows = embed_rows(&files, &results);
+            if let Some(dir) = args.output.as_ref() {
+                std::fs::create_dir_all(dir).map_err(|e| {
+                    format!("cannot create output directory '{}': {e}", dir.display())
+                })?;
+                let filename = match args.format {
+                    EmbedFormat::Ndjson => "embeddings.ndjson",
+                    EmbedFormat::Json => "embeddings.json",
+                    EmbedFormat::Npy => unreachable!(),
+                };
+                let file = std::fs::File::create(dir.join(filename))?;
+                let mut out = io::BufWriter::new(file);
+                write_embed_json_rows(&mut out, &rows, &args.format)?;
+            } else {
+                let stdout = io::stdout();
+                let mut out = stdout.lock();
+                write_embed_json_rows(&mut out, &rows, &args.format)?;
+            }
+        }
+        EmbedFormat::Npy => {
+            let dir = args.output.unwrap_or_else(|| PathBuf::from("."));
+            write_embed_npy_bundle(&dir, &files, &results)?;
+        }
+    }
+    Ok(())
+}
+
+fn embed_rows(files: &[PathBuf], results: &[EmbedResult]) -> Vec<EmbedRowOutput> {
+    files
+        .iter()
+        .zip(results.iter())
+        .map(|(file, result)| EmbedRowOutput {
+            file: file.display().to_string(),
+            model_id: result.model_id.clone(),
+            embedding_version: result.embedding_version.clone(),
+            model_hash: result.model_hash.clone(),
+            embedding_dim: result.dim,
+            normalized: result.normalized,
+            metric: result.metric.as_str().to_string(),
+            embed_schema_version: EMBED_SCHEMA_VERSION.to_string(),
+            image_size: [result.image_width, result.image_height],
+            processing_time_ms: result.processing_time_ms,
+            embedding: result.embedding.clone(),
+        })
+        .collect()
+}
+
+fn write_embed_json_rows(
+    out: &mut impl Write,
+    rows: &[EmbedRowOutput],
+    format: &EmbedFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match format {
+        EmbedFormat::Ndjson => {
+            for row in rows {
+                serde_json::to_writer(&mut *out, row)?;
+                writeln!(out)?;
+            }
+        }
+        EmbedFormat::Json => {
+            serde_json::to_writer(&mut *out, rows)?;
+            writeln!(out)?;
+        }
+        EmbedFormat::Npy => unreachable!(),
+    }
+    Ok(())
+}
+
+fn write_embed_npy_bundle(
+    dir: &Path,
+    files: &[PathBuf],
+    results: &[EmbedResult],
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("cannot create output directory '{}': {e}", dir.display()))?;
+    let dim = results.first().map(|r| r.dim).unwrap_or(0);
+    if results.iter().any(|r| r.dim != dim) {
+        return Err("embedding dimensions differ within the batch".into());
+    }
+    let npy_path = dir.join("embeddings.npy");
+    let index_path = dir.join("embeddings.index.json");
+    let mut npy = std::fs::File::create(&npy_path)?;
+    write_npy_f32_2d(
+        &mut npy,
+        results.len(),
+        dim,
+        results.iter().flat_map(|r| r.embedding.iter().copied()),
+    )?;
+
+    let first = results
+        .first()
+        .ok_or_else(|| "No embeddings to write".to_string())?;
+    let index = EmbedIndexOutput {
+        embed_schema_version: EMBED_SCHEMA_VERSION.to_string(),
+        model_id: first.model_id.clone(),
+        embedding_version: first.embedding_version.clone(),
+        model_hash: first.model_hash.clone(),
+        embedding_dim: first.dim,
+        normalized: first.normalized,
+        metric: first.metric.as_str().to_string(),
+        files: files.iter().map(|p| p.display().to_string()).collect(),
+    };
+    let index_file = std::fs::File::create(index_path)?;
+    serde_json::to_writer_pretty(index_file, &index)?;
+    Ok(())
+}
+
+fn write_npy_f32_2d(
+    out: &mut impl Write,
+    rows: usize,
+    cols: usize,
+    values: impl IntoIterator<Item = f32>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut header =
+        format!("{{'descr': '<f4', 'fortran_order': False, 'shape': ({rows}, {cols}), }}")
+            .into_bytes();
+    let preamble_len = 10usize;
+    let padding = (16 - ((preamble_len + header.len() + 1) % 16)) % 16;
+    header.extend(std::iter::repeat_n(b' ', padding));
+    header.push(b'\n');
+    let header_len: u16 = header
+        .len()
+        .try_into()
+        .map_err(|_| "NPY header too large for v1.0")?;
+    out.write_all(b"\x93NUMPY")?;
+    out.write_all(&[1, 0])?;
+    out.write_all(&header_len.to_le_bytes())?;
+    out.write_all(&header)?;
+    for value in values {
+        out.write_all(&value.to_le_bytes())?;
     }
     Ok(())
 }
@@ -2332,6 +2603,10 @@ fn cmd_models_with_engine(
                     description: m.description.clone(),
                     onnx_sha256: m.onnx_sha256.clone(),
                     onnx_size_bytes: m.onnx_size_bytes,
+                    embedding_version: m.embedding_version.clone(),
+                    embedding_dim: m.embedding_dim,
+                    normalized: m.normalized,
+                    metric: m.embedding_metric.map(|metric| metric.as_str().to_string()),
                 };
                 serde_json::to_writer(&mut out, &output)?;
                 writeln!(out)?;
@@ -2352,6 +2627,10 @@ fn cmd_models_with_engine(
                 description: m.description.clone(),
                 onnx_sha256: m.onnx_sha256.clone(),
                 onnx_size_bytes: m.onnx_size_bytes,
+                embedding_version: m.embedding_version.clone(),
+                embedding_dim: m.embedding_dim,
+                normalized: m.normalized,
+                metric: m.embedding_metric.map(|metric| metric.as_str().to_string()),
             };
             let stdout = io::stdout();
             let mut out = stdout.lock();
@@ -2461,6 +2740,10 @@ mod tests {
             description: None,
             onnx_sha256: None,
             onnx_size_bytes: None,
+            embedding_version: None,
+            embedding_dim: None,
+            normalized: None,
+            embedding_metric: None,
         }
     }
 
@@ -3554,5 +3837,74 @@ mod tests {
         assert_eq!(ids, vec!["m1", "m2", "m3"]);
         // empty spec -> error
         assert!(trt_warmup_spec_tokens("   ").is_err());
+    }
+    fn sample_embed_result(values: Vec<f32>) -> EmbedResult {
+        EmbedResult {
+            dim: values.len(),
+            embedding: values,
+            normalized: true,
+            metric: engine_dispatch::EmbeddingMetric::Cosine,
+            model_id: "encoder".to_string(),
+            embedding_version: "v1".to_string(),
+            model_hash: "abc123".to_string(),
+            image_width: 10,
+            image_height: 20,
+            processing_time_ms: 1.5,
+        }
+    }
+
+    #[test]
+    fn embed_json_rows_are_self_describing() {
+        let files = vec![PathBuf::from("a.jpg"), PathBuf::from("b.jpg")];
+        let results = vec![
+            sample_embed_result(vec![1.0, 0.0]),
+            sample_embed_result(vec![0.0, 1.0]),
+        ];
+        let rows = embed_rows(&files, &results);
+        let mut ndjson = Vec::new();
+        write_embed_json_rows(&mut ndjson, &rows, &EmbedFormat::Ndjson).unwrap();
+        let text = String::from_utf8(ndjson).unwrap();
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("\"embed_schema_version\":\"1.0\""));
+        assert!(text.contains("\"model_hash\":\"abc123\""));
+
+        let mut json = Vec::new();
+        write_embed_json_rows(&mut json, &rows, &EmbedFormat::Json).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 2);
+        assert_eq!(value[0]["embedding_dim"], 2);
+    }
+
+    #[test]
+    fn embed_npy_bundle_writes_sidecar() {
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("embed-npy-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let files = vec![PathBuf::from("a.jpg"), PathBuf::from("b.jpg")];
+        let results = vec![
+            sample_embed_result(vec![1.0, 2.0]),
+            sample_embed_result(vec![3.0, 4.0]),
+        ];
+        write_embed_npy_bundle(&dir, &files, &results).unwrap();
+        let npy = fs::read(dir.join("embeddings.npy")).unwrap();
+        assert_eq!(&npy[..6], b"\x93NUMPY");
+        let sidecar: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("embeddings.index.json")).unwrap()).unwrap();
+        assert_eq!(sidecar["embedding_dim"], 2);
+        assert_eq!(sidecar["files"].as_array().unwrap().len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn embed_rejects_visualize_arg() {
+        let parsed =
+            Cli::try_parse_from(["spe", "embed", "a.jpg", "--model", "encoder", "--visualize"]);
+        let err = match parsed {
+            Ok(_) => panic!("embed unexpectedly accepted --visualize"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 }

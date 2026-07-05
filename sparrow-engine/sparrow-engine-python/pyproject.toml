@@ -57,7 +57,7 @@ requires-python = ">=3.11"
 # `ln -sf libonnxruntime.so.X.Y.Z libonnxruntime.so.1` workaround
 # (MT-4.1-15). GPU wheel substitutes `onnxruntime-gpu>=1.25.1` (sed-patched
 # by build.sh).
-dependencies = ["onnxruntime>=1.25.1,<1.26"]
+dependencies = ["onnxruntime>=1.25.1,<1.26", "numpy>=1.26"]
 
 [tool.maturin]
 # CPU template: `extension-module` always on; `cpu` activates the

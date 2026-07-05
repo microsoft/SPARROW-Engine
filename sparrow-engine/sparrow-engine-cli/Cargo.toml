@@ -36,6 +36,7 @@ serde_json = { workspace = true }
 serde = { workspace = true }
 image = "0.25"
 indicatif = "0.17"
+glob = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }   # RUST_LOG / EnvFilter at runtime
 
 [dev-dependencies]

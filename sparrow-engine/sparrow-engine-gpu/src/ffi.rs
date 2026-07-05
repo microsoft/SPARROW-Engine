@@ -2009,6 +2009,10 @@ pub unsafe extern "C" fn sparrow_engine_engine_model_info(
             "description": info.description,
             "onnx_sha256": info.onnx_sha256,
             "onnx_size_bytes": info.onnx_size_bytes,
+            "embedding_version": info.embedding_version,
+            "embedding_dim": info.embedding_dim,
+            "normalized": info.normalized,
+            "metric": info.embedding_metric.map(|metric| metric.as_str().to_string()),
         });
         let json_str = serde_json::to_string(&json).map_err(|e| e.to_string())?;
         Ok(string_to_c(json_str))
@@ -2055,6 +2059,10 @@ pub unsafe extern "C" fn sparrow_engine_engine_list_models_extended(
                     "description": m.description,
                     "onnx_sha256": m.onnx_sha256,
                     "onnx_size_bytes": m.onnx_size_bytes,
+                    "embedding_version": m.embedding_version,
+                    "embedding_dim": m.embedding_dim,
+                    "normalized": m.normalized,
+                    "metric": m.embedding_metric.map(|metric| metric.as_str().to_string()),
                 })
             })
             .collect();

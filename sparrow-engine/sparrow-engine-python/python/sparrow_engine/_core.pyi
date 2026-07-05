@@ -1,6 +1,8 @@
 """Type stubs for sparrow_engine._sparrow_engine_core native module."""
 from typing import Callable, Literal, Optional, TypedDict
 
+import numpy as np
+
 # Per-file progress callback: (index_0_based, total, filename) -> None.
 # Invoked after each file's inference attempt resolves. See `detect` etc.
 _ProgressCallback = Callable[[int, int, str], None]
@@ -58,6 +60,20 @@ class ClassifyResult:
     top1: Optional[Classification]
     def __len__(self) -> int: ...
 
+class EmbedResult:
+    vector: np.ndarray
+    dim: int
+    normalized: bool
+    metric: str
+    model_id: str
+    embedding_version: str
+    model_hash: str
+    embed_schema_version: str
+    image_width: int
+    image_height: int
+    processing_time_ms: float
+    def __len__(self) -> int: ...
+
 class PipelineDetection:
     detection: Detection
     classification: Optional[Classification]
@@ -102,6 +118,10 @@ class ModelInfo:
     description: Optional[str]
     onnx_sha256: Optional[str]
     onnx_size_bytes: Optional[int]
+    embedding_version: Optional[str]
+    embedding_dim: Optional[int]
+    normalized: Optional[bool]
+    metric: Optional[str]
 
 class PyEngine:
     def __init__(self, device: str, model_dir: str) -> None: ...
@@ -131,6 +151,12 @@ class PyEngine:
         top_k: Optional[int] = None,
         progress_callback: Optional[_ProgressCallback] = None,
     ) -> list[ClassifyResult]: ...
+    def embed(
+        self,
+        paths: list[str],
+        model: str,
+        progress_callback: Optional[_ProgressCallback] = None,
+    ) -> list[EmbedResult]: ...
     def detect_audio(
         self,
         paths: list[str],

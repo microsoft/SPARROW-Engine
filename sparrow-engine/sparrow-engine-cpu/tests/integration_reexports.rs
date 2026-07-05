@@ -116,6 +116,10 @@ fn audio_manifest_engine_config_reexports_resolve_at_crate_root() {
         description: None,
         onnx_sha256: None,
         onnx_size_bytes: None,
+        embedding_version: None,
+        embedding_dim: None,
+        normalized: None,
+        embedding_metric: None,
     };
     let _dev: sparrow_engine::Device = sparrow_engine::Device::Auto;
     let _ec: sparrow_engine::EngineConfig = sparrow_engine::EngineConfig::new(_dev, "/tmp");
