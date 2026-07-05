@@ -46,6 +46,8 @@ status = "active"
 alias = ["Species_Net_MDV5a"]
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV5a.zip"
+commercial_use = true
+reference = "MegaDetector v5 (MDv5a), Morris / Beery et al.; https://github.com/agentmorris/MegaDetector/releases/tag/v5.0"
 
 [[model]]
 id = "MDV6-yolov10-c"
@@ -57,6 +59,8 @@ version = "v6"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-yolov10-c.zip"
+commercial_use = true
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-yolov10-c-tflite"
@@ -69,6 +73,8 @@ status = "active"
 flavor = "tflite-fp16"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-yolov10-c-tflite.zip"
+commercial_use = true
+reference = "MegaDetector V6 yolov10-c TFLite conversion; inherits MDV6-yolov10-c; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md"
 
 [[model]]
 id = "MDV6-yolov10-e"
@@ -80,6 +86,8 @@ version = "v6"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-yolov10-e.zip"
+commercial_use = true
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "deepfaune-yolo8s"
@@ -88,8 +96,10 @@ task = "detector"
 format = "onnx"
 family = ["DeepFaune"]
 status = "active"
-license = "AGPL-3.0 AND CC-BY-NC-SA-4.0"
+license = "AGPL-3.0 AND CC-BY-SA-4.0"
 zip = "camera_trap__detector__deepfaune-yolo8s.zip"
+commercial_use = true
+reference = "DeepFaune detector (YOLOv8s), Rigoudy et al. 2023; https://plmlab.math.cnrs.fr/deepfaune/software; model parameters: https://pbil.univ-lyon1.fr/software/download/deepfaune/v1.3/deepfaune-yolov8s_960.pt"
 
 [[model]]
 id = "european_mammals"
@@ -100,6 +110,8 @@ family = []
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__european_mammals.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab regional YOLO detector (European mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
 id = "north_american_mammals"
@@ -110,6 +122,8 @@ family = []
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__north_american_mammals.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab regional YOLO detector (North American mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
 id = "sub_saharan"
@@ -122,6 +136,8 @@ license = "AGPL-3.0"
 zip = "camera_trap__detector__sub_saharan.zip"
 
 # --- MegaDetector variants added v0.12.0 (ONB-2) ---
+commercial_use = true
+reference = "Microsoft AI for Good Lab regional YOLO detector (Sub-Saharan mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 [[model]]
 id = "MDV5b"
 domain = "camera_trap"
@@ -130,8 +146,10 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v5b"
 status = "active"
-license = "MIT"
+license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV5b.zip"
+commercial_use = true
+reference = "MegaDetector v5 (MDv5b), Morris / Beery et al.; https://github.com/agentmorris/MegaDetector/releases/tag/v5.0"
 
 [[model]]
 id = "MD1000-redwood"
@@ -141,8 +159,10 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-redwood"
 status = "active"
-license = "GPL-3.0"
+license = "AGPL-3.0"
 zip = "camera_trap__detector__MD1000-redwood.zip"
+commercial_use = true
+reference = "MegaDetector v1000 redwood, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
 id = "MD1000-spruce"
@@ -152,8 +172,10 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-spruce"
 status = "active"
-license = "GPL-3.0"
+license = "AGPL-3.0"
 zip = "camera_trap__detector__MD1000-spruce.zip"
+commercial_use = true
+reference = "MegaDetector v1000 spruce, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
 id = "MD1000-larch"
@@ -165,6 +187,8 @@ version = "v1000-larch"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MD1000-larch.zip"
+commercial_use = true
+reference = "MegaDetector v1000 larch, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
 id = "MD1000-cedar"
@@ -176,6 +200,8 @@ version = "v1000-cedar"
 status = "active"
 license = "GPL-3.0"
 zip = "camera_trap__detector__MD1000-cedar.zip"
+commercial_use = true
+reference = "MegaDetector v1000 cedar, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
 id = "MD1000-sorrel"
@@ -187,6 +213,8 @@ version = "v1000-sorrel"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MD1000-sorrel.zip"
+commercial_use = true
+reference = "MegaDetector v1000 sorrel, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
 id = "MDV6-yolov9-c"
@@ -198,6 +226,8 @@ version = "v6"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-yolov9-c.zip"
+commercial_use = true
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-yolov9-e"
@@ -209,6 +239,8 @@ version = "v6"
 status = "active"
 license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-yolov9-e.zip"
+commercial_use = true
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-rtdetr-c"
@@ -222,6 +254,8 @@ license = "AGPL-3.0"
 zip = "camera_trap__detector__MDV6-rtdetr-c.zip"
 
 # --- MegaDetector MIT variants added v0.13.0 (ONB-2; WongKinYiu/YOLO framework) ---
+commercial_use = true
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-mit-yolov9-c"
 domain = "camera_trap"
@@ -232,6 +266,8 @@ version = "v6"
 status = "active"
 license = "MIT"
 zip = "camera_trap__detector__MDV6-mit-yolov9-c.zip"
+commercial_use = true
+reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-mit-yolov9-e"
@@ -245,6 +281,8 @@ license = "MIT"
 zip = "camera_trap__detector__MDV6-mit-yolov9-e.zip"
 
 # --- MegaDetector Apache-2.0 RT-DETRv2 variants added v0.14.0 (ONB-2-APA; lyuwenyu/RT-DETR framework) ---
+commercial_use = true
+reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-apa-rtdetr-c"
 domain = "camera_trap"
@@ -255,6 +293,8 @@ version = "v6"
 status = "active"
 license = "Apache-2.0"
 zip = "camera_trap__detector__MDV6-apa-rtdetr-c.zip"
+commercial_use = true
+reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-apa-rtdetr-e"
@@ -268,6 +308,8 @@ license = "Apache-2.0"
 zip = "camera_trap__detector__MDV6-apa-rtdetr-e.zip"
 
 # ============================ Camera Trap — Classifier ==========================
+commercial_use = true
+reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "AI4G-Amazon-V2"
@@ -278,6 +320,8 @@ family = ["AI4G"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__AI4G-Amazon-V2.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab, Biodiversity model-zoo classifier table (AI4G-Amazon-V2 v2): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
 id = "AI4G-Serengeti"
@@ -288,6 +332,8 @@ family = ["AI4G"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__AI4G-Serengeti.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab, Biodiversity model-zoo classifier table (AI4G-Serengeti): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
 id = "Deepfaune-Europe"
@@ -296,8 +342,10 @@ task = "classifier"
 format = "onnx"
 family = ["DeepFaune"]
 status = "active"
-license = "CC-BY-NC-SA-4.0"
+license = "CC-BY-SA-4.0"
 zip = "camera_trap__classifier__Deepfaune-Europe.zip"
+commercial_use = true
+reference = "Microsoft Biodiversity model-zoo classifier table (Deepfaune-classification v1.3) and Rigoudy et al. 2023, DOI 10.1007/s10344-023-01742-7: https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
 id = "Deepfaune-New-England"
@@ -306,8 +354,10 @@ task = "classifier"
 format = "onnx"
 family = ["DeepFaune"]
 status = "active"
-license = "CC-BY-NC-SA-4.0"
+license = "CC0-1.0"
 zip = "camera_trap__classifier__Deepfaune-New-England.zip"
+commercial_use = true
+reference = "Clarfeld et al. 2025, DeepFaune New England, USGS software release, DOI 10.5066/P13T4EKE: https://code.usgs.gov/vtcfwru/deepfaune-new-england"
 
 [[model]]
 id = "SpeciesNet-Crop"
@@ -320,6 +370,8 @@ license = "Apache-2.0"
 zip = "camera_trap__classifier__SpeciesNet-Crop.zip"
 
 # ---- AddaxAI PyTorch classifiers (ONB-1, Zenodo v0.11.0) ----
+commercial_use = true
+reference = "Google SpeciesNet / cameratrapai repository; Gadot et al. 2024, DOI 10.1049/cvi2.12318: https://github.com/google/cameratrapai"
 
 [[model]]
 id = "southwest-usa-v3"
@@ -330,6 +382,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__southwest-usa-v3.zip"
+commercial_use = true
+reference = "Addax Data Science / San Diego Zoo Wildlife Alliance, Southwest USA v3 model card: https://huggingface.co/Addax-Data-Science/Southwest_USA_v3"
 
 [[model]]
 id = "peruvian-andes"
@@ -340,6 +394,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__peruvian-andes.zip"
+commercial_use = true
+reference = "Addax Data Science / San Diego Zoo Wildlife Alliance, Peruvian Andes model card: https://huggingface.co/Addax-Data-Science/Peruvian_Andes"
 
 [[model]]
 id = "sub-saharan-drylands"
@@ -350,6 +406,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__sub-saharan-drylands.zip"
+commercial_use = false
+reference = "Addax Data Science, Sub-Saharan Drylands model card: https://huggingface.co/Addax-Data-Science/sub_saharan_drylands_v1.pt"
 
 [[model]]
 id = "manas-panthera"
@@ -360,6 +418,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__manas-panthera.zip"
+commercial_use = false
+reference = "Hex·Data / OSI-Panthera, Panthera model card: https://huggingface.co/Hex-Data/Panthera"
 
 [[model]]
 id = "gifu-japan"
@@ -370,6 +430,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__gifu-japan.zip"
+commercial_use = true
+reference = "Addax Data Science / Gifu University, Japan Gifu v0.2 model card: https://huggingface.co/Addax-Data-Science/Japan_Gifu_v0.2"
 
 [[model]]
 id = "hawaii-puaa"
@@ -380,6 +442,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "CC-BY-NC-4.0"
 zip = "camera_trap__classifier__hawaii-puaa.zip"
+commercial_use = false
+reference = "Addax Data Science, Hawaiʻi AI Puaʻa v1.0 model card: https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
 
 [[model]]
 id = "central-india"
@@ -390,6 +454,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "CC-BY-NC-4.0"
 zip = "camera_trap__classifier__central-india.zip"
+commercial_use = false
+reference = "Addax Data Science / Wildlife Conservation Trust India, Central Indian Landscapes model card: https://huggingface.co/Addax-Data-Science/IND-ADS-v1"
 
 [[model]]
 id = "top-end-savanna"
@@ -400,6 +466,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "CC-BY-NC-4.0"
 zip = "camera_trap__classifier__top-end-savanna.zip"
+commercial_use = false
+reference = "Addax Data Science / Charles Darwin University / Territory Natural Resource Management / Warddeken Land Management, Top End Savanna model card: https://huggingface.co/Addax-Data-Science/ANT-ADS-v1"
 
 [[model]]
 id = "parks-victoria"
@@ -410,6 +478,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "Apache-2.0"
 zip = "camera_trap__classifier__parks-victoria.zip"
+commercial_use = true
+reference = "Addax Data Science. VIC-ADS-v1 (Parks Victoria classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/VIC-ADS-v1"
 
 [[model]]
 id = "sw-borderlands"
@@ -420,6 +490,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "Apache-2.0"
 zip = "camera_trap__classifier__sw-borderlands.zip"
+commercial_use = true
+reference = "Addax Data Science. SBUSA-ADS-v1 (Southwestern Borderlands USA classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/SBUSA-ADS-v1"
 
 [[model]]
 id = "ahdrift"
@@ -430,6 +502,8 @@ family = ["AddaxAI", "SpeciesNet"]
 status = "active"
 license = "Apache-2.0"
 zip = "camera_trap__classifier__ahdrift.zip"
+commercial_use = true
+reference = "Addax Data Science. AHDRIFT-v1 (AHDriFT-ID Midwest US classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AHDRIFT-v1"
 
 [[model]]
 id = "deep-forest-vision"
@@ -440,6 +514,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__deep-forest-vision.zip"
+commercial_use = false
+reference = "MNHN-OFVI / Addax Data Science. AFR-DFV-v1 / DeepForestVision classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v1; original project: https://github.com/MNHN-OFVI/DeepForestVision"
 
 [[model]]
 id = "awc135"
@@ -450,6 +526,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__awc135.zip"
+commercial_use = false
+reference = "Australian Wildlife Conservancy / Addax Data Science. AWC135-AWC-v1 / Australian Wildlife Classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AWC135-AWC-v1; source license: https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
 
 [[model]]
 id = "namibian"
@@ -460,6 +538,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__namibian.zip"
+commercial_use = false
+reference = "Addax Data Science. Namib-Desert-v1 (Namibian Desert classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Namib-Desert-v1"
 
 [[model]]
 id = "iran"
@@ -470,6 +550,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__iran.zip"
+commercial_use = false
+reference = "Addax Data Science. Iran_v1 (Iran classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Iran_v1"
 
 [[model]]
 id = "nz-invasives"
@@ -480,6 +562,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__nz-invasives.zip"
+commercial_use = false
+reference = "Addax Data Science / New Zealand Department of Conservation. New_Zealand_v1 (New Zealand invasives classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/New_Zealand_v1"
 
 [[model]]
 id = "queensland"
@@ -492,6 +576,8 @@ license = "CC-BY-4.0"
 zip = "camera_trap__classifier__queensland.zip"
 
 # multi-label (per-class sigmoid) classifier — engine multi-label image-classifier support
+commercial_use = true
+reference = "WildObs / Addax Data Science. WetTropics_WildObs (Queensland Wet Tropics classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
 [[model]]
 id = "nz-species"
 domain = "camera_trap"
@@ -503,6 +589,8 @@ license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__nz-species.zip"
 
 # ONB-3: AddaxAI TF/Keras classifiers (tf2onnx from .h5/.keras; softmax stripped -> engine softmax)
+commercial_use = false
+reference = "New Zealand Department of Conservation / wekaResearch / Addax Data Science. NZS-WEK-v3-03 (New Zealand Species v3.03 classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
 [[model]]
 id = "tropicam-ai"
 domain = "camera_trap"
@@ -512,6 +600,8 @@ family = ["AddaxAI"]
 status = "active"
 license = "CC-BY-NC-ND-4.0"
 zip = "camera_trap__classifier__tropicam-ai.zip"
+commercial_use = false
+reference = "Andrea Zampetti / MNCN-CSIC / Addax Data Science. NEO-MNCN-v1-0 / TropiCam-AI v1.0 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NEO-MNCN-v1-0; original project: https://github.com/andrewzamp/TropiCam-AI"
 
 [[model]]
 id = "terai-nepal"
@@ -522,6 +612,8 @@ family = ["AddaxAI", "MEWC"]
 status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__terai-nepal.zip"
+commercial_use = true
+reference = "Alexander Merdian-Tarko. TeraiNet (Terai Nepal classifier). Hugging Face model repository: https://huggingface.co/alexvmt/TeraiNet; project details: https://github.com/alexvmt/TeraiNet"
 
 [[model]]
 id = "tasmanian-vertebrates"
@@ -532,6 +624,8 @@ family = ["AddaxAI", "MEWC"]
 status = "active"
 license = "CC-BY-4.0"
 zip = "camera_trap__classifier__tasmanian-vertebrates.zip"
+commercial_use = true
+reference = "MEWC / Addax Data Science. Tasmanian_vertebrates classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Tasmanian_vertebrates; MEWC source: https://github.com/zaandahl/mewc"
 
 [[model]]
 id = "peruvian-amazon-sdzwa"
@@ -544,6 +638,8 @@ license = "MIT"
 zip = "camera_trap__classifier__peruvian-amazon-sdzwa.zip"
 
 # ============================ Acoustics — Detector ==============================
+commercial_use = true
+reference = "San Diego Zoo Wildlife Alliance / Addax Data Science. Peruvian_Amazon classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Peruvian_Amazon"
 
 [[model]]
 id = "md-audiobirds-v1"
@@ -554,6 +650,8 @@ family = []
 status = "active"
 license = "MIT"
 zip = "acoustics__detector__md-audiobirds-v1.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab. MegaDetector-Acoustic / MD_AudioBirds_V1. Source: https://github.com/microsoft/MegaDetector-Acoustic; model-zoo page: https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/. Cite: Hernandez et al. 2024, Pytorch-Wildlife: A Collaborative Deep Learning Framework for Conservation, arXiv:2405.12930."
 
 [[model]]
 id = "orca-detector-dclde2026-v3"
@@ -565,6 +663,8 @@ version = "v3"
 status = "active"
 license = "MIT"
 zip = "acoustics__detector__orca-detector-dclde2026-v3.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.9.0: orca-detector-dclde2026-v3. Zenodo. https://doi.org/10.5281/zenodo.20864372. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
 id = "orca-detector-v3-fp16-tflite"
@@ -577,6 +677,8 @@ status = "active"
 flavor = "tflite-fp16"
 license = "MIT"
 zip = "acoustics__detector__orca-detector-v3-fp16-tflite.zip"
+commercial_use = true
+reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
 
 [[model]]
 id = "orca-detector-v3-int8-tflite"
@@ -591,6 +693,8 @@ license = "MIT"
 zip = "acoustics__detector__orca-detector-v3-int8-tflite.zip"
 
 # ============================ Acoustics — Classifier ============================
+commercial_use = true
+reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
 
 [[model]]
 id = "orca-ecotype-dclde2026-v1"
@@ -602,6 +706,8 @@ version = "v1"
 status = "active"
 license = "MIT"
 zip = "acoustics__classifier__orca-ecotype-dclde2026-v1.zip"
+commercial_use = true
+reference = "Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.5.0: orca-ecotype-dclde2026-v1. Zenodo. https://doi.org/10.5281/zenodo.20563673. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
 id = "orca-ecotype-melinput-fp16-tflite"
@@ -613,6 +719,8 @@ status = "active"
 flavor = "tflite-fp16"
 license = "MIT"
 zip = "acoustics__classifier__orca-ecotype-melinput-fp16-tflite.zip"
+commercial_use = true
+reference = "Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
 id = "orca-ecotype-melinput-int8-tflite"
@@ -624,6 +732,8 @@ status = "active"
 flavor = "tflite-int8"
 license = "MIT"
 zip = "acoustics__classifier__orca-ecotype-melinput-int8-tflite.zip"
+commercial_use = true
+reference = "Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
 id = "perch-v2"
@@ -636,6 +746,8 @@ license = "Apache-2.0"
 zip = "acoustics__classifier__perch-v2.zip"
 
 # ============================ Acoustics — Cascade ===============================
+commercial_use = true
+reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: Ghani, Denton, Kahl et al., Global birdsong embeddings enable superior transfer learning for bioacoustic classification, Scientific Reports / arXiv:2307.06292, https://arxiv.org/abs/2307.06292."
 
 [[model]]
 id = "orca-cascade"
@@ -648,6 +760,8 @@ license = "MIT"
 zip = "acoustics__cascade__orca-cascade.zip"
 
 # ============================ Overhead — Detector ===============================
+commercial_use = true
+reference = "Pipeline descriptor combining orca-detector-dclde2026-v3 and orca-ecotype-dclde2026-v1. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
 
 [[model]]
 id = "HerdNet_General_Dataset_2022"
@@ -656,8 +770,10 @@ task = "detector"
 format = "onnx"
 family = []
 status = "active"
-license = "MIT"
+license = "CC-BY-NC-SA-4.0"
 zip = "overhead__detector__HerdNet_General_Dataset_2022.zip"
+commercial_use = false
+reference = "Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet."
 
 [[model]]
 id = "OWL"
@@ -670,6 +786,8 @@ license = "MIT"
 zip = "overhead__detector__OWL.zip"
 
 # ============================ General — Encoder ============================
+commercial_use = true
+reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab)."
 
 [[model]]
 id = "bioclip-2"
@@ -681,3 +799,5 @@ version = "v2"
 status = "active"
 license = "MIT"
 zip = "general__encoder__bioclip-2.zip"
+commercial_use = true
+reference = "Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
