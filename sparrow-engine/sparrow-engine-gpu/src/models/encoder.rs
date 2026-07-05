@@ -17,7 +17,6 @@ use sparrow_engine_types::manifest::{
 };
 use sparrow_engine_types::{derive_model_type, EmbedResult, ImageInput, ModelType};
 
-use crate::kernels::center_crop::CenterCropKernel;
 use crate::kernels::letterbox::{letterbox_gpu, LetterboxKernel};
 use crate::kernels::resize::{resize_gpu, ResizeKernel};
 use crate::kernels::resize_crop::{resize_crop_gpu, ResizeCropKernel};
@@ -164,14 +163,12 @@ impl EncoderModel {
     pub fn embed(
         &self,
         ctx: &Arc<CudaContext>,
-        center_crop: &CenterCropKernel,
         letterbox: &LetterboxKernel,
         resize: &ResizeKernel,
         resize_crop: &ResizeCropKernel,
         decoder: &mut JpegDecoder,
         image: &ImageInput,
     ) -> Result<EmbedResult> {
-        let _ = center_crop;
         let start = Instant::now();
         let ctx_ordinal: i32 = ctx
             .ordinal()

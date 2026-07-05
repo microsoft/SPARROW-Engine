@@ -1299,6 +1299,20 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         );
 
     let (embedding_version, embedding_dim, embedding_metric) = if is_image_encoder {
+        if matches!(normalization, Some(Normalization::None)) {
+            return Err(SparrowEngineError::InvalidManifest(
+                "image encoders require preprocessing normalization 'unit' or 'imagenet'; \
+                 normalization = 'none' is not supported"
+                    .to_string(),
+            ));
+        }
+        if matches!(layout, Some(Layout::Nhwc)) {
+            return Err(SparrowEngineError::InvalidManifest(
+                "image encoders require preprocessing layout = 'nchw'; \
+                 layout = 'nhwc' is not supported"
+                    .to_string(),
+            ));
+        }
         let raw_embedding = raw.embedding.as_ref().ok_or_else(|| {
             SparrowEngineError::InvalidManifest(
                 "image encoders require an [embedding] section with version".to_string(),
@@ -2427,6 +2441,74 @@ format = "one_per_line"
             .expect("tflite format must be accepted by the shared loader");
         assert_eq!(manifest.format, "tflite");
         assert_eq!(manifest.model_file, "model.tflite");
+    }
+
+    #[test]
+    fn test_image_encoder_rejects_none_normalization() {
+        let toml = r#"
+[model]
+id = "encoder-none"
+format = "onnx"
+file = "model.onnx"
+onnx_sha256 = "abc123"
+
+[preprocessing]
+method = "resize"
+input_size = [224, 224]
+layout = "nchw"
+normalization = "none"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "embedding"
+normalize = true
+
+[embedding]
+version = "v1"
+dim = 8
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidManifest(ref msg) if msg.contains("normalization = 'none'")),
+            "image encoder normalization=none must be rejected, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_image_encoder_rejects_nhwc_layout_even_for_tflite() {
+        let toml = r#"
+[model]
+id = "encoder-nhwc"
+format = "tflite"
+file = "model.tflite"
+onnx_sha256 = "abc123"
+
+[preprocessing]
+method = "resize"
+input_size = [224, 224]
+layout = "nhwc"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "embedding"
+normalize = true
+
+[embedding]
+version = "v1"
+dim = 8
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidManifest(ref msg) if msg.contains("layout = 'nhwc'")),
+            "image encoder layout=nhwc must be rejected, got: {err:?}"
+        );
     }
 
     #[test]

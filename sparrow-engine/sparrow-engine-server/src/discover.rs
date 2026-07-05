@@ -4,13 +4,12 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine_dispatch::manifest::{self, PipelineManifest, PipelineRole};
-use crate::engine_dispatch::{derive_model_type, EmbeddingMetric, ModelInfo, TrtMode};
+use crate::engine_dispatch::{derive_model_type, ModelInfo, TrtMode};
 
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
     pub models: BTreeMap<String, ModelInfo>,
     pub trt_modes: BTreeMap<String, TrtMode>,
-    pub encoder_fields: BTreeMap<String, EncoderCatalogFields>,
     pub pipelines: BTreeMap<String, CatalogPipeline>,
 }
 
@@ -29,14 +28,6 @@ impl Catalog {
             .map(|(id, _)| id.clone())
             .collect()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EncoderCatalogFields {
-    pub embedding_dim: Option<usize>,
-    pub embedding_version: Option<String>,
-    pub normalized: Option<bool>,
-    pub metric: Option<EmbeddingMetric>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,23 +85,6 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                 // duplicate-on-insert is unreachable from sibling directories.
                 let model_type =
                     derive_model_type(&m.preprocess_method, &m.postprocess_method, m.subtype);
-                if model_type == crate::engine_dispatch::ModelType::ImageEncoder {
-                    let normalized = match &m.postprocess_method {
-                        crate::engine_dispatch::manifest::PostprocessMethod::Embedding {
-                            normalize,
-                        } => Some(*normalize),
-                        _ => None,
-                    };
-                    catalog.encoder_fields.insert(
-                        id.clone(),
-                        EncoderCatalogFields {
-                            embedding_dim: m.embedding_dim,
-                            embedding_version: m.embedding_version.clone(),
-                            normalized,
-                            metric: m.embedding_metric,
-                        },
-                    );
-                }
                 let trt_mode = m
                     .trt
                     .as_ref()

@@ -873,7 +873,6 @@ mod tests {
         Catalog {
             models,
             trt_modes: BTreeMap::new(),
-            encoder_fields: BTreeMap::new(),
             pipelines: BTreeMap::new(),
         }
     }

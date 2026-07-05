@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import sys
 import threading
@@ -277,6 +278,7 @@ __all__ = [
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 _AUDIO_EXTS = {".wav"}  # sparrow-engine-core uses hound (WAV only); expand when more codecs are added
+_LOG = logging.getLogger(__name__)
 
 _engine: Optional[PyEngine] = None
 _engine_lock = threading.Lock()
@@ -456,7 +458,25 @@ def embed_with_meta(
     paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive)
     if single_path_input and not paths and not Path(input).is_dir():
         raise SparrowEngineError("No image files found.")
-    results = _get_engine().embed(paths, model, progress_callback)
+    engine = _get_engine()
+    results: list[EmbedResult] = []
+    errors = 0
+    total = len(paths)
+    for i, path in enumerate(paths):
+        try:
+            per_file_results = engine.embed([path], model, None)
+            if per_file_results:
+                results.append(per_file_results[0])
+            else:
+                errors += 1
+                _LOG.warning("skipping %s: no embedding returned", path)
+        except SparrowEngineError as exc:
+            errors += 1
+            _LOG.warning("skipping %s: %s", path, exc)
+        if progress_callback is not None:
+            progress_callback(i, total, path)
+    if errors and errors == total and total > 0:
+        raise SparrowEngineError("All files failed processing.")
     if single_file_input:
         if not results:
             raise SparrowEngineError("No image files found.")

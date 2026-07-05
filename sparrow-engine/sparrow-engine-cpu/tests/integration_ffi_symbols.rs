@@ -59,6 +59,77 @@ fn ffi_link_smoke_for_sample_symbols() {
 }
 
 // -----------------------------------------------------------------------------
+// Test 2: embed behavior — synthetic encoder fixture returns a valid C embedding
+// and the allocator round-trips through sparrow_engine_embedding_free.
+// -----------------------------------------------------------------------------
+
+#[test]
+fn ffi_embed_synthetic_encoder_returns_embedding_and_frees() {
+    use sparrow_engine::ffi::{
+        sparrow_engine_embed, sparrow_engine_embedding_free, sparrow_engine_engine_free,
+        sparrow_engine_engine_new, sparrow_engine_load_model, sparrow_engine_unload_model,
+    };
+    use std::ffi::{CStr, CString};
+    use std::path::PathBuf;
+
+    #[rustfmt::skip]
+    let png_1x1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+        0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+        0x00, 0x03, 0x01, 0x01, 0x00, 0xC9, 0xFE, 0x92,
+        0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+        0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().expect("workspace root");
+    let fixture_root = workspace_root
+        .join("sparrow-engine-core")
+        .join("tests")
+        .join("fixtures")
+        .join("image");
+    let manifest = fixture_root
+        .join("synthetic-image-encoder")
+        .join("manifest.toml");
+    let config = CString::new(format!(
+        r#"{{"device":"cpu","model_dir":"{}"}}"#,
+        fixture_root.display()
+    ))
+    .unwrap();
+    let manifest_c = CString::new(manifest.display().to_string()).unwrap();
+
+    unsafe {
+        let engine = sparrow_engine_engine_new(config.as_ptr());
+        assert!(!engine.is_null(), "engine_new returned null");
+        let model = sparrow_engine_load_model(engine, manifest_c.as_ptr());
+        assert!(!model.is_null(), "load_model returned null");
+        let embedding = sparrow_engine_embed(model, png_1x1.as_ptr(), png_1x1.len());
+        assert!(!embedding.is_null(), "sparrow_engine_embed returned null");
+        let embedding_ref = &*embedding;
+        assert!(!embedding_ref.data.is_null());
+        assert_eq!(embedding_ref.dim, 8);
+        assert!(embedding_ref.normalized);
+        assert_eq!(
+            CStr::from_ptr(embedding_ref.metric).to_str().unwrap(),
+            "cosine"
+        );
+        assert_eq!(
+            CStr::from_ptr(embedding_ref.model_id).to_str().unwrap(),
+            "synthetic-image-encoder"
+        );
+        let values = std::slice::from_raw_parts(embedding_ref.data, embedding_ref.dim);
+        assert!(values.iter().all(|v| v.is_finite()));
+        sparrow_engine_embedding_free(embedding);
+        sparrow_engine_unload_model(model);
+        sparrow_engine_engine_free(engine);
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Test 2: cdylib symbol surface — `nm` shell-out against libsparrow_engine.so. SKIPS
 // gracefully when the cdylib hasn't been built (so plain `cargo test` doesn't
 // fail; the test only does load-bearing work after `cargo build --release

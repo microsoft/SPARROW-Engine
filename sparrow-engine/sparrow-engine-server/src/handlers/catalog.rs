@@ -51,7 +51,6 @@ fn catalog_entries(
         .map(|model| {
             let loaded = loaded.contains(&model.id);
             let trt = project_trt_state(catalog, engine, &model.id, loaded);
-            let encoder = catalog.encoder_fields.get(&model.id);
             CatalogEntryResponse {
                 model_id: model.id.clone(),
                 model_type: model.model_type.to_string(),
@@ -59,10 +58,10 @@ fn catalog_entries(
                 loaded,
                 trt_state: trt.state,
                 trt_detail: trt.detail,
-                embedding_dim: encoder.and_then(|e| e.embedding_dim),
-                embedding_version: encoder.and_then(|e| e.embedding_version.clone()),
-                normalized: encoder.and_then(|e| e.normalized),
-                metric: encoder.and_then(|e| e.metric.map(|m| m.to_string())),
+                embedding_dim: model.embedding_dim,
+                embedding_version: model.embedding_version.clone(),
+                normalized: model.normalized,
+                metric: model.embedding_metric.map(|m| m.to_string()),
             }
         })
         .collect()

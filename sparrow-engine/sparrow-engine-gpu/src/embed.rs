@@ -47,7 +47,6 @@ pub fn embed(handle: &ModelHandle, image: &ImageInput) -> Result<EmbedResult> {
                 .map_err(|_| SparrowEngineError::Ort("engine JpegDecoder lock poisoned".into()))?;
             model.embed(
                 &engine_inner.ctx,
-                &engine_inner.center_crop,
                 &engine_inner.letterbox,
                 &engine_inner.resize,
                 &engine_inner.resize_crop,

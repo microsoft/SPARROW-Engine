@@ -536,7 +536,6 @@ fn validate_trt_loaded_model_once(
             let mut decoder = JpegDecoder::new(&engine_inner.ctx)?;
             model.embed(
                 &engine_inner.ctx,
-                &engine_inner.center_crop,
                 &engine_inner.letterbox,
                 &engine_inner.resize,
                 &engine_inner.resize_crop,

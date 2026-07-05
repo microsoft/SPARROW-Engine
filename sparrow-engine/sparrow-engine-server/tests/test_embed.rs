@@ -3,8 +3,6 @@
 //! Uses the committed tiny synthetic encoder fixture so CI does not need a
 //! production-size image encoder model.
 
-#![allow(dead_code)]
-
 mod common;
 
 use std::path::PathBuf;

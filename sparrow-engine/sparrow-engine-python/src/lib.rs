@@ -999,19 +999,31 @@ impl PyEngine {
         let engine = &self.engine;
         let model_id = model.to_owned();
         let total = paths.len();
-        let images: Vec<ImageInput> = paths
-            .iter()
-            .map(|path| ImageInput::FilePath(PathBuf::from(path)))
-            .collect();
 
         let native_results = py.allow_threads(move || {
             let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
-            sparrow_engine::embed::embed_batch(&handle, &images).map_err(to_pyerr)
+            let mut results = Vec::with_capacity(paths.len());
+            let mut errors = 0usize;
+            for (i, path) in paths.iter().enumerate() {
+                let input = ImageInput::FilePath(PathBuf::from(path));
+                match sparrow_engine::embed::embed(&handle, &input) {
+                    Ok(r) => results.push(r),
+                    Err(e) => {
+                        tracing::warn!(target: "sparrow_engine::python", "skipping {path}: {e}");
+                        errors += 1;
+                    }
+                }
+                invoke_progress(progress_callback.as_ref(), i, total, path)?;
+            }
+            if errors > 0 {
+                tracing::warn!(target: "sparrow_engine::python", "{errors} file(s) skipped due to errors");
+            }
+            if errors == total && total > 0 {
+                return Err(SparrowEngineError::new_err("All files failed processing."));
+            }
+            Ok(results)
         })?;
 
-        for (i, path) in paths.iter().enumerate() {
-            invoke_progress(progress_callback.as_ref(), i, total, path)?;
-        }
         Ok(native_results
             .into_iter()
             .map(|r| py_embed_result(py, r))

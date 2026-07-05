@@ -412,14 +412,14 @@ pub fn render(image: &DynamicImage, annotations: &[BboxAnnotation], opts: &Rende
                     draw_filled_circle(&mut canvas, cx, cy, opts.point_radius, color);
                 }
             }
+            ModelType::ImageEncoder => {}
             // Standard / classifier / audio model types all take the bbox path.
             // Audio and classifier paths already produce full-image or
             // time-extent rectangles that render correctly as bboxes.
             ModelType::Detector
             | ModelType::Classifier
             | ModelType::AudioDetector
-            | ModelType::AudioClassifier
-            | ModelType::ImageEncoder => {
+            | ModelType::AudioClassifier => {
                 if let Some(alpha) = opts.fill_alpha {
                     let a = (alpha * 255.0).clamp(0.0, 255.0) as u8;
                     draw_filled_rect_alpha(&mut canvas, px0, py0, px1, py1, color, a);
@@ -1730,6 +1730,23 @@ mod tests {
             dot_result.to_rgba8().as_raw(),
             "Detector dispatch must differ from OverheadDetector dispatch on the same tiny bbox"
         );
+    }
+
+    #[test]
+    fn render_image_encoder_annotations_are_noop() {
+        let img = DynamicImage::new_rgb8(100, 100);
+        let ann = BboxAnnotation {
+            bbox: [0.1, 0.1, 0.9, 0.9],
+            label: "embedding".to_string(),
+            confidence: 1.0,
+        };
+        let opts = RenderOpts {
+            model_type: ModelType::ImageEncoder,
+            ..Default::default()
+        };
+        let result = render(&img, &[ann], &opts);
+        let baseline = render(&img, &[], &opts);
+        assert_eq!(result.to_rgba8().as_raw(), baseline.to_rgba8().as_raw());
     }
 
     // Sub-threshold overhead detections render nothing (dot-path respects

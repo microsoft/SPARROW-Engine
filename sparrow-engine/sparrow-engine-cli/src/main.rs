@@ -1734,18 +1734,34 @@ fn cmd_embed_with_engine(
     }
 
     let handle = engine.get_or_load_model(&args.model)?;
-    let images: Vec<ImageInput> = files.iter().cloned().map(ImageInput::FilePath).collect();
-    let bar = make_progress_bar(files.len() as u64, quiet);
+    let total = files.len();
+    let bar = make_progress_bar(total as u64, quiet);
+    let mut successful_files = Vec::new();
+    let mut results = Vec::new();
+    let mut errors = 0usize;
     for file in &files {
         bar.set_message(file.display().to_string());
+        let image = ImageInput::FilePath(file.clone());
+        match embed::embed(&handle, &image) {
+            Ok(result) => {
+                successful_files.push(file.clone());
+                results.push(result);
+            }
+            Err(e) => {
+                bar.println(format!("error: {}: {e}", file.display()));
+                errors += 1;
+            }
+        }
         bar.inc(1);
     }
-    let results = embed::embed_batch(&handle, &images)?;
     bar.finish_and_clear();
+    if errors == total {
+        return Err("All files failed processing.".into());
+    }
 
     match args.format {
         EmbedFormat::Ndjson | EmbedFormat::Json => {
-            let rows = embed_rows(&files, &results);
+            let rows = embed_rows(&successful_files, &results);
             if let Some(dir) = args.output.as_ref() {
                 std::fs::create_dir_all(dir).map_err(|e| {
                     format!("cannot create output directory '{}': {e}", dir.display())
@@ -1766,7 +1782,7 @@ fn cmd_embed_with_engine(
         }
         EmbedFormat::Npy => {
             let dir = args.output.unwrap_or_else(|| PathBuf::from("."));
-            write_embed_npy_bundle(&dir, &files, &results)?;
+            write_embed_npy_bundle(&dir, &successful_files, &results)?;
         }
     }
     Ok(())
