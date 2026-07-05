@@ -138,6 +138,22 @@ typedef struct SparrowEngineClassifyOpts {
 } SparrowEngineClassifyOpts;
 
 /**
+ * Embedding result from a single `sparrow_engine_embed()` call.
+ */
+typedef struct SparrowEngineEmbedding {
+  const float *data;
+  uintptr_t dim;
+  bool normalized;
+  const char *metric;
+  const char *model_id;
+  const char *embedding_version;
+  const char *model_hash;
+  uint32_t image_width;
+  uint32_t image_height;
+  float processing_time_ms;
+} SparrowEngineEmbedding;
+
+/**
  * A pipeline detection: detection + optional classification.
  */
 typedef struct SparrowEnginePipelineDetection {
@@ -412,6 +428,17 @@ struct SparrowEngineClassifyResult *sparrow_engine_classify(const SparrowEngineM
                                                             const struct SparrowEngineClassifyOpts *opts);
 
 /**
+ * Run image encoder inference on an encoded image buffer (JPEG/PNG). Returns null on error.
+ *
+ * # Safety
+ * - `model` must be a valid model pointer.
+ * - `image` must point to `len` bytes of encoded image data.
+ */
+struct SparrowEngineEmbedding *sparrow_engine_embed(const SparrowEngineModel *model,
+                                                    const uint8_t *image,
+                                                    uintptr_t len);
+
+/**
  * Run a pipeline (detect → classify) on an encoded image. Returns null on error.
  *
  * # Safety
@@ -509,6 +536,14 @@ void sparrow_engine_detections_free(struct SparrowEngineDetections *ptr);
  * `ptr` must be a pointer returned by `sparrow_engine_classify`, or null.
  */
 void sparrow_engine_classify_result_free(struct SparrowEngineClassifyResult *ptr);
+
+/**
+ * Free a `SparrowEngineEmbedding` returned by `sparrow_engine_embed`.
+ *
+ * # Safety
+ * `ptr` must be a pointer returned by `sparrow_engine_embed`, or null.
+ */
+void sparrow_engine_embedding_free(struct SparrowEngineEmbedding *ptr);
 
 /**
  * Free a `SparrowEnginePipelineResult` returned by `sparrow_engine_run_pipeline`.

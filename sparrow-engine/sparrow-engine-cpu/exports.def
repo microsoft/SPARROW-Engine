@@ -12,6 +12,7 @@ EXPORTS
     sparrow_engine_detect_raw
     sparrow_engine_detect_batch
     sparrow_engine_classify
+    sparrow_engine_embed
     sparrow_engine_run_pipeline
     sparrow_engine_detect_audio
     sparrow_engine_detect_audio_streaming
@@ -19,6 +20,7 @@ EXPORTS
     sparrow_engine_detections_free
     sparrow_engine_audio_result_v2_free
     sparrow_engine_classify_result_free
+    sparrow_engine_embedding_free
     sparrow_engine_pipeline_result_free
     sparrow_engine_audio_result_free
     sparrow_engine_free_string
