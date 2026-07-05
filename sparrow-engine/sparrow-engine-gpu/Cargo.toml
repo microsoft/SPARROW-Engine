@@ -57,6 +57,7 @@ nvjpeg-sys = "=0.1.0"
 # de-dupes across the workspace).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ndarray = "0.17"
+half = "2.7"
 
 # ORT CUDA EP for IoBinding wrapper. Same pin as sparrow-engine-cpu for ABI compatibility.
 # Wave 1 does NOT exercise inference end-to-end, but the IoBinding wrapper is
@@ -68,7 +69,7 @@ ndarray = "0.17"
 # from the pip `onnxruntime-gpu` install. CUDA EP itself
 # (libonnxruntime_providers_cuda.so) is loaded internally by ORT,
 # orthogonal to how ORT itself is loaded.
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "copy-dylibs", "load-dynamic", "api-24", "cuda", "tensorrt"] }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "copy-dylibs", "load-dynamic", "api-24", "half", "cuda", "tensorrt"] }
 
 tracing = { version = "0.1", features = ["log"] }
 sha2 = "0.10"

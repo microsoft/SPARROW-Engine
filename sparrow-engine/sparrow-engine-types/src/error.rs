@@ -71,6 +71,13 @@ pub enum SparrowEngineError {
         method: String,
     },
 
+    #[error("Model hash mismatch for '{model_id}': expected {expected}, actual {actual}")]
+    ModelHashMismatch {
+        model_id: String,
+        expected: String,
+        actual: String,
+    },
+
     #[error("Path traversal or absolute path rejected: {0}")]
     PathTraversal(String),
 
@@ -89,6 +96,15 @@ pub enum SparrowEngineError {
 
     #[error("Model '{id}' is a detector (postprocessing: {method}). Use detect() instead.")]
     NotAClassifier { id: String, method: String },
+
+    #[error("Model '{id}' is not an image encoder (postprocessing: {method}). Use embed() only with encoder models.")]
+    NotAnEncoder { id: String, method: String },
+
+    #[error("Embedding output for model '{id}' contains a non-finite value")]
+    EmbeddingNotFinite { id: String },
+
+    #[error("Embedding output for model '{id}' has zero L2 norm and cannot be normalized")]
+    ZeroNormEmbedding { id: String },
 
     // -- Pipeline --
     #[error("Pipeline '{id}' not found")]

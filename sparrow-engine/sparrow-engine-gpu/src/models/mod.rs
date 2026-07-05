@@ -31,5 +31,6 @@
 pub mod audio;
 pub mod audio_raw;
 pub mod classifier;
+pub mod encoder;
 pub mod tiled;
 pub mod yolo;

@@ -259,6 +259,7 @@ pub enum ModelType {
     Classifier,
     AudioDetector,
     AudioClassifier,
+    ImageEncoder,
 }
 
 impl ModelType {
@@ -269,6 +270,7 @@ impl ModelType {
             ModelType::Classifier => "classifier",
             ModelType::AudioDetector => "audio_detector",
             ModelType::AudioClassifier => "audio_classifier",
+            ModelType::ImageEncoder => "image_encoder",
         }
     }
 }
@@ -277,6 +279,45 @@ impl std::fmt::Display for ModelType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// Distance/similarity metric expected by an embedding index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingMetric {
+    Cosine,
+    L2,
+    Dot,
+}
+
+impl EmbeddingMetric {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EmbeddingMetric::Cosine => "cosine",
+            EmbeddingMetric::L2 => "l2",
+            EmbeddingMetric::Dot => "dot",
+        }
+    }
+}
+
+impl std::fmt::Display for EmbeddingMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Output from an image encoder model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbedResult {
+    pub embedding: Vec<f32>,
+    pub dim: usize,
+    pub normalized: bool,
+    pub metric: EmbeddingMetric,
+    pub model_id: String,
+    pub embedding_version: String,
+    pub model_hash: String,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub processing_time_ms: f32,
 }
 
 /// Rendering / behaviour hint from the TOML `[model].subtype` field.
@@ -322,6 +363,7 @@ mod phase_a_r1_types_tests {
             (ModelType::Classifier, "classifier"),
             (ModelType::AudioDetector, "audio_detector"),
             (ModelType::AudioClassifier, "audio_classifier"),
+            (ModelType::ImageEncoder, "image_encoder"),
         ];
         for (mt, expected) in table {
             assert_eq!(mt.as_str(), *expected, "as_str mismatch for {mt:?}");
@@ -336,6 +378,7 @@ mod phase_a_r1_types_tests {
             ModelType::Classifier,
             ModelType::AudioDetector,
             ModelType::AudioClassifier,
+            ModelType::ImageEncoder,
         ] {
             assert_eq!(
                 mt.to_string(),

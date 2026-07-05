@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::drift_metrics::DriftReference;
 use crate::error::{Result, SparrowEngineError};
-use crate::types::ModelSubtype;
+use crate::types::{EmbeddingMetric, ModelSubtype};
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -311,6 +311,8 @@ pub enum PostprocessMethod {
     Softmax,
     /// Sigmoid activation for binary audio detection.
     Sigmoid { confidence_threshold: f32 },
+    /// Embedding vector output for image encoders.
+    Embedding { normalize: bool },
 }
 
 /// Label file format.
@@ -357,6 +359,7 @@ impl PostprocessMethod {
             PostprocessMethod::RtDetrTopk { .. } => "rtdetr_topk",
             PostprocessMethod::Softmax => "softmax",
             PostprocessMethod::Sigmoid { .. } => "sigmoid",
+            PostprocessMethod::Embedding { .. } => "embedding",
         }
     }
 }
@@ -408,6 +411,9 @@ pub struct ModelManifest {
 
     pub postprocess_method: PostprocessMethod,
     pub confidence_threshold: Option<f32>,
+    pub embedding_version: Option<String>,
+    pub embedding_dim: Option<usize>,
+    pub embedding_metric: Option<EmbeddingMetric>,
 
     /// Label file path (relative to manifest dir). None for binary detectors.
     pub label_file: Option<String>,
@@ -503,6 +509,9 @@ struct RawModelToml {
     /// Optional `[drift_reference]` section (Phase 4 W4).
     #[serde(default)]
     drift_reference: Option<RawDriftReference>,
+    /// Optional `[embedding]` section for image encoders.
+    #[serde(default)]
+    embedding: Option<RawEmbedding>,
 }
 
 /// Raw TOML mirror of `DriftReference`. Inline `class_distribution` map
@@ -634,6 +643,18 @@ struct RawPostprocessing {
     adaptive: Option<bool>,
     point_to_box_half_size: Option<u32>,
     topk: Option<usize>,
+    #[serde(default)]
+    normalize: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawEmbedding {
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    dim: Option<usize>,
+    #[serde(default)]
+    metric: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1166,6 +1187,9 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 confidence_threshold,
             }
         }
+        "embedding" => PostprocessMethod::Embedding {
+            normalize: raw.postprocessing.normalize.unwrap_or(true),
+        },
         other => {
             return Err(SparrowEngineError::InvalidManifest(format!(
                 "Unknown postprocessing method: '{other}'"
@@ -1178,6 +1202,11 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Sigmoid { .. })
             | (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Softmax)
             | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax) => {}
+            (_, PostprocessMethod::Embedding { .. }) => {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "audio encoders are not yet supported".to_string(),
+                ));
+            }
             _ => {
                 return Err(SparrowEngineError::InvalidManifest(format!(
                     "unsupported audio preprocess/postprocess combination: preprocessing method '{}' with postprocessing method '{}'",
@@ -1262,6 +1291,58 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             raw.postprocessing.method
         )));
     }
+
+    let is_image_encoder = matches!(postprocess_method, PostprocessMethod::Embedding { .. })
+        && matches!(
+            preprocess_method,
+            PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop
+        );
+
+    let (embedding_version, embedding_dim, embedding_metric) = if is_image_encoder {
+        let raw_embedding = raw.embedding.as_ref().ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(
+                "image encoders require an [embedding] section with version".to_string(),
+            )
+        })?;
+        let version = raw_embedding
+            .version
+            .clone()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "image encoders require [embedding] version".to_string(),
+                )
+            })?;
+        if raw.model.onnx_sha256.is_none() {
+            return Err(SparrowEngineError::InvalidManifest(
+                "image encoders require [model] onnx_sha256".to_string(),
+            ));
+        }
+        if matches!(raw_embedding.dim, Some(0)) {
+            return Err(SparrowEngineError::InvalidManifest(
+                "[embedding] dim must be > 0 when set".to_string(),
+            ));
+        }
+        let normalize = match postprocess_method {
+            PostprocessMethod::Embedding { normalize } => normalize,
+            _ => false,
+        };
+        let metric = match raw_embedding.metric.as_deref() {
+            None if normalize => EmbeddingMetric::Cosine,
+            None => EmbeddingMetric::Dot,
+            Some("cosine") => EmbeddingMetric::Cosine,
+            Some("l2") => EmbeddingMetric::L2,
+            Some("dot") => EmbeddingMetric::Dot,
+            Some(other) => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "Unknown embedding metric: '{other}' (expected 'cosine', 'l2', or 'dot')"
+                )));
+            }
+        };
+        (Some(version), raw_embedding.dim, Some(metric))
+    } else {
+        (None, None, None)
+    };
 
     // -- Validate paths: no traversal or absolute paths --
     reject_unsafe_path(&raw.model.file, "model file")?;
@@ -1358,6 +1439,9 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         trt,
         postprocess_method,
         confidence_threshold: raw.postprocessing.confidence_threshold,
+        embedding_version,
+        embedding_dim,
+        embedding_metric,
         label_file,
         label_format,
         default: raw.model.default,
@@ -2938,9 +3022,8 @@ format = {label_format}
     #[test]
     fn test_heatmap_peak_threshold_must_be_unit_range() {
         for value in ["-0.1", "1.1", "nan"] {
-            let post_extra = format!(
-                "peak_threshold = {value}\nadaptive = true\npoint_to_box_half_size = 10"
-            );
+            let post_extra =
+                format!("peak_threshold = {value}\nadaptive = true\npoint_to_box_half_size = 10");
             let toml = make_model_toml(&[
                 ("strategy", r#""tiled""#),
                 ("tile_size", "[512, 512]"),

@@ -418,7 +418,8 @@ pub fn render(image: &DynamicImage, annotations: &[BboxAnnotation], opts: &Rende
             ModelType::Detector
             | ModelType::Classifier
             | ModelType::AudioDetector
-            | ModelType::AudioClassifier => {
+            | ModelType::AudioClassifier
+            | ModelType::ImageEncoder => {
                 if let Some(alpha) = opts.fill_alpha {
                     let a = (alpha * 255.0).clamp(0.0, 255.0) as u8;
                     draw_filled_rect_alpha(&mut canvas, px0, py0, px1, py1, color, a);

@@ -284,6 +284,29 @@ impl Engine {
             ),
         };
 
+        if matches!(
+            derive_model_type(
+                &manifest.preprocess_method,
+                &manifest.postprocess_method,
+                manifest.subtype,
+            ),
+            ModelType::ImageEncoder
+        ) {
+            let expected = manifest.onnx_sha256.clone().ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "image encoders require [model] onnx_sha256".to_string(),
+                )
+            })?;
+            let actual = sparrow_engine_core::hash::hash_file(&onnx_path)?;
+            if actual != expected {
+                return Err(SparrowEngineError::ModelHashMismatch {
+                    model_id: manifest.id.clone(),
+                    expected,
+                    actual,
+                });
+            }
+        }
+
         // Load labels (optional — binary detectors like audio bird detector have none).
         let labels = match (&manifest.label_file, &manifest.label_format) {
             (Some(file), Some(fmt)) => {
@@ -694,6 +717,7 @@ impl Engine {
             ModelType::Classifier => "SPARROW_ENGINE_DEFAULT_CLASSIFIER",
             ModelType::AudioDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_DETECTOR",
             ModelType::AudioClassifier => "SPARROW_ENGINE_DEFAULT_AUDIO_CLASSIFIER",
+            ModelType::ImageEncoder => "SPARROW_ENGINE_DEFAULT_IMAGE_ENCODER",
         };
         if let Ok(val) = std::env::var(env_var) {
             if !val.is_empty() {
@@ -979,6 +1003,14 @@ fn validate_output_shape(session: &Session, manifest: &ModelManifest) -> Result<
         });
     }
 
+    if matches!(method, PostprocessMethod::Embedding { .. }) && outputs.len() != 1 {
+        return Err(SparrowEngineError::OutputShapeMismatch {
+            id: manifest.id.clone(),
+            shape: format!("{} outputs", outputs.len()),
+            method: method.as_str().to_string(),
+        });
+    }
+
     let output_names: Vec<&str> = outputs.iter().map(|output| output.name()).collect();
     let output_index = select_validation_output_index(
         &output_names,
@@ -987,8 +1019,9 @@ fn validate_output_shape(session: &Session, manifest: &ModelManifest) -> Result<
         &manifest.id,
     )?;
     let output = &outputs[output_index];
+    validate_output_dtype(output, &manifest.id, method)?;
     let shape = output_shape_dims(output);
-    validate_output_dims(&shape, &manifest.id, method)
+    validate_output_dims(&shape, &manifest.id, method, manifest.embedding_dim)
 }
 
 fn select_validation_output_index(
@@ -1029,7 +1062,34 @@ fn select_validation_output_index(
     Ok(0)
 }
 
-fn validate_output_dims(shape: &[i64], model_id: &str, method: &PostprocessMethod) -> Result<()> {
+fn validate_output_dtype(
+    outlet: &ort::value::Outlet,
+    model_id: &str,
+    method: &PostprocessMethod,
+) -> Result<()> {
+    if !matches!(method, PostprocessMethod::Embedding { .. }) {
+        return Ok(());
+    }
+    use ort::value::{TensorElementType, ValueType};
+    match outlet.dtype() {
+        ValueType::Tensor {
+            ty: TensorElementType::Float32 | TensorElementType::Float16,
+            ..
+        } => Ok(()),
+        other => Err(SparrowEngineError::OutputShapeMismatch {
+            id: model_id.to_string(),
+            shape: format!("non-float embedding output dtype {other:?}"),
+            method: method.as_str().to_string(),
+        }),
+    }
+}
+
+fn validate_output_dims(
+    shape: &[i64],
+    model_id: &str,
+    method: &PostprocessMethod,
+    manifest_embedding_dim: Option<usize>,
+) -> Result<()> {
     let shape_str = format_shape(shape);
     let method_str = method.as_str().to_string();
 
@@ -1133,6 +1193,45 @@ fn validate_output_dims(shape: &[i64], model_id: &str, method: &PostprocessMetho
                     shape: shape_str,
                     method: method_str,
                 });
+            }
+        }
+        PostprocessMethod::Embedding { .. } => {
+            if shape.is_empty() || shape.len() > 2 {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: shape_str,
+                    method: method_str,
+                });
+            }
+            let static_dim = match shape {
+                [d] if *d > 0 => Some(*d as usize),
+                [batch, d] if (*batch == -1 || *batch > 0) && *d > 0 => Some(*d as usize),
+                [d] if *d == -1 => None,
+                [batch, d] if (*batch == -1 || *batch > 0) && *d == -1 => None,
+                _ => {
+                    return Err(SparrowEngineError::OutputShapeMismatch {
+                        id: model_id.to_string(),
+                        shape: shape_str,
+                        method: method_str,
+                    });
+                }
+            };
+            match (static_dim, manifest_embedding_dim) {
+                (Some(static_dim), Some(manifest_dim)) if static_dim != manifest_dim => {
+                    return Err(SparrowEngineError::OutputShapeMismatch {
+                        id: model_id.to_string(),
+                        shape: format!(
+                            "{shape_str} (static embedding dim {static_dim} != manifest dim {manifest_dim})"
+                        ),
+                        method: method_str,
+                    });
+                }
+                (Some(_), _) | (None, Some(_)) => {}
+                (None, None) => {
+                    return Err(SparrowEngineError::InvalidManifest(
+                        "dynamic embedding dim; set [embedding] dim = <N>".to_string(),
+                    ));
+                }
             }
         }
     }
@@ -1622,6 +1721,9 @@ mod tests {
             trt: None,
             postprocess_method: PostprocessMethod::Softmax,
             confidence_threshold: None,
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: Some("labels.txt".to_string()),
             label_format: Some(manifest::LabelFormat::OnePerLine),
             default: false,
@@ -2145,20 +2247,25 @@ mod tests {
 
     #[test]
     fn validate_output_dims_accepts_megadet_static_last_dim_above_five() {
-        validate_output_dims(&[1, 8400, 8], "mdv5a", &megadet_v5a_method())
+        validate_output_dims(&[1, 8400, 8], "mdv5a", &megadet_v5a_method(), None)
             .expect("megadet static last_dim > 5 should be accepted");
     }
 
     #[test]
     fn validate_output_dims_accepts_rank_two_megadet_static_last_dim_above_five() {
-        validate_output_dims(&[8400, 8], "mdv5a-rank-two", &megadet_v5a_method())
+        validate_output_dims(&[8400, 8], "mdv5a-rank-two", &megadet_v5a_method(), None)
             .expect("rank-2 megadet static last_dim > 5 should be accepted");
     }
 
     #[test]
     fn validate_output_dims_accepts_rank_two_yolo_e2e() {
-        validate_output_dims(&[8400, 6], "yolo-rank-two", &PostprocessMethod::YoloE2e)
-            .expect("rank-2 yolo_e2e [N, 6] should be accepted");
+        validate_output_dims(
+            &[8400, 6],
+            "yolo-rank-two",
+            &PostprocessMethod::YoloE2e,
+            None,
+        )
+        .expect("rank-2 yolo_e2e [N, 6] should be accepted");
     }
 
     #[test]
@@ -2167,6 +2274,7 @@ mod tests {
             &[8400, 5],
             "bad-yolo-rank-two-last",
             &PostprocessMethod::YoloE2e,
+            None,
         )
         .expect_err("rank-2 yolo_e2e [N, 5] must be rejected");
         assert!(matches!(
@@ -2181,14 +2289,73 @@ mod tests {
             &[1, 8400, 6],
             "yolo-rank-three",
             &PostprocessMethod::YoloE2e,
+            None,
         )
         .expect("rank-3 yolo_e2e [1, N, 6] should be accepted");
     }
 
     #[test]
     fn validate_output_dims_keeps_yolo_strict_at_six() {
-        let err = validate_output_dims(&[1, 8400, 8], "bad-yolo-last", &PostprocessMethod::YoloE2e)
-            .expect_err("yolo_e2e static last_dim > 6 must still be rejected");
+        let err = validate_output_dims(
+            &[1, 8400, 8],
+            "bad-yolo-last",
+            &PostprocessMethod::YoloE2e,
+            None,
+        )
+        .expect_err("yolo_e2e static last_dim > 6 must still be rejected");
+        assert!(matches!(
+            err,
+            SparrowEngineError::OutputShapeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_output_dims_accepts_embedding_static_manifest_match() {
+        validate_output_dims(
+            &[1, 768],
+            "encoder",
+            &PostprocessMethod::Embedding { normalize: true },
+            Some(768),
+        )
+        .expect("embedding [1, D] with matching manifest dim should be accepted");
+    }
+
+    #[test]
+    fn validate_output_dims_rejects_embedding_dim_mismatch() {
+        let err = validate_output_dims(
+            &[1, 1024],
+            "encoder",
+            &PostprocessMethod::Embedding { normalize: true },
+            Some(768),
+        )
+        .expect_err("static embedding dim must match manifest dim");
+        assert!(matches!(
+            err,
+            SparrowEngineError::OutputShapeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_output_dims_rejects_dynamic_embedding_without_manifest_dim() {
+        let err = validate_output_dims(
+            &[1, -1],
+            "encoder",
+            &PostprocessMethod::Embedding { normalize: true },
+            None,
+        )
+        .expect_err("dynamic embedding dim must require manifest dim");
+        assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
+    }
+
+    #[test]
+    fn validate_output_dims_rejects_embedding_rank_three() {
+        let err = validate_output_dims(
+            &[1, 201, 1024],
+            "encoder",
+            &PostprocessMethod::Embedding { normalize: true },
+            Some(1024),
+        )
+        .expect_err("embedding outputs must be pooled rank-1/rank-2 tensors");
         assert!(matches!(
             err,
             SparrowEngineError::OutputShapeMismatch { .. }
@@ -2197,14 +2364,14 @@ mod tests {
 
     #[test]
     fn validate_output_dims_rejects_megadet_static_last_dim_at_or_below_five() {
-        let err = validate_output_dims(&[1, 8400, 5], "bad-last-5", &megadet_v5a_method())
+        let err = validate_output_dims(&[1, 8400, 5], "bad-last-5", &megadet_v5a_method(), None)
             .expect_err("megadet static last_dim == 5 must be rejected");
         assert!(matches!(
             err,
             SparrowEngineError::OutputShapeMismatch { .. }
         ));
 
-        let err = validate_output_dims(&[1, 8400, 4], "bad-last-4", &megadet_v5a_method())
+        let err = validate_output_dims(&[1, 8400, 4], "bad-last-4", &megadet_v5a_method(), None)
             .expect_err("megadet static last_dim < 5 must be rejected");
         assert!(matches!(
             err,

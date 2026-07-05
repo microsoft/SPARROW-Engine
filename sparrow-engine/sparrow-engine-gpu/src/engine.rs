@@ -77,6 +77,7 @@ use crate::kernels::resize_crop::ResizeCropKernel;
 use crate::models::audio::{AudioModel, GpuAudioDetectOpts};
 use crate::models::audio_raw::RawAudioModel;
 use crate::models::classifier::{ClassifierModel, JpegDecoder};
+use crate::models::encoder::EncoderModel;
 use crate::models::tiled::TiledModel;
 use crate::models::yolo::YoloModel;
 use crate::trt::ep::{find_tensorrt_runtime, sm_supports_trt, trt_disabled_env_is_set};
@@ -111,6 +112,7 @@ static ENGINE_EXISTS: AtomicBool = AtomicBool::new(false);
 pub(crate) enum LoadedModelInner {
     Yolo(YoloModel),
     Classifier(ClassifierModel),
+    Encoder(EncoderModel),
     Tiled(TiledModel),
     Audio(Box<AudioModel>),
     /// Phase D round 2 B-08: raw-audio classifiers (Perch 2 / perch-v2)
@@ -295,6 +297,11 @@ fn build_loaded_model_inner(
             ),
         },
         ModelType::Classifier => Ok(LoadedModelInner::Classifier(ClassifierModel::load(
+            ctx,
+            manifest,
+            manifest_dir,
+        )?)),
+        ModelType::ImageEncoder => Ok(LoadedModelInner::Encoder(EncoderModel::load(
             ctx,
             manifest,
             manifest_dir,
@@ -515,6 +522,19 @@ fn validate_trt_loaded_model_once(
                 &ClassifyOpts::default(),
             )?;
         }
+        LoadedModelInner::Encoder(model) => {
+            let image = canned_image_input(&expected.manifest)?;
+            let mut decoder = JpegDecoder::new(&engine_inner.ctx)?;
+            model.embed(
+                &engine_inner.ctx,
+                &engine_inner.center_crop,
+                &engine_inner.letterbox,
+                &engine_inner.resize,
+                &engine_inner.resize_crop,
+                &mut decoder,
+                &image,
+            )?;
+        }
         LoadedModelInner::Tiled(model) => {
             let image = canned_image_input(&expected.manifest)?;
             model.detect_tiled(&engine_inner.ctx, &image, &DetectOpts::default())?;
@@ -707,6 +727,41 @@ impl Engine {
         }
         let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
         let model_id = manifest_owned.id.clone();
+
+        if matches!(
+            derive_model_type(
+                &manifest_owned.preprocess_method,
+                &manifest_owned.postprocess_method,
+                manifest_owned.subtype,
+            ),
+            ModelType::ImageEncoder
+        ) {
+            let expected = manifest_owned.onnx_sha256.clone().ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "image encoders require [model] onnx_sha256".to_string(),
+                )
+            })?;
+            let onnx_path = match manifest_owned.precision {
+                manifest::Precision::Fp32 | manifest::Precision::Int8 => {
+                    manifest_dir.join(&manifest_owned.model_file)
+                }
+                manifest::Precision::Fp16 => {
+                    manifest_dir.join(manifest_owned.model_file_fp16.as_ref().ok_or_else(|| {
+                        SparrowEngineError::InvalidManifest(
+                            "precision = 'fp16' requires [model] file_fp16 to be set".to_string(),
+                        )
+                    })?)
+                }
+            };
+            let actual = sparrow_engine_core::hash::hash_file(&onnx_path)?;
+            if actual != expected {
+                return Err(SparrowEngineError::ModelHashMismatch {
+                    model_id: manifest_owned.id.clone(),
+                    expected,
+                    actual,
+                });
+            }
+        }
 
         // Load labels (optional — audio binary detector has none).
         let labels = match (&manifest_owned.label_file, &manifest_owned.label_format) {
@@ -1133,6 +1188,7 @@ impl Engine {
             ModelType::Classifier => "SPARROW_ENGINE_DEFAULT_CLASSIFIER",
             ModelType::AudioDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_DETECTOR",
             ModelType::AudioClassifier => "SPARROW_ENGINE_DEFAULT_AUDIO_CLASSIFIER",
+            ModelType::ImageEncoder => "SPARROW_ENGINE_DEFAULT_IMAGE_ENCODER",
         };
         if let Ok(val) = std::env::var(env_var) {
             if !val.is_empty() {

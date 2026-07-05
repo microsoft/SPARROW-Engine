@@ -49,6 +49,10 @@ pub fn derive_model_type(
             PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop,
             PostprocessMethod::Sigmoid { .. },
         ) => ModelType::Classifier,
+        (
+            PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop,
+            PostprocessMethod::Embedding { .. },
+        ) => ModelType::ImageEncoder,
         _ => ModelType::Detector,
     };
     // Subtype promotion: only a vision Detector is eligible for overhead-dot
@@ -104,6 +108,10 @@ mod phase_a_r1_model_type_tests {
         PostprocessMethod::Sigmoid {
             confidence_threshold: 0.5,
         }
+    }
+
+    fn embedding() -> PostprocessMethod {
+        PostprocessMethod::Embedding { normalize: true }
     }
 
     #[test]
@@ -242,6 +250,40 @@ mod phase_a_r1_model_type_tests {
     }
 
     #[test]
+    fn image_encoder_when_image_preprocess_plus_embedding() {
+        for pre in [
+            PreprocessMethod::Letterbox,
+            PreprocessMethod::Resize,
+            PreprocessMethod::ResizeCrop,
+        ] {
+            assert_eq!(
+                derive_model_type(&pre, &embedding(), ModelSubtype::Standard),
+                ModelType::ImageEncoder,
+                "{} + Embedding should be ImageEncoder",
+                pre.as_str()
+            );
+            assert_eq!(
+                derive_model_type(&pre, &embedding(), ModelSubtype::Overhead),
+                ModelType::ImageEncoder,
+                "{} + Embedding + Overhead must stay ImageEncoder",
+                pre.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn audio_plus_embedding_falls_through_for_manifest_validation_rejection() {
+        assert_eq!(
+            derive_model_type(&mel(), &embedding(), ModelSubtype::Standard),
+            ModelType::Detector
+        );
+        assert_eq!(
+            derive_model_type(&raw_audio(), &embedding(), ModelSubtype::Standard),
+            ModelType::Detector
+        );
+    }
+
+    #[test]
     fn overhead_detector_when_image_detector_combo_with_overhead_subtype() {
         // Same matrix as above but Overhead subtype must promote to OverheadDetector.
         // (Sigmoid excluded — image+Sigmoid is a Classifier, not promotable.)
@@ -289,6 +331,7 @@ mod phase_a_r1_model_type_tests {
             heatmap(),
             PostprocessMethod::Softmax,
             sigmoid(),
+            embedding(),
             PostprocessMethod::RtDetrTopk { topk: Some(300) },
         ];
         let subtypes: [ModelSubtype; 2] = [ModelSubtype::Standard, ModelSubtype::Overhead];
@@ -305,13 +348,14 @@ mod phase_a_r1_model_type_tests {
                             | ModelType::Classifier
                             | ModelType::AudioDetector
                             | ModelType::AudioClassifier
+                            | ModelType::ImageEncoder
                     );
                     assert!(known, "unknown ModelType returned: {mt:?}");
                     combo_count += 1;
                 }
             }
         }
-        assert_eq!(combo_count, 4 * 6 * 2);
+        assert_eq!(combo_count, 4 * 7 * 2);
     }
 
     #[test]

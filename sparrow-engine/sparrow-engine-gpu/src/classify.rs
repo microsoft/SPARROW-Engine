@@ -84,7 +84,7 @@ pub fn classify(
                 opts,
             )
         }
-        LoadedModelInner::Yolo(_) | LoadedModelInner::Tiled(_) => {
+        LoadedModelInner::Yolo(_) | LoadedModelInner::Tiled(_) | LoadedModelInner::Encoder(_) => {
             Err(SparrowEngineError::NotAClassifier {
                 id: inner.manifest.id.clone(),
                 method: inner.manifest.postprocess_method.as_str().to_string(),
@@ -130,6 +130,9 @@ mod tests {
             trt: None,
             postprocess_method: PostprocessMethod::YoloE2e,
             confidence_threshold: None,
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: None,
             label_format: None,
             default: false,

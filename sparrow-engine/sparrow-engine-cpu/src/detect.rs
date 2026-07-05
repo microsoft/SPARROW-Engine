@@ -745,10 +745,12 @@ fn dispatch_postprocess(
             // This branch is unreachable because we check for Softmax at entry.
             unreachable!("Softmax models are rejected at the start of detect()");
         }
-        PostprocessMethod::Sigmoid { .. } => Err(SparrowEngineError::NotADetector {
-            id: manifest.id.clone(),
-            method: manifest.postprocess_method.as_str().to_string(),
-        }),
+        PostprocessMethod::Sigmoid { .. } | PostprocessMethod::Embedding { .. } => {
+            Err(SparrowEngineError::NotADetector {
+                id: manifest.id.clone(),
+                method: manifest.postprocess_method.as_str().to_string(),
+            })
+        }
     }
 }
 
@@ -991,6 +993,9 @@ mod tests {
                 confidence_threshold: 0.5,
             },
             confidence_threshold: Some(0.5),
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: Some("labels.txt".into()),
             label_format: None,
             default: false,

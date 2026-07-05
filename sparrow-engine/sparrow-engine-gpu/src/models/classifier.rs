@@ -805,7 +805,9 @@ impl ClassifierModel {
                 target_h,
                 channel_order,
                 stats,
-                self.manifest.interpolation.unwrap_or(Interpolation::Bilinear),
+                self.manifest
+                    .interpolation
+                    .unwrap_or(Interpolation::Bilinear),
             )?,
             PreprocessMethod::ResizeCrop => {
                 // ENG-RESIZE Phase 2: fused pre-crop-square -> conv resize
@@ -827,7 +829,9 @@ impl ClassifierModel {
                     [target_w, target_h],
                     channel_order,
                     stats,
-                    self.manifest.interpolation.unwrap_or(Interpolation::Bilinear),
+                    self.manifest
+                        .interpolation
+                        .unwrap_or(Interpolation::Bilinear),
                 )?
             }
             PreprocessMethod::Letterbox => {
@@ -1137,6 +1141,9 @@ mod tests {
             trt: None,
             postprocess_method: method,
             confidence_threshold: None,
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: Some("labels.txt".into()),
             label_format: Some(LabelFormat::NameIndexCsv),
             default: false,

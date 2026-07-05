@@ -87,10 +87,12 @@ pub fn detect(handle: &ModelHandle, image: &ImageInput, opts: &DetectOpts) -> Re
             opts,
         ),
         LoadedModelInner::Tiled(model) => model.detect_tiled(&engine_inner.ctx, image, opts),
-        LoadedModelInner::Classifier(_) => Err(SparrowEngineError::NotADetector {
-            id: inner.manifest.id.clone(),
-            method: inner.manifest.postprocess_method.as_str().to_string(),
-        }),
+        LoadedModelInner::Classifier(_) | LoadedModelInner::Encoder(_) => {
+            Err(SparrowEngineError::NotADetector {
+                id: inner.manifest.id.clone(),
+                method: inner.manifest.postprocess_method.as_str().to_string(),
+            })
+        }
         LoadedModelInner::Audio(_) | LoadedModelInner::AudioRaw(_) => {
             Err(SparrowEngineError::IsAudioModel {
                 id: inner.manifest.id.clone(),
@@ -200,6 +202,9 @@ mod tests {
                 confidence_threshold: 0.5,
             },
             confidence_threshold: Some(0.5),
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: None,
             label_format: None,
             default: false,
@@ -266,6 +271,9 @@ mod tests {
             trt: None,
             postprocess_method: PostprocessMethod::YoloE2e,
             confidence_threshold: Some(0.3),
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
             label_file: None,
             label_format: None,
             default: false,

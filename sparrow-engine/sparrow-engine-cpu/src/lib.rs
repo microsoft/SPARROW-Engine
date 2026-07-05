@@ -25,6 +25,7 @@
 pub mod classify;
 pub mod detect;
 pub mod detect_audio;
+pub mod embed;
 pub mod engine;
 pub mod pipeline;
 pub mod preprocess;

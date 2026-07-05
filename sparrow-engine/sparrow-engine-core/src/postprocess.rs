@@ -726,6 +726,31 @@ pub fn try_sigmoid_classify(
 }
 
 // ---------------------------------------------------------------------------
+// Embedding postprocessor
+// ---------------------------------------------------------------------------
+
+/// Validate and optionally L2-normalize an embedding vector in place.
+pub fn finalize_embedding(v: &mut [f32], normalize: bool) -> Result<()> {
+    if !v.iter().all(|x| x.is_finite()) {
+        return Err(SparrowEngineError::EmbeddingNotFinite {
+            id: "embedding".to_string(),
+        });
+    }
+    if normalize {
+        let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm < 1e-12 {
+            return Err(SparrowEngineError::ZeroNormEmbedding {
+                id: "embedding".to_string(),
+            });
+        }
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -896,6 +921,37 @@ fn adaptive_threshold(
 mod tests {
     use super::*;
     use ndarray::{array, Array4};
+
+    #[test]
+    fn finalize_embedding_normalizes_to_unit_norm() {
+        let mut v = vec![3.0, 4.0];
+        finalize_embedding(&mut v, true).unwrap();
+        let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-6);
+        assert!((v[0] - 0.6).abs() < 1e-6);
+        assert!((v[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn finalize_embedding_rejects_zero_norm_when_normalizing() {
+        let mut v = vec![0.0, 0.0];
+        let err = finalize_embedding(&mut v, true).unwrap_err();
+        assert!(matches!(err, SparrowEngineError::ZeroNormEmbedding { .. }));
+    }
+
+    #[test]
+    fn finalize_embedding_rejects_non_finite_values() {
+        let mut v = vec![1.0, f32::NAN];
+        let err = finalize_embedding(&mut v, false).unwrap_err();
+        assert!(matches!(err, SparrowEngineError::EmbeddingNotFinite { .. }));
+    }
+
+    #[test]
+    fn finalize_embedding_allows_zero_vector_without_normalization() {
+        let mut v = vec![0.0, 0.0];
+        finalize_embedding(&mut v, false).unwrap();
+        assert_eq!(v, vec![0.0, 0.0]);
+    }
 
     fn test_labels() -> Vec<String> {
         vec!["animal".into(), "person".into(), "vehicle".into()]
