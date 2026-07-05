@@ -153,6 +153,16 @@ namespace SparrowEngine.Native
         internal static extern SparrowEngineClassifyResult* sparrow_engine_classify(void* model, byte* image, nuint len, SparrowEngineClassifyOpts* opts);
 
         /// <summary>
+        ///  Run image encoder inference on an encoded image buffer (JPEG/PNG). Returns null on error.
+        ///
+        ///  # Safety
+        ///  - `model` must be a valid model pointer.
+        ///  - `image` must point to `len` bytes of encoded image data.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_embed", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern SparrowEngineEmbedding* sparrow_engine_embed(void* model, byte* image, nuint len);
+
+        /// <summary>
         ///  Run a pipeline (detect → classify) on an encoded image. Returns null on error.
         ///
         ///  # Safety
@@ -245,6 +255,15 @@ namespace SparrowEngine.Native
         /// </summary>
         [DllImport(__DllName, EntryPoint = "sparrow_engine_classify_result_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void sparrow_engine_classify_result_free(SparrowEngineClassifyResult* ptr);
+
+        /// <summary>
+        ///  Free a `SparrowEngineEmbedding` returned by `sparrow_engine_embed`.
+        ///
+        ///  # Safety
+        ///  `ptr` must be a pointer returned by `sparrow_engine_embed`, or null.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_embedding_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void sparrow_engine_embedding_free(SparrowEngineEmbedding* ptr);
 
         /// <summary>
         ///  Free a `SparrowEnginePipelineResult` returned by `sparrow_engine_run_pipeline`.
@@ -461,6 +480,24 @@ namespace SparrowEngine.Native
         public float confidence;
         public SparrowEngineClassification* top_results;
         public nuint top_results_len;
+        public uint image_width;
+        public uint image_height;
+        public float processing_time_ms;
+    }
+
+    /// <summary>
+    ///  Embedding result from a single `sparrow_engine_embed()` call.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEngineEmbedding
+    {
+        public float* data;
+        public nuint dim;
+        [MarshalAs(UnmanagedType.U1)] public bool normalized;
+        public byte* metric;
+        public byte* model_id;
+        public byte* embedding_version;
+        public byte* model_hash;
         public uint image_width;
         public uint image_height;
         public float processing_time_ms;

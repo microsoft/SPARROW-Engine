@@ -1,7 +1,7 @@
 //
 // Phase 3.8 Phase A S7 closure: when `--features ffi` is on, the cdylib must
-// expose all 35 symbols listed in `exports.def` (34 Phase C baseline + 1
-// sparrow_engine_version added in Phase D round 2). Without `--features ffi`
+// expose all 37 symbols listed in `exports.def` (35 Phase D baseline + 2
+// ONB-4 image encoder FFI symbols). Without `--features ffi`
 // the cdylib still builds but emits zero `sparrow_engine_*` symbols (the
 // `sparrow_engine_*; local: *;` filter in `exports.map` plus the absence of
 // `pub mod ffi` produce that).
@@ -28,14 +28,14 @@
 
 #[test]
 fn ffi_link_smoke_for_sample_symbols() {
-    // We name 5 of the 35 symbols. If any disappear from `sparrow-engine-cpu/src/ffi.rs`
+    // We name 9 of the 37 symbols. If any disappear from `sparrow-engine-cpu/src/ffi.rs`
     // (e.g., a refactor accidentally drops `#[no_mangle]` or `pub`), this test
     // fails to compile. We pin a function-pointer reference so the compiler has
     // a reason to resolve them.
     use sparrow_engine::ffi::{
-        sparrow_engine_audio_result_v2_free, sparrow_engine_detect_audio_v2,
-        sparrow_engine_engine_free, sparrow_engine_engine_new, sparrow_engine_free_string,
-        sparrow_engine_health, sparrow_engine_last_error,
+        sparrow_engine_audio_result_v2_free, sparrow_engine_detect_audio_v2, sparrow_engine_embed,
+        sparrow_engine_embedding_free, sparrow_engine_engine_free, sparrow_engine_engine_new,
+        sparrow_engine_free_string, sparrow_engine_health, sparrow_engine_last_error,
     };
 
     let p1 = sparrow_engine_engine_new as *const ();
@@ -45,6 +45,8 @@ fn ffi_link_smoke_for_sample_symbols() {
     let p5 = sparrow_engine_health as *const ();
     let p6 = sparrow_engine_detect_audio_v2 as *const ();
     let p7 = sparrow_engine_audio_result_v2_free as *const ();
+    let p8 = sparrow_engine_embed as *const ();
+    let p9 = sparrow_engine_embedding_free as *const ();
     assert!(!p1.is_null());
     assert!(!p2.is_null());
     assert!(!p3.is_null());
@@ -52,6 +54,8 @@ fn ffi_link_smoke_for_sample_symbols() {
     assert!(!p5.is_null());
     assert!(!p6.is_null());
     assert!(!p7.is_null());
+    assert!(!p8.is_null());
+    assert!(!p9.is_null());
 }
 
 // -----------------------------------------------------------------------------
@@ -152,12 +156,12 @@ fn cdylib_exports_match_exports_def() {
         extra
     );
 
-    // Sanity: count matches (35 per Phase D round 2 — 34 Phase C baseline
-    // + sparrow_engine_version added in round 2 to mirror the GPU surface).
+    // Sanity: count matches (37 per ONB-4 — 35 Phase D baseline
+    // + sparrow_engine_embed and sparrow_engine_embedding_free).
     assert_eq!(
         expected.len(),
-        35,
-        "exports.def line count drifted from Phase D round-2 baseline (was 35, now {})",
+        37,
+        "exports.def line count drifted from ONB-4 FFI baseline (was 37, now {})",
         expected.len()
     );
     assert_eq!(actual.len(), expected.len());

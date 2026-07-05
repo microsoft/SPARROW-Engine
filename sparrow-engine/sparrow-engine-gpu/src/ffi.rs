@@ -21,7 +21,7 @@
 use crate::engine::{Device, Engine, EngineConfig, ModelHandle};
 use crate::types::{
     AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts, ClassifyResult, DetectOpts,
-    DetectResult, ImageInput, PipelineResult, PixelFormat,
+    DetectResult, EmbedResult, ImageInput, PipelineResult, PixelFormat,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -105,6 +105,21 @@ pub struct SparrowEngineClassifyResult {
     pub confidence: f32,
     pub top_results: *const SparrowEngineClassification,
     pub top_results_len: usize,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub processing_time_ms: f32,
+}
+
+/// Embedding result from a single `sparrow_engine_embed()` call.
+#[repr(C)]
+pub struct SparrowEngineEmbedding {
+    pub data: *const f32,
+    pub dim: usize,
+    pub normalized: bool,
+    pub metric: *const c_char,
+    pub model_id: *const c_char,
+    pub embedding_version: *const c_char,
+    pub model_hash: *const c_char,
     pub image_width: u32,
     pub image_height: u32,
     pub processing_time_ms: f32,
@@ -439,6 +454,63 @@ fn classify_result_to_c(result: ClassifyResult) -> *mut SparrowEngineClassifyRes
 struct ClassifyResultWithOwner {
     header: SparrowEngineClassifyResult,
     _owner: ClassifyResultOwned,
+}
+
+// ---------------------------------------------------------------------------
+// EmbedResult → SparrowEngineEmbedding
+// ---------------------------------------------------------------------------
+
+struct EmbeddingOwned {
+    _vec: Vec<f32>,
+    _strings: Vec<CString>,
+}
+
+fn embedding_result_to_c(result: EmbedResult) -> *mut SparrowEngineEmbedding {
+    let strings = vec![
+        CString::new(result.metric.as_str().replace('\0', "")).unwrap_or_default(),
+        CString::new(result.model_id.replace('\0', "")).unwrap_or_default(),
+        CString::new(result.embedding_version.replace('\0', "")).unwrap_or_default(),
+        CString::new(result.model_hash.replace('\0', "")).unwrap_or_default(),
+    ];
+
+    let owned = EmbeddingOwned {
+        _vec: result.embedding,
+        _strings: strings,
+    };
+
+    let mut combined = Box::new(EmbeddingWithOwner {
+        header: SparrowEngineEmbedding {
+            data: ptr::null(),
+            dim: result.dim,
+            normalized: result.normalized,
+            metric: ptr::null(),
+            model_id: ptr::null(),
+            embedding_version: ptr::null(),
+            model_hash: ptr::null(),
+            image_width: result.image_width,
+            image_height: result.image_height,
+            processing_time_ms: result.processing_time_ms,
+        },
+        _owner: owned,
+    });
+    combined.header.data = if combined._owner._vec.is_empty() {
+        ptr::null()
+    } else {
+        combined._owner._vec.as_ptr()
+    };
+    combined.header.metric = combined._owner._strings[0].as_ptr();
+    combined.header.model_id = combined._owner._strings[1].as_ptr();
+    combined.header.embedding_version = combined._owner._strings[2].as_ptr();
+    combined.header.model_hash = combined._owner._strings[3].as_ptr();
+
+    let ptr = Box::into_raw(combined);
+    ptr as *mut SparrowEngineEmbedding
+}
+
+#[repr(C)]
+struct EmbeddingWithOwner {
+    header: SparrowEngineEmbedding,
+    _owner: EmbeddingOwned,
 }
 
 // ---------------------------------------------------------------------------
@@ -1272,6 +1344,46 @@ pub unsafe extern "C" fn sparrow_engine_classify(
     }
 }
 
+/// Run image encoder inference on an encoded image buffer (JPEG/PNG). Returns null on error.
+///
+/// # Safety
+/// - `model` must be a valid model pointer.
+/// - `image` must point to `len` bytes of encoded image data.
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_embed(
+    model: *const SparrowEngineModel,
+    image: *const u8,
+    len: usize,
+) -> *mut SparrowEngineEmbedding {
+    clear_last_error();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(
+        || -> Result<*mut SparrowEngineEmbedding, String> {
+            if model.is_null() {
+                return Err("model pointer is null".to_string());
+            }
+            if image.is_null() || len == 0 {
+                return Err("image data is null or empty".to_string());
+            }
+            let handle = &*(model as *const ModelHandle);
+            let image_data = std::slice::from_raw_parts(image, len);
+            let input = ImageInput::Encoded(image_data.to_vec());
+            let result = crate::embed::embed(handle, &input).map_err(|e| e.to_string())?;
+            Ok(embedding_result_to_c(result))
+        },
+    ));
+    match result {
+        Ok(Ok(ptr)) => ptr,
+        Ok(Err(e)) => {
+            set_last_error(e);
+            ptr::null_mut()
+        }
+        Err(_panic) => {
+            set_last_error("internal error: panic in sparrow_engine_embed".to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
 /// Run a pipeline (detect → classify) on an encoded image. Returns null on error.
 ///
 /// # Safety
@@ -1554,6 +1666,24 @@ pub unsafe extern "C" fn sparrow_engine_classify_result_free(
     }));
     if result.is_err() {
         set_last_error("internal error: panic in sparrow_engine_classify_result_free".to_string());
+    }
+}
+
+/// Free a `SparrowEngineEmbedding` returned by `sparrow_engine_embed`.
+///
+/// # Safety
+/// `ptr` must be a pointer returned by `sparrow_engine_embed`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_embedding_free(ptr: *mut SparrowEngineEmbedding) {
+    clear_last_error();
+    if ptr.is_null() {
+        return;
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        drop(Box::from_raw(ptr as *mut EmbeddingWithOwner));
+    }));
+    if result.is_err() {
+        set_last_error("internal error: panic in sparrow_engine_embedding_free".to_string());
     }
 }
 
