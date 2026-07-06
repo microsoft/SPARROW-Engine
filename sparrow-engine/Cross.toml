@@ -26,11 +26,11 @@ default-target = "aarch64-unknown-linux-gnu"
 [build.env]
 passthrough = ["LITERT_LIB_DIR"]
 volumes = [
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts:/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts:ro",
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts:/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts:ro",
 ]
 
 [target.aarch64-unknown-linux-gnu.env]
 passthrough = ["LITERT_LIB_DIR"]
 volumes = [
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts:/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts:ro",
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts:/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts:ro",
 ]

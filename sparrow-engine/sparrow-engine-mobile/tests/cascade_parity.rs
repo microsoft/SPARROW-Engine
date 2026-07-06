@@ -23,9 +23,9 @@ use sparrow_engine::pipeline::CascadeOpts;
 use sparrow_engine::{AudioInput, Device, EngineConfig};
 
 const DEFAULT_MODEL_DIR: &str =
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/.zenodo-staging/sparrow-engine-models-v0.6.0";
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/.zenodo-staging/sparrow-engine-models-v0.6.0";
 const DEFAULT_FIXTURES: &str =
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts/fixtures";
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts/fixtures";
 const DETECTOR_REL: &str = "orca-detector-fp16-tflite/orca-detector-fp16.tflite";
 const ECOTYPE_REL: &str = "orca-ecotype-melinput-fp16-tflite/orca-ecotype-melinput-fp16.tflite";
 const PIPELINE_ID: &str = "orca-cascade";

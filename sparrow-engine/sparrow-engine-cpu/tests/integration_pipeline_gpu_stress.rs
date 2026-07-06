@@ -20,7 +20,7 @@
 //! - `MT17_ITERATIONS` — inner pipeline iterations (default 20)
 //! - `MT17_IMAGES` — images per iteration (default 5)
 //! - `SPARROW_ENGINE_MODEL_DIR` — model dir (default
-//!   `/home/miao/repos/PW_refactor/test_files/sparrow_engine_models_test/sparrow_engine_models`)
+//!   `/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models_test/sparrow_engine_models`)
 
 mod common;
 
@@ -36,7 +36,7 @@ fn pipeline_model_dir() -> PathBuf {
     std::env::var_os("SPARROW_ENGINE_MODEL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from("/home/miao/repos/PW_refactor/test_files/sparrow_engine_models_test/sparrow_engine_models")
+            PathBuf::from("/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models_test/sparrow_engine_models")
         })
 }
 

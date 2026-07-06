@@ -49,7 +49,7 @@ fn lcg_rand_vec(seed: u64, n: usize, lo: f32, hi: f32) -> Vec<f32> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let model_path = PathBuf::from(parse_str_arg(&args, "--model").unwrap_or_else(|| {
-        "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models_test/md-audiobirds-v1/MD_AudioBirds_V1.onnx".to_string()
+        "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models_test/md-audiobirds-v1/MD_AudioBirds_V1.onnx".to_string()
     }));
     if !model_path.exists() {
         panic!("model not found at {model_path:?}");

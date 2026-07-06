@@ -30,11 +30,11 @@
 //! in default `cargo test` runs:
 //!
 //! 1. **Both `MD_AudioBirds_V1.onnx` and `MD_AudioBirds_V1_fp16.onnx`**
-//!    at `/home/miao/repos/PW_refactor/test_files/onnx/`. Not bundled
+//!    at `/home/miao/repos/SparrowOPS/backups/test_files/onnx/`. Not bundled
 //!    with sparrow_engine; FP16 ONNX is generated via
 //!    `sparrow-engine/tools/convert_fp16.py`.
 //! 2. **The DUNAS WAV fixtures** at
-//!    `/home/miao/repos/PW_refactor/test_files/test_audio/`. Not
+//!    `/home/miao/repos/SparrowOPS/backups/test_files/test_audio/`. Not
 //!    bundled.
 //! 3. **A working CUDA GPU** with the cudarc + ORT runtime stack
 //!    initialized via `sparrow-engine/scripts/ort-env.sh`. The test compares
@@ -100,9 +100,9 @@ const FLIP_THRESHOLD: f32 = 0.9;
 // ---------------------------------------------------------------------------
 
 const FIXTURE_20230925: &str =
-    "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230925_090000.wav";
+    "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230925_090000.wav";
 const FIXTURE_20230314: &str =
-    "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230314_090000.wav";
+    "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230314_090000.wav";
 // Post-STRETCH re-audit (2026-05-05): the production `manifest.toml`
 // flipped to `precision = "fp16"` after the FP16-vs-FP32 latency gate
 // inverted. This test loads the explicit `manifest_fp32.toml` (FP32 reference,
@@ -110,9 +110,9 @@ const FIXTURE_20230314: &str =
 // content to current `manifest.toml`) — keeping the test self-contained
 // against future precision-default flips.
 const FP32_MANIFEST: &str =
-    "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp32.toml";
+    "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp32.toml";
 const FP16_MANIFEST: &str =
-    "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp16.toml";
+    "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp16.toml";
 
 fn fp32_manifest_path() -> PathBuf {
     PathBuf::from(

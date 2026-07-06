@@ -352,7 +352,7 @@ main() {
     detect_json="$scratch_root/detect-response.json"
     classify_json="$scratch_root/classify-response.json"
     container_name="sparrow-engine-contract-test"
-    sparrow_models_root="${SPARROW_MODELS_ROOT:-/home/miao/repos/PW_refactor/sparrow/models}"
+    sparrow_models_root="${SPARROW_MODELS_ROOT:-/home/miao/repos/SparrowOPS/models}"
     mkdir -p "$scratch_root"
     rm -rf "$contract_models"
     mkdir -p "$contract_models"

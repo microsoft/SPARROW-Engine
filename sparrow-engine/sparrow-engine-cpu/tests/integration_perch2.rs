@@ -14,7 +14,7 @@
 //! Skipped unless the staged Perch 2 bundle is available. Resolve order:
 //!   1. `$SPARROW_ENGINE_PERCH2_BUNDLE` env var (absolute path to bundle dir)
 //!   2. `$SPARROW_ENGINE_DEV_ROOT/.zenodo-staging/perch-v2` (sparrow-engine-dev convention)
-//!   3. Hardcoded fallback `/home/miao/repos/PW_refactor/sparrow-engine-dev/.zenodo-staging/perch-v2`
+//!   3. Hardcoded fallback `/home/miao/repos/SparrowOPS/sparrow-engine-dev/.zenodo-staging/perch-v2`
 //!
 //! Run with:
 //! ```sh
@@ -46,7 +46,7 @@ fn perch2_bundle_dir() -> Option<PathBuf> {
         }
     }
     let fallback =
-        PathBuf::from("/home/miao/repos/PW_refactor/sparrow-engine-dev/.zenodo-staging/perch-v2");
+        PathBuf::from("/home/miao/repos/SparrowOPS/sparrow-engine-dev/.zenodo-staging/perch-v2");
     if fallback.join("manifest.toml").exists() {
         return Some(fallback);
     }

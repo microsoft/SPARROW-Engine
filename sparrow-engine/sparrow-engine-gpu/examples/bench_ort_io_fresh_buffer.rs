@@ -66,7 +66,7 @@ fn stddev(s: &[f64]) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let model_path = PathBuf::from(parse_str_arg(&args, "--model").unwrap_or_else(|| {
-        "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models/md-audiobirds-v1/MD_AudioBirds_V1.onnx".to_string()
+        "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models/md-audiobirds-v1/MD_AudioBirds_V1.onnx".to_string()
     }));
     let batch: usize = parse_arg(&args, "--batch", 197);
     let inner_iters: usize = parse_arg(&args, "--inner-iters", 30);

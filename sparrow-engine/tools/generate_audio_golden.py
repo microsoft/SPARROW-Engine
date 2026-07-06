@@ -34,7 +34,7 @@ from PIL import Image
 # Paths
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent  # sparrow-engine/
-TEST_FILES = REPO_ROOT.parent.parent / "test_files"  # PW_refactor/test_files/
+TEST_FILES = REPO_ROOT.parent.parent / "test_files"  # SparrowOPS/backups/test_files/
 ONNX_PATH = TEST_FILES / "onnx" / "MD_AudioBirds_V1.onnx"
 AUDIO_DIR = TEST_FILES / "test_audio"
 FIXTURE_PATH = REPO_ROOT / "test_outputs" / "fixtures" / "synthetic_audio_10s.wav"

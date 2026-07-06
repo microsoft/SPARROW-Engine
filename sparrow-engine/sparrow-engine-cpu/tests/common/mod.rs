@@ -9,8 +9,15 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Base directory for test files (models, images, manifests).
+///
+/// Override with `SPARROW_ENGINE_TEST_FILES_ROOT`; defaults to the local
+/// test-data tree. Integration tests that need files under this root are
+/// existence-gated and skip cleanly when the root is absent (e.g. in CI or a
+/// fresh clone that has not fetched the multi-GB fixtures).
 pub fn test_files_dir() -> PathBuf {
-    PathBuf::from("/home/miao/repos/PW_refactor/test_files")
+    std::env::var("SPARROW_ENGINE_TEST_FILES_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/home/miao/repos/SparrowOPS/backups/test_files"))
 }
 
 pub fn onnx_dir() -> PathBuf {

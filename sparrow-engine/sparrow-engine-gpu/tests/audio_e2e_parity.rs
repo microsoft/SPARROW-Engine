@@ -40,10 +40,10 @@
 //! in default `cargo test` runs:
 //!
 //! 1. **The `MD_AudioBirds_V1.onnx` model file** at
-//!    `/home/miao/repos/PW_refactor/test_files/onnx/`. Not bundled with
+//!    `/home/miao/repos/SparrowOPS/backups/test_files/onnx/`. Not bundled with
 //!    sparrow-engine (85 MB).
 //! 2. **The DUNAS WAV fixtures** at
-//!    `/home/miao/repos/PW_refactor/test_files/test_audio/`. Real-audio
+//!    `/home/miao/repos/SparrowOPS/backups/test_files/test_audio/`. Real-audio
 //!    60 s clips, ~6 MB each. Not bundled.
 //! 3. **A working CUDA GPU** with the cudarc + ORT runtime stack
 //!    initialized via `sparrow-engine/scripts/ort-env.sh`. CPU-only environments
@@ -118,9 +118,9 @@ const CONF_GATE: f32 = 7.5e-4; // sigmoid Lipschitz × LOGIT_GATE
 // ---------------------------------------------------------------------------
 
 const FIXTURE_20230925: &str =
-    "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230925_090000.wav";
+    "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230925_090000.wav";
 const FIXTURE_20230314: &str =
-    "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230314_090000.wav";
+    "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230314_090000.wav";
 // Post-STRETCH re-audit (2026-05-05): the production `manifest.toml`
 // flipped to `precision = "fp16"`. This test is the W1.7-anchored FP32
 // parity gate (CPU FP32 vs GPU FP32) — both sides need FP32, so it loads
@@ -128,7 +128,7 @@ const FIXTURE_20230314: &str =
 // via the `SPARROW_ENGINE_AUDIO_MANIFEST` env var if running against a different
 // manifest file.
 const DEFAULT_MANIFEST: &str =
-    "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp32.toml";
+    "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models/md-audiobirds-v1/manifest_fp32.toml";
 
 fn manifest_path() -> PathBuf {
     PathBuf::from(std::env::var("SPARROW_ENGINE_AUDIO_MANIFEST").unwrap_or_else(|_| DEFAULT_MANIFEST.into()))

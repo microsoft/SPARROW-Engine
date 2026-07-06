@@ -6,7 +6,7 @@
 //! CPU counterparts on the canonical corpus before Wave 2 can wire them
 //! into model paths.
 //!
-//! Test set: `/home/miao/repos/PW_refactor/test_files/test_cameratrap/*.jpg`
+//! Test set: `/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap/*.jpg`
 //! (100 baseline JPEGs from the camera-trap dataset).
 //!
 //! Skipped when:
@@ -20,7 +20,7 @@ use std::path::Path;
 use sparrow_engine::decode::{decode_jpeg_with_branch, DecodeBranch};
 use cudarc::driver::CudaContext;
 
-const CORPUS: &str = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
+const CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
 
 // nvjpeg uses GPU IDCT, image-crate (`zune-jpeg`) uses software IDCT. The
 // rounding modes differ at the LSB; 1.0 in u8 space is the industry-standard

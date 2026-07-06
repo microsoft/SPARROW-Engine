@@ -32,7 +32,7 @@ echo "  Classification tests: DONE"
 echo "[4/5] Generating sparrow-engine-cpu visualization overlays..."
 uv run --no-project --with pillow tools/visualize_libsparrow_engine_outputs.py \
     --input test_outputs/libsparrow_engine \
-    --images /home/miao/repos/PW_refactor/test_files/test_data \
+    --images /home/miao/repos/SparrowOPS/backups/test_files/test_data \
     --output test_outputs/libsparrow_engine
 echo "  Visualizations: DONE"
 

@@ -155,8 +155,8 @@ def run_benchmark(
 # Main
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL_DIR = "/home/miao/repos/PW_refactor/test_files/onnx"
-DEFAULT_IMAGE_DIR = "/home/miao/repos/PW_refactor/test_files/test_cameratrap"
+DEFAULT_MODEL_DIR = "/home/miao/repos/SparrowOPS/backups/test_files/onnx"
+DEFAULT_IMAGE_DIR = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap"
 MODEL_FILENAME = "models_MDV6-yolov10-e_model.onnx"
 
 
