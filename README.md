@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21084702/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21211015/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 17 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors). See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 59 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -239,9 +239,9 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 orca `.tflite` resident at
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21084702](https://doi.org/10.5281/zenodo.21084702) (v0.10.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21211015](https://doi.org/10.5281/zenodo.21211015) (v0.16.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 18 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched only with `--all`):
+Download the 54 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched only with `--all`):
 
 ```bash
 bash scripts/download_models.sh
@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The catalog splits into four families (detectors, heatmap detectors, classifiers, audio). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **60-model** catalog (incl. the AddaxAI regional classifiers, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
