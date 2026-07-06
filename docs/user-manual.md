@@ -588,6 +588,7 @@ Both CLI and Python expose the **same** function set with the same conventions. 
 | Classify | `spe classify` | `sparrow_engine.classify()` | `POST /v1/classify` | `sparrow_engine_classify()` |
 | Detect audio | `spe detect-audio` | `sparrow_engine.detect_audio()` | `POST /v1/audio/detect` | `sparrow_engine_detect_audio()` |
 | Pipeline | `spe pipeline` | `sparrow_engine.pipeline()` | `POST /v1/pipeline` | `sparrow_engine_run_pipeline()` |
+| Embed | `spe embed` | `sparrow_engine.embed()` | `POST /v1/embed` | `sparrow_engine_embed()` |
 | List models | `spe models list` | `sparrow_engine.list_models()` | `GET /v1/models` | `sparrow_engine_list_models()` |
 | Model info | `spe models info <id>` | `sparrow_engine.model_info()` | (part of `/v1/models`) | `sparrow_engine_engine_model_info()` |
 | Hash file | `spe hash` | `sparrow_engine.hash_file()` | (n/a) | `sparrow_engine_hash_file()` |

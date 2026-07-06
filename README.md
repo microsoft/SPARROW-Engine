@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21084702/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21211015/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 17 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors). See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 59 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -239,9 +239,9 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 orca `.tflite` resident at
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21084702](https://doi.org/10.5281/zenodo.21084702) (v0.10.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21211015](https://doi.org/10.5281/zenodo.21211015) (v0.16.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 18 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched only with `--all`):
+Download the 54 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched only with `--all`):
 
 ```bash
 bash scripts/download_models.sh
@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The catalog splits into four families (detectors, heatmap detectors, classifiers, audio). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **60-model** catalog (incl. the AddaxAI regional classifiers, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
@@ -281,7 +281,7 @@ The catalog splits into four families (detectors, heatmap detectors, classifiers
 | `MDV6-yolov10-c` | 640 × 640 | 3 (animal / person / vehicle) | 9 MB | Ultralytics AGPL-3.0 |
 | `MDV6-yolov10-e` | 1280 × 1280 | 3 (animal / person / vehicle) | 113 MB | Ultralytics AGPL-3.0 |
 | `MDV5a` | 1280 × 1280 | 3 (animal / person / vehicle) | 535 MB | Ultralytics AGPL-3.0 |
-| `deepfaune-yolo8s` | 960 × 960 | 3 (MD-style) | 43 MB | AGPL-3.0 ∩ CC-BY-NC-SA 4.0 |
+| `deepfaune-yolo8s` | 960 × 960 | 3 (MD-style) | 43 MB | AGPL-3.0 ∩ CC-BY-SA 4.0 |
 | `european_mammals` | 640 × 480 | 31 | 113 MB | Ultralytics AGPL-3.0 |
 | `north_american_mammals` | 640 × 480 | 14 | 113 MB | Ultralytics AGPL-3.0 |
 | `sub_saharan` | 640 × 480 | 35 | 113 MB | Ultralytics AGPL-3.0 |
@@ -295,7 +295,7 @@ The catalog splits into four families (detectors, heatmap detectors, classifiers
 
 | Model ID | Resolution | Classes | ONNX | License |
 |---|---|---|---|---|
-| `HerdNet_General_Dataset_2022` | 512 × 512 | 6 species + background | 70 MB | MIT |
+| `HerdNet_General_Dataset_2022` | 512 × 512 | 6 species + background | 70 MB | CC-BY-NC-SA 4.0 |
 | `OWL` | 512 × 512 (tiled) | 1 (animal) | 114 MB | MIT |
 
 - `HerdNet_General_Dataset_2022` counts large African mammals (elephants, antelopes, zebras, etc.) in low-altitude aerial / drone imagery.
@@ -305,8 +305,8 @@ The catalog splits into four families (detectors, heatmap detectors, classifiers
 
 | Model ID | Crop | Classes | ONNX | License |
 |---|---|---|---|---|
-| `Deepfaune-Europe` | 182 × 182 | 34 | 1.2 GB | CC-BY-NC-SA 4.0 |
-| `Deepfaune-New-England` | 182 × 182 | 24 | 1.2 GB | CC-BY-NC-SA 4.0 |
+| `Deepfaune-Europe` | 182 × 182 | 34 | 1.2 GB | CC-BY-SA 4.0 |
+| `Deepfaune-New-England` | 182 × 182 | 24 | 1.2 GB | CC0 1.0 |
 | `SpeciesNet-Crop` | 480 × 480 | 2498 | 214 MB | Apache 2.0 |
 | `AI4G-Amazon-V2` | 224 × 224 | 36 | 90 MB | MIT |
 | `AI4G-Serengeti` | 224 × 224 | 10 | 43 MB | MIT |
@@ -330,12 +330,16 @@ The catalog splits into four families (detectors, heatmap detectors, classifiers
 
 #### License summary
 
-- **Ultralytics AGPL-3.0** (7 models): MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-NC-SA 4.0).
-- **CC-BY-NC-SA 4.0** (3 models): `deepfaune-yolo8s`, `Deepfaune-Europe`, `Deepfaune-New-England`.
-- **Apache 2.0** (2 models): `SpeciesNet-Crop`, `perch-v2`.
-- **MIT** (7 models): `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `HerdNet_General_Dataset_2022`, `md-audiobirds-v1`, `orca-detector-dclde2026-v3`, `orca-ecotype-dclde2026-v1`.
+This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 60 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
 
-**Commercial users of YOLO-based detectors** should obtain an [Ultralytics Enterprise License](https://www.ultralytics.com/license).
+- **Ultralytics AGPL-3.0**: MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-SA 4.0).
+- **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.
+- **CC0 1.0**: `Deepfaune-New-England` (USGS public-domain release).
+- **Apache 2.0**: `SpeciesNet-Crop`, `perch-v2`.
+- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v3`, `orca-ecotype-dclde2026-v1`.
+- **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the AddaxAI regional classifiers flagged `commercial_use = false` in the catalogue.
+
+**Commercial users**: YOLO-based detectors need an [Ultralytics Enterprise License](https://www.ultralytics.com/license), and every model with `commercial_use = false` (non-commercial licenses like CC-BY-NC-*) must not be used commercially. `tropicam-ai` is additionally no-derivatives (CC-BY-NC-ND-4.0).
 
 ---
 
