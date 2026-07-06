@@ -13,7 +13,7 @@
 //! is present. Resolve order for the bundle dir mirrors the CPU test:
 //!   1. `$SPARROW_ENGINE_PERCH2_BUNDLE`
 //!   2. `$SPARROW_ENGINE_DEV_ROOT/.zenodo-staging/perch-v2`
-//!   3. Hardcoded fallback `/home/miao/repos/PW_refactor/sparrow-engine-dev/.zenodo-staging/perch-v2`
+//!   3. Hardcoded fallback `/home/miao/repos/SparrowOPS/sparrow-engine-dev/.zenodo-staging/perch-v2`
 //!
 //! Run:
 //! ```sh
@@ -40,7 +40,7 @@ fn perch2_bundle_dir() -> Option<PathBuf> {
         }
     }
     let fallback =
-        PathBuf::from("/home/miao/repos/PW_refactor/sparrow-engine-dev/.zenodo-staging/perch-v2");
+        PathBuf::from("/home/miao/repos/SparrowOPS/sparrow-engine-dev/.zenodo-staging/perch-v2");
     if fallback.join("manifest.toml").exists() {
         return Some(fallback);
     }

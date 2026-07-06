@@ -18,8 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
-REPO = Path("/home/miao/repos/PW_refactor/Pytorch-Wildlife/sparrow-engine")
-DEV = Path("/home/miao/repos/PW_refactor/sparrow-engine-dev")
+REPO = Path("/home/miao/repos/SparrowOPS/SPARROW-Engine/sparrow-engine")
+DEV = Path("/home/miao/repos/SparrowOPS/sparrow-engine-dev")
 LIB = Path(os.environ.get("SPE_MOBILE_LIB", REPO / "target/debug/libsparrow_engine.so"))
 MODEL_DIR = Path(
     os.environ.get("SPE_MOBILE_MODEL_DIR", DEV / ".zenodo-staging/sparrow-engine-models-v0.6.0")

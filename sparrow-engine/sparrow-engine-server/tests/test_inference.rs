@@ -120,7 +120,7 @@ struct PipelineDetection {
 // ---------------------------------------------------------------------------
 
 fn test_files_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("/home/miao/repos/PW_refactor/test_files")
+    std::path::PathBuf::from("/home/miao/repos/SparrowOPS/backups/test_files")
 }
 
 fn cameratrap_image() -> std::path::PathBuf {

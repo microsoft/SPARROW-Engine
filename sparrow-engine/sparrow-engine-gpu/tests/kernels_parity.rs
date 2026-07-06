@@ -35,7 +35,7 @@ use sparrow_engine::kernels::{
 };
 use sparrow_engine_types::manifest::{ChannelOrder, Interpolation};
 
-const CORPUS: &str = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
+const CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
 
 // ε at the kernel level: tight, because the CPU reference mirrors the
 // kernel's 2-tap bilinear math exactly. Any divergence > 1e-4 mean-abs

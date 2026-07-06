@@ -8,9 +8,9 @@
 //
 // Configured by env vars:
 //   SPARROW_ENGINE_MODEL_DIR root of sparrow_engine_models; default
-//                   /home/miao/repos/PW_refactor/test_files/sparrow_engine_models
+//                   /home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models
 //   SPARROW_ENGINE_IMAGE     fixture image path; default the first jpg under
-//                   /home/miao/repos/PW_refactor/test_files/test_cameratrap.
+//                   /home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap.
 //                   Mutually exclusive with SPARROW_ENGINE_IMAGE_DIR.
 //   SPARROW_ENGINE_IMAGE_DIR if set, runs detection over every JPEG in this directory
 //                   (sorted by filename) and emits a per-image capture in
@@ -157,7 +157,7 @@ internal static class Program
     private static int Run()
     {
         var modelDir = Environment.GetEnvironmentVariable("SPARROW_ENGINE_MODEL_DIR")
-            ?? "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models";
+            ?? "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models";
         var outputPathEnv = Environment.GetEnvironmentVariable("SPARROW_ENGINE_OUTPUT");
         if (string.IsNullOrWhiteSpace(outputPathEnv))
         {
@@ -218,7 +218,7 @@ internal static class Program
             }
             else
             {
-                var defaultImageDir = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
+                var defaultImageDir = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
                 if (!Directory.Exists(defaultImageDir))
                 {
                     return SetupFailure($"default image directory does not exist: {defaultImageDir}");

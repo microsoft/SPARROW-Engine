@@ -19,11 +19,11 @@
 //!
 //! Default fixture paths mirror `integration_yolo.rs`:
 //! - `SPARROW_ENGINE_GPU_TEST_MODELS` →
-//!   `/home/miao/repos/PW_refactor/test_files/sparrow_engine_models`
+//!   `/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models`
 //! - `SPARROW_ENGINE_GPU_TEST_CORPUS` →
-//!   `/home/miao/repos/PW_refactor/test_files/test_cameratrap`
+//!   `/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap`
 //! - `SPARROW_ENGINE_GPU_TEST_AUDIO` →
-//!   `/home/miao/repos/PW_refactor/test_files/audio/DUNAS_20230925_090000.wav`
+//!   `/home/miao/repos/SparrowOPS/backups/test_files/audio/DUNAS_20230925_090000.wav`
 
 use std::path::{Path, PathBuf};
 
@@ -41,20 +41,20 @@ use serial_test::serial;
 fn model_dir() -> PathBuf {
     PathBuf::from(
         std::env::var("SPARROW_ENGINE_GPU_TEST_MODELS")
-            .unwrap_or_else(|_| "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models".into()),
+            .unwrap_or_else(|_| "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models".into()),
     )
 }
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(
         std::env::var("SPARROW_ENGINE_GPU_TEST_CORPUS")
-            .unwrap_or_else(|_| "/home/miao/repos/PW_refactor/test_files/test_cameratrap".into()),
+            .unwrap_or_else(|_| "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap".into()),
     )
 }
 
 fn audio_path() -> PathBuf {
     PathBuf::from(std::env::var("SPARROW_ENGINE_GPU_TEST_AUDIO").unwrap_or_else(|_| {
-        "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230925_090000.wav".into()
+        "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230925_090000.wav".into()
     }))
 }
 

@@ -2,10 +2,10 @@
 //!
 //! Tests are gated on environment variables:
 //! - `SPARROW_ENGINE_GPU_TEST_CORPUS` — directory of JPEGs to run inference on
-//!   (default `/home/miao/repos/PW_refactor/test_files/test_cameratrap`).
+//!   (default `/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap`).
 //! - `SPARROW_ENGINE_GPU_TEST_MODELS` — root directory containing
 //!   `megadetector-v6-yolov10e/` and `deepfaune-yolo8s/` manifest folders
-//!   (default `/home/miao/repos/PW_refactor/test_files/sparrow_engine_models`).
+//!   (default `/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models`).
 //! - `SPARROW_ENGINE_GPU_TEST_FORCE` — when set to `1`, missing fixtures cause the
 //!   test to fail rather than skip (CI guardrail).
 //!
@@ -48,8 +48,8 @@ use cudarc::driver::CudaContext;
 // Fixture discovery
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CORPUS: &str = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
-const DEFAULT_MODELS: &str = "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models";
+const DEFAULT_CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
+const DEFAULT_MODELS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models";
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(std::env::var("SPARROW_ENGINE_GPU_TEST_CORPUS").unwrap_or_else(|_| DEFAULT_CORPUS.into()))

@@ -52,12 +52,12 @@ unsafe class Program
     }
 
     // Paths
-    const string ModelDir = "/home/miao/repos/PW_refactor/test_files/onnx";
-    const string ImageDir = "/home/miao/repos/PW_refactor/test_files/test_cameratrap";
-    const string AudioPath = "/home/miao/repos/PW_refactor/test_files/test_audio/G010_timelapse_20250629.wav";
-    const string Mdv6Manifest = "/home/miao/repos/PW_refactor/test_files/onnx/mdv6_manifest.toml";
-    const string SpeciesNetManifest = "/home/miao/repos/PW_refactor/test_files/onnx/speciesnet_manifest.toml";
-    const string AudioBirdsManifest = "/home/miao/repos/PW_refactor/test_files/onnx/audiobirds_manifest.toml";
+    const string ModelDir = "/home/miao/repos/SparrowOPS/backups/test_files/onnx";
+    const string ImageDir = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
+    const string AudioPath = "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/G010_timelapse_20250629.wav";
+    const string Mdv6Manifest = "/home/miao/repos/SparrowOPS/backups/test_files/onnx/mdv6_manifest.toml";
+    const string SpeciesNetManifest = "/home/miao/repos/SparrowOPS/backups/test_files/onnx/speciesnet_manifest.toml";
+    const string AudioBirdsManifest = "/home/miao/repos/SparrowOPS/backups/test_files/onnx/audiobirds_manifest.toml";
 
     static int Main()
     {

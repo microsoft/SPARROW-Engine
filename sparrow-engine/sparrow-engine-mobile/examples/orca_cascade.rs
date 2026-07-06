@@ -13,9 +13,9 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_FIXTURES_DIR: &str =
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts/fixtures";
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts/fixtures";
 const DEFAULT_MODELS_DIR: &str =
-    "/home/miao/repos/PW_refactor/sparrow-engine-dev/bench-binaries/artifacts";
+    "/home/miao/repos/SparrowOPS/sparrow-engine-dev/bench-binaries/artifacts";
 const DETECTOR_MODEL_NAME: &str = "orca-detector-fp32.tflite";
 const ECOTYPE_MODEL_NAME: &str = "orca-ecotype-melinput-fp32.tflite";
 

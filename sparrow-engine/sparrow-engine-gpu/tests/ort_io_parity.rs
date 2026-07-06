@@ -23,10 +23,10 @@ const TIME_STEPS: usize = 90;
 const MODEL_RELATIVE: &str = "test_files/sparrow_engine_models_test/md-audiobirds-v1/MD_AudioBirds_V1.onnx";
 
 /// Locate the ONNX model. Returns `Some(path)` if found; `None` if the
-/// PW_refactor test_files corpus is not present (CI without corpus).
+/// test_files corpus is not present (CI without corpus).
 fn locate_model() -> Option<PathBuf> {
     let candidates = [
-        "/home/miao/repos/PW_refactor/".to_string() + MODEL_RELATIVE,
+        "/home/miao/repos/SparrowOPS/backups/".to_string() + MODEL_RELATIVE,
         std::env::var("SPARROW_ENGINE_TEST_FILES_DIR")
             .map(|d| format!("{d}/sparrow_engine_models_test/md-audiobirds-v1/MD_AudioBirds_V1.onnx"))
             .unwrap_or_default(),
@@ -64,7 +64,7 @@ fn ort_io_bind_once_vs_host_roundtrip_bit_exact() {
         None => {
             eprintln!(
                 "ort_io_parity: skipping — MD_AudioBirds_V1.onnx not found at \
-                 /home/miao/repos/PW_refactor/{MODEL_RELATIVE} \
+                 /home/miao/repos/SparrowOPS/backups/{MODEL_RELATIVE} \
                  (set SPARROW_ENGINE_TEST_FILES_DIR to override)"
             );
             return;

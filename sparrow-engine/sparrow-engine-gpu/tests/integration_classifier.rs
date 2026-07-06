@@ -96,7 +96,7 @@ impl Drop for EnvVarGuard {
 //
 // Adopts the env-var + `CARGO_MANIFEST_DIR` walk-up pattern that
 // `tests/integration_tiled.rs` (Wave 4 amend) established. Replaces the
-// pre-2026-05-03 hardcoded `/home/miao/repos/PW_refactor/test_files/...`
+// pre-2026-05-03 hardcoded `/home/miao/repos/SparrowOPS/backups/test_files/...`
 // constants used in Wave 3 — those tied tests to a single dev box and
 // to the main checkout, breaking pre-merge worktree runs and any clean
 // reinstall under a different repo root.

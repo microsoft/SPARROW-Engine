@@ -2718,7 +2718,7 @@ format = "one_per_line"
     #[test]
     fn test_load_real_label_files() {
         // Test against real label files from the test_files directory.
-        let test_dir = Path::new("/home/miao/repos/PW_refactor/test_files/onnx");
+        let test_dir = Path::new("/home/miao/repos/SparrowOPS/backups/test_files/onnx");
 
         // MDV6 labels: name_index_csv format (animal,0 / person,1 / car,2)
         let mdv6_path = test_dir.join("models_MDV6-yolov10-e_labels.txt");

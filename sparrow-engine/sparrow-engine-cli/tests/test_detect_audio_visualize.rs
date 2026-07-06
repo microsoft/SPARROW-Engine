@@ -19,7 +19,7 @@
 //!
 //! 1. It requires the `MD_AudioBirds_V1.onnx` model file (and the FP16
 //!    sibling per the post-STRETCH FLIP) at the canonical path under
-//!    `/home/miao/repos/PW_refactor/test_files/`. Not bundled.
+//!    `/home/miao/repos/SparrowOPS/backups/test_files/`. Not bundled.
 //! 2. It requires the DUNAS WAV fixture. Not bundled.
 //! 3. It requires a working CUDA GPU + ORT runtime stack initialised
 //!    via `sparrow-engine/scripts/ort-env.sh`. The default device for
@@ -41,9 +41,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FIXTURE: &str =
-    "/home/miao/repos/PW_refactor/test_files/test_audio/DUNAS_20230925_090000.wav";
-const MODEL_DIR: &str = "/home/miao/repos/PW_refactor/test_files/sparrow_engine_models";
-const ONNX_DIR: &str = "/home/miao/repos/PW_refactor/test_files/onnx";
+    "/home/miao/repos/SparrowOPS/backups/test_files/test_audio/DUNAS_20230925_090000.wav";
+const MODEL_DIR: &str = "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models";
+const ONNX_DIR: &str = "/home/miao/repos/SparrowOPS/backups/test_files/onnx";
 // PNG min size sanity floor. The smallest layer (the discrete segments
 // PNG) is typically ~2 MB at default resolution; 1 KiB is a safe
 // non-empty-file gate that flags any zero-size or tiny error output.
