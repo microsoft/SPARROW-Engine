@@ -1,7 +1,10 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sparrow_engine_types::{TrtState, TrtStateView};
+
+const DEFAULT_TRT_WARMUP_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +37,7 @@ pub(crate) enum BeginWarm {
 #[derive(Debug)]
 pub(crate) struct WarmSlot {
     phase: AtomicU8,
+    started_at_ms: AtomicU64,
     error: Mutex<Option<String>>,
 }
 
@@ -47,6 +51,7 @@ impl WarmSlot {
     pub(crate) fn new() -> Self {
         Self {
             phase: AtomicU8::new(Phase::CudaReady as u8),
+            started_at_ms: AtomicU64::new(0),
             error: Mutex::new(None),
         }
     }
@@ -58,7 +63,10 @@ impl WarmSlot {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => return BeginWarm::Owner,
+            Ok(_) => {
+                self.started_at_ms.store(now_millis(), Ordering::Release);
+                return BeginWarm::Owner;
+            }
             Err(value) => match Phase::from_u8(value) {
                 Phase::Warming => return BeginWarm::Coalesced,
                 Phase::TrtReady => return BeginWarm::AlreadyReady,
@@ -73,6 +81,7 @@ impl WarmSlot {
             Ordering::Acquire,
         ) {
             Ok(_) => {
+                self.started_at_ms.store(now_millis(), Ordering::Release);
                 if let Ok(mut error) = self.error.lock() {
                     *error = None;
                 }
@@ -88,10 +97,12 @@ impl WarmSlot {
     }
 
     pub(crate) fn mark_ready(&self) {
+        self.started_at_ms.store(0, Ordering::Release);
         self.phase.store(Phase::TrtReady as u8, Ordering::Release);
     }
 
     pub(crate) fn mark_error(&self, detail: impl Into<String>) {
+        self.started_at_ms.store(0, Ordering::Release);
         if let Ok(mut error) = self.error.lock() {
             *error = Some(detail.into());
         }
@@ -102,7 +113,45 @@ impl WarmSlot {
         self.phase.load(Ordering::Acquire) == Phase::Warming as u8
     }
 
+    fn mark_timed_out_if_needed(&self, timeout: Duration) {
+        if self.phase.load(Ordering::Acquire) != Phase::Warming as u8 {
+            return;
+        }
+        let started_at_ms = self.started_at_ms.load(Ordering::Acquire);
+        if started_at_ms == 0 {
+            return;
+        }
+        let elapsed_ms = now_millis().saturating_sub(started_at_ms);
+        if elapsed_ms < timeout.as_millis() as u64 {
+            return;
+        }
+
+        if let Ok(mut error) = self.error.lock() {
+            *error = Some(format!(
+                "TensorRT warm-up exceeded {} seconds without completing",
+                timeout.as_secs()
+            ));
+        }
+        let _ = self.phase.compare_exchange(
+            Phase::Warming as u8,
+            Phase::Error as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    #[cfg(test)]
+    fn mark_timed_out_for_test(&self, timeout: Duration) {
+        self.mark_timed_out_if_needed(timeout);
+    }
+
+    #[cfg(test)]
+    fn set_started_at_for_test(&self, started_at_ms: u64) {
+        self.started_at_ms.store(started_at_ms, Ordering::Release);
+    }
+
     pub(crate) fn view(&self) -> TrtStateView {
+        self.mark_timed_out_if_needed(DEFAULT_TRT_WARMUP_TIMEOUT);
         let phase = Phase::from_u8(self.phase.load(Ordering::Acquire));
         let detail = if phase == Phase::Error {
             self.error.lock().ok().and_then(|error| error.clone())
@@ -119,6 +168,13 @@ impl WarmSlot {
             detail,
         }
     }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -149,5 +205,34 @@ mod tests {
         let retrying = slot.view();
         assert_eq!(retrying.state, TrtState::TrtWarming);
         assert_eq!(retrying.detail, None);
+    }
+
+    #[test]
+    fn warm_slot_timeout_surfaces_error_detail() {
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        slot.set_started_at_for_test(now_millis().saturating_sub(2_000));
+        slot.mark_timed_out_for_test(Duration::from_secs(1));
+
+        let timed_out = slot.view();
+        assert_eq!(timed_out.state, TrtState::TrtError);
+        assert_eq!(
+            timed_out.detail.as_deref(),
+            Some("TensorRT warm-up exceeded 1 seconds without completing")
+        );
+    }
+
+    #[test]
+    fn warm_slot_ready_overrides_previous_timeout() {
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        slot.set_started_at_for_test(now_millis().saturating_sub(2_000));
+        slot.mark_timed_out_for_test(Duration::from_secs(1));
+        assert_eq!(slot.view().state, TrtState::TrtError);
+
+        slot.mark_ready();
+        let ready = slot.view();
+        assert_eq!(ready.state, TrtState::TrtReady);
+        assert_eq!(ready.detail, None);
     }
 }

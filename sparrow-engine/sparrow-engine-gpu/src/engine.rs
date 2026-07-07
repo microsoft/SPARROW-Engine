@@ -244,7 +244,7 @@ pub struct Engine {
     /// race in [`Engine::get_or_load_model`]. Mirrors `sparrow-engine-cpu`.
     loading_lock: Mutex<()>,
     trt_build_gate: Arc<Mutex<()>>,
-    trt_warmup_threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
+    trt_warmup_threads: Mutex<HashMap<String, std::thread::JoinHandle<()>>>,
     trt_hw_capable: bool,
 }
 
@@ -694,7 +694,7 @@ impl Engine {
             pipelines: Mutex::new(HashMap::new()),
             loading_lock: Mutex::new(()),
             trt_build_gate: Arc::new(Mutex::new(())),
-            trt_warmup_threads: Mutex::new(Vec::new()),
+            trt_warmup_threads: Mutex::new(HashMap::new()),
             trt_hw_capable,
         })
     }
@@ -1019,11 +1019,14 @@ impl Engine {
         let _manifest = self.trt_warmup_gate(id)?;
         let handle = self.get_or_load_model(id)?;
         self.trt_warmup_gate_for_manifest(id, &handle.inner.manifest)?;
+        self.join_finished_trt_warmups();
+        if self.has_active_trt_warmup(id) {
+            return Ok(WarmupOutcome::Started);
+        }
         match handle.inner.warm.begin_warm() {
             BeginWarm::AlreadyReady => Ok(WarmupOutcome::AlreadyReady),
             BeginWarm::Coalesced => Ok(WarmupOutcome::Started),
             BeginWarm::Owner => {
-                self.join_finished_trt_warmups();
                 let models = Arc::clone(&self.models);
                 let engine_inner = Arc::clone(&self.inner);
                 let build_gate = Arc::clone(&self.trt_build_gate);
@@ -1036,12 +1039,14 @@ impl Engine {
                     }) {
                     Ok(thread) => {
                         match self.trt_warmup_threads.lock() {
-                            Ok(mut threads) => threads.push(thread),
+                            Ok(mut threads) => {
+                                threads.insert(id.to_string(), thread);
+                            }
                             Err(poisoned) => {
                                 tracing::warn!(
                                     "TensorRT warm-up thread registry lock poisoned; recovering"
                                 );
-                                poisoned.into_inner().push(thread);
+                                poisoned.into_inner().insert(id.to_string(), thread);
                             }
                         }
                         Ok(WarmupOutcome::Started)
@@ -1065,20 +1070,33 @@ impl Engine {
             }
         };
 
-        let mut pending = Vec::new();
-        for thread in threads.drain(..) {
+        let mut pending = HashMap::new();
+        for (model_id, thread) in threads.drain() {
             if thread.is_finished() {
                 if let Err(payload) = thread.join() {
                     tracing::warn!(
+                        model_id = %model_id,
                         panic = %panic_payload_to_string(payload),
                         "TensorRT warm-up thread panicked"
                     );
                 }
             } else {
-                pending.push(thread);
+                pending.insert(model_id, thread);
             }
         }
         *threads = pending;
+    }
+
+    fn has_active_trt_warmup(&self, id: &str) -> bool {
+        match self.trt_warmup_threads.lock() {
+            Ok(threads) => threads.contains_key(id),
+            Err(poisoned) => {
+                tracing::warn!(
+                    "TensorRT warm-up thread registry lock poisoned while checking active workers"
+                );
+                poisoned.into_inner().contains_key(id)
+            }
+        }
     }
 
     pub fn join_trt_warmups(&self) {
@@ -1090,9 +1108,10 @@ impl Engine {
             }
         };
 
-        for thread in threads.drain(..) {
+        for (model_id, thread) in threads.drain() {
             if let Err(payload) = thread.join() {
                 tracing::warn!(
+                    model_id = %model_id,
                     panic = %panic_payload_to_string(payload),
                     "TensorRT warm-up thread panicked during shutdown"
                 );
@@ -1108,6 +1127,10 @@ impl Engine {
             BeginWarm::AlreadyReady => Ok(handle.inner.warm.view()),
             BeginWarm::Coalesced => {
                 while handle.inner.warm.is_warming() {
+                    let view = handle.inner.warm.view();
+                    if !matches!(view.state, TrtState::TrtWarming) {
+                        return Ok(view);
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Ok(handle.inner.warm.view())
