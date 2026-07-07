@@ -523,15 +523,9 @@ impl ClassifierModel {
             )));
         }
 
-        // `Normalization::None` is rejected: classifier preprocess always normalizes.
-        if matches!(manifest.normalization, Some(Normalization::None)) {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "ClassifierModel::load: manifest '{}' specifies normalization = 'none'; \
-                 classifier resize_gpu has no raw-passthrough variant. Add a \
-                 NormalizeStats::RAW and a kernel branch if a future model needs it.",
-                manifest.id
-            )));
-        }
+        // `Normalization::None` is valid for exported graphs that contain their
+        // own rescaling/normalization layers. The resize kernel maps it to RAW
+        // 0..=255 passthrough at classify time.
 
         // `Layout::Nhwc` is unsupported: Wave 1 kernels emit NCHW only, and ORT
         // CUDA EP has known bugs with NHWC + dynamic shapes (issues #27912, #12288).
@@ -683,7 +677,8 @@ impl ClassifierModel {
     /// Normalization dispatch on `manifest.normalization`:
     /// - `Unit` → `NormalizeStats::UNIT` (mean=0, std=1; bit-exact identity).
     /// - `Imagenet` → `NormalizeStats::IMAGENET` (torchvision standard stats).
-    /// - `None` → rejected; classifier preprocess always normalizes.
+    /// - `None` → `NormalizeStats::RAW` (raw 0..=255 passthrough for graphs
+    ///   with in-graph rescaling/normalization).
     ///
     /// The `interpolation` field selects the resize filter (bilinear /
     /// bicubic / lanczos) for both `Resize` and `ResizeCrop`.
@@ -696,8 +691,8 @@ impl ClassifierModel {
     /// - `SparrowEngineError::ImageDecode` if both nvjpeg and CPU fallback decode fail.
     /// - `SparrowEngineError::Ort` for kernel launch / ORT errors / device mismatch.
     /// - `SparrowEngineError::InvalidManifest` for unsupported preprocess method
-    ///   (`Letterbox`, `MelSpectrogram`), unsupported normalization (`None`),
-    ///   or unsupported layout (`Nhwc`). These are defense-in-depth — `load()`
+    ///   (`Letterbox`, `MelSpectrogram`) or unsupported layout (`Nhwc`). These
+    ///   are defense-in-depth — `load()`
     ///   already rejects them at manifest validation time (Phase 3.8 Step 1
     ///   audit-fix R3 M8); reachable only if the manifest mutates post-load.
     /// - I/O errors when `image` is `ImageInput::FilePath`.
@@ -771,24 +766,13 @@ impl ClassifierModel {
         // Bongo's manifest defaults `channel_order` to RGB when absent.
         let channel_order = self.manifest.channel_order.unwrap_or(ChannelOrder::Rgb);
         // Resolve normalization stats from the manifest. SpeciesNet:
-        // `unit` → identity. Amazon CTV2: `imagenet` → torchvision-standard
-        // mean/std. `none` is rejected up-front: classifier preprocess always
-        // produces a normalized tensor; if a future model needs raw 0..255
-        // input, extend `NormalizeStats` (e.g., `RAW` with mean=0, std=1/255).
+        // `unit` → px/255. Amazon CTV2: `imagenet` → torchvision-standard
+        // mean/std. AddaxAI raw-feed classifiers: `none` → raw 0..=255 because
+        // their ONNX graphs contain rescaling/normalization layers.
         let stats = match self.manifest.normalization.unwrap_or(Normalization::Unit) {
             Normalization::Unit => NormalizeStats::UNIT,
             Normalization::Imagenet => NormalizeStats::IMAGENET,
-            Normalization::None => {
-                // Defense-in-depth: load() rejects this at manifest validation
-                // time (Phase 3.8 Step 1 audit-fix R3 M8). Reachable only if the
-                // manifest mutates post-load (impossible via the public API).
-                return Err(SparrowEngineError::InvalidManifest(format!(
-                    "ClassifierModel::classify: manifest '{}' specifies normalization = 'none'; \
-                     classifier resize_gpu has no raw-passthrough variant. Add a NormalizeStats::RAW \
-                     and a kernel branch if a future model needs it.",
-                    self.manifest.id
-                )));
-            }
+            Normalization::None => NormalizeStats::RAW,
         };
 
         // 3. GPU preprocess dispatched on manifest method.
@@ -1335,18 +1319,20 @@ mod tests {
     }
 
     #[test]
-    fn load_rejects_normalization_none() {
+    fn load_accepts_normalization_none_until_onnx_resolution() {
         let mut m = dummy_manifest(PostprocessMethod::Softmax);
         m.normalization = Some(Normalization::None);
-        let ctx = match cuda_or_skip("load_rejects_normalization_none") {
+        let ctx = match cuda_or_skip("load_accepts_normalization_none_until_onnx_resolution") {
             Some(c) => c,
             None => return,
         };
-        let manifest_dir = Path::new("/tmp");
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         match ClassifierModel::load(&ctx, &m, manifest_dir) {
-            Err(SparrowEngineError::InvalidManifest(msg)) if msg.contains("normalization") => {}
-            Err(other) => panic!("expected normalization-none rejection, got Err({other:?})"),
-            Ok(_) => panic!("expected normalization-none rejection, got Ok(_)"),
+            Err(SparrowEngineError::InvalidManifest(msg)) if msg.contains("normalization") => {
+                panic!("normalization=none should use raw passthrough, got {msg}")
+            }
+            Err(_) => {}
+            Ok(_) => panic!("test manifest should not resolve to a real ONNX fixture"),
         }
     }
 

@@ -15,13 +15,13 @@
 
 use std::sync::Arc;
 
-use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
-use sparrow_engine_types::error::{SparrowEngineError, Result};
-use sparrow_engine_types::manifest::ChannelOrder;
 use cudarc::driver::{
     CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::compile_ptx;
+use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
+use sparrow_engine_types::error::{Result, SparrowEngineError};
+use sparrow_engine_types::manifest::ChannelOrder;
 
 use crate::decode::GpuImage;
 
@@ -35,10 +35,7 @@ const KERNEL_NAME: &str = "tiled_preprocess_kernel";
 ///
 /// - **Unit** (OWL-T):  `mean = [0, 0, 0]`, `std = [1, 1, 1]` → `out = px / 255`.
 /// - **ImageNet** (HerdNet): `mean = [0.485, 0.456, 0.406]`, `std = [0.229, 0.224, 0.225]`.
-/// - **None** (raw 0..=255 passthrough): NOT representable here — sparrow-engine-cpu's
-///   `Normalization::None` is unused for the tiled HerdNet/OWL-T MVP and
-///   is rejected by `tiled.rs::TiledModel::load`. Add a kernel branch if a
-///   future model requires it.
+/// - **Raw**: `mean = [0, 0, 0]`, `std = [1/255, 1/255, 1/255]` → `out = px`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalizeStats {
     pub mean: [f32; 3],
@@ -56,6 +53,11 @@ impl NormalizeStats {
         mean: [0.485, 0.456, 0.406],
         std: [0.229, 0.224, 0.225],
     };
+    /// Raw 0..=255 passthrough for graphs with in-graph rescaling/normalization.
+    pub const RAW: Self = NormalizeStats {
+        mean: [0.0, 0.0, 0.0],
+        std: [1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0],
+    };
 }
 
 /// Loaded tiled-preprocess kernel module + entry point.
@@ -72,14 +74,15 @@ impl TiledPreprocessKernel {
     /// Compile + load the kernel via NVRTC. Cache the result for the lifetime
     /// of `sparrow_engine_gpu::Engine` (or, in tests, hold one per-test).
     pub fn new(ctx: &Arc<CudaContext>) -> Result<Self> {
-        let ptx = compile_ptx(KERNEL_SRC)
-            .map_err(|e| SparrowEngineError::Ort(format!("nvrtc compile tiled_preprocess.cu: {e}")))?;
-        let module = ctx
-            .load_module(ptx)
-            .map_err(|e| SparrowEngineError::Ort(format!("cudarc load_module tiled_preprocess: {e}")))?;
-        let func = module
-            .load_function(KERNEL_NAME)
-            .map_err(|e| SparrowEngineError::Ort(format!("cudarc load_function tiled_preprocess: {e}")))?;
+        let ptx = compile_ptx(KERNEL_SRC).map_err(|e| {
+            SparrowEngineError::Ort(format!("nvrtc compile tiled_preprocess.cu: {e}"))
+        })?;
+        let module = ctx.load_module(ptx).map_err(|e| {
+            SparrowEngineError::Ort(format!("cudarc load_module tiled_preprocess: {e}"))
+        })?;
+        let func = module.load_function(KERNEL_NAME).map_err(|e| {
+            SparrowEngineError::Ort(format!("cudarc load_function tiled_preprocess: {e}"))
+        })?;
         Ok(Self { func })
     }
 }
@@ -125,9 +128,9 @@ pub fn tiled_preprocess_gpu(
     // Pre-zero is defensive — the kernel writes every output slot, but
     // pre-zero leaves a clean baseline if a future kernel-launch failure
     // returns early. Mirrors letterbox.cu's caller convention.
-    let mut dst = stream
-        .alloc_zeros::<f32>(total)
-        .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros (tiled_preprocess dst): {e}")))?;
+    let mut dst = stream.alloc_zeros::<f32>(total).map_err(|e| {
+        SparrowEngineError::Ort(format!("cudarc alloc_zeros (tiled_preprocess dst): {e}"))
+    })?;
 
     let bgr_flag: i32 = match channel_order {
         ChannelOrder::Rgb => 0,
@@ -179,8 +182,9 @@ pub fn tiled_preprocess_gpu(
 
     // SAFETY: kernel signature matches the args bound above; bounds check
     // inside the kernel guards out-of-grid threads.
-    unsafe { launch.launch(cfg) }
-        .map_err(|e| SparrowEngineError::Ort(format!("cudarc launch tiled_preprocess_kernel: {e}")))?;
+    unsafe { launch.launch(cfg) }.map_err(|e| {
+        SparrowEngineError::Ort(format!("cudarc launch tiled_preprocess_kernel: {e}"))
+    })?;
 
     Ok(dst)
 }
@@ -201,5 +205,11 @@ mod tests {
         // Source: torchvision.transforms.Normalize defaults.
         assert_eq!(NormalizeStats::IMAGENET.mean, [0.485, 0.456, 0.406]);
         assert_eq!(NormalizeStats::IMAGENET.std, [0.229, 0.224, 0.225]);
+    }
+
+    #[test]
+    fn raw_stats_constants() {
+        assert_eq!(NormalizeStats::RAW.mean, [0.0; 3]);
+        assert_eq!(NormalizeStats::RAW.std, [1.0 / 255.0; 3]);
     }
 }
