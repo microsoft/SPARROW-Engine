@@ -54,7 +54,11 @@ fn catalog_entries(
             CatalogEntryResponse {
                 model_id: model.id.clone(),
                 model_type: model.model_type.to_string(),
-                framework: "onnx".to_string(),
+                framework: catalog
+                    .model_formats
+                    .get(&model.id)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 loaded,
                 trt_state: trt.state,
                 trt_detail: trt.detail,

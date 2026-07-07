@@ -870,8 +870,13 @@ mod tests {
             "overhead-detector".to_string(),
             model_info("overhead-detector", ModelType::OverheadDetector),
         );
+        let model_formats = models
+            .keys()
+            .map(|id| (id.clone(), "onnx".to_string()))
+            .collect();
         Catalog {
             models,
+            model_formats,
             trt_modes: BTreeMap::new(),
             pipelines: BTreeMap::new(),
         }

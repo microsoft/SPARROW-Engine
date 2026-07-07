@@ -9,6 +9,7 @@ use crate::engine_dispatch::{derive_model_type, ModelInfo, TrtMode};
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
     pub models: BTreeMap<String, ModelInfo>,
+    pub model_formats: BTreeMap<String, String>,
     pub trt_modes: BTreeMap<String, TrtMode>,
     pub pipelines: BTreeMap<String, CatalogPipeline>,
 }
@@ -24,8 +25,22 @@ impl Catalog {
     pub fn trt_always_ids(&self) -> Vec<String> {
         self.trt_modes
             .iter()
-            .filter(|(_, mode)| **mode == TrtMode::Always)
+            .filter(|(id, mode)| **mode == TrtMode::Always && self.is_server_loadable_model(id))
             .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub fn is_server_loadable_model(&self, model_id: &str) -> bool {
+        self.model_formats
+            .get(model_id)
+            .is_some_and(|format| format == "onnx")
+    }
+
+    pub fn server_loadable_model_ids(&self) -> Vec<String> {
+        self.models
+            .keys()
+            .filter(|id| self.is_server_loadable_model(id))
+            .cloned()
             .collect()
     }
 }
@@ -90,6 +105,7 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                     .as_ref()
                     .map(|trt| trt.effective_mode())
                     .unwrap_or(TrtMode::Off);
+                catalog.model_formats.insert(id.clone(), m.format.clone());
                 catalog.trt_modes.insert(id.clone(), trt_mode);
                 catalog.models.insert(
                     id.clone(),
@@ -197,12 +213,25 @@ pub fn parse_preload_ids(raw: Option<&str>, catalog: &Catalog) -> Result<Vec<Str
         return Ok(Vec::new());
     }
 
-    // `all` (case-insensitive) preloads every discovered model. The GPU Docker
-    // image sets SPARROW_ENGINE_PRELOAD=all so each model's TensorRT engine is
-    // built + cached at boot — before the server binds — eliminating the
-    // first-request 408 that otherwise occurs while the engine compiles.
+    // `all` (case-insensitive) preloads every model this server flavor can
+    // actually load. The shared catalog may include mobile-only TFLite models
+    // and pipeline alias directories; cpu/gpu server flavors must not turn
+    // those catalog entries into boot-fatal preload attempts.
     if raw.trim().eq_ignore_ascii_case("all") {
-        return Ok(catalog.models.keys().cloned().collect());
+        let ids = catalog.server_loadable_model_ids();
+        let skipped: Vec<String> = catalog
+            .models
+            .keys()
+            .filter(|id| !catalog.is_server_loadable_model(id))
+            .cloned()
+            .collect();
+        if !skipped.is_empty() {
+            tracing::warn!(
+                skipped = ?skipped,
+                "SPARROW_ENGINE_PRELOAD=all skipped models unsupported by this server flavor"
+            );
+        }
+        return Ok(ids);
     }
 
     let mut seen = BTreeSet::new();
@@ -382,6 +411,20 @@ mod tests {
         let mut catalog = Catalog::default();
         for id in ids {
             catalog.models.insert((*id).to_string(), model_info(id));
+            catalog
+                .model_formats
+                .insert((*id).to_string(), "onnx".to_string());
+        }
+        catalog
+    }
+
+    fn catalog_with_formats(entries: &[(&str, &str)]) -> Catalog {
+        let mut catalog = Catalog::default();
+        for (id, format) in entries {
+            catalog.models.insert((*id).to_string(), model_info(id));
+            catalog
+                .model_formats
+                .insert((*id).to_string(), (*format).to_string());
         }
         catalog
     }
@@ -428,10 +471,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_preload_ids_all_sentinel_returns_every_model() {
+    fn parse_preload_ids_all_sentinel_returns_every_server_loadable_model() {
         let catalog = catalog_with(&["b", "a", "c"]);
-        // `all` (any case, trimmed) expands to all discovered models in sorted
-        // (BTreeMap) order — used by the GPU Docker image to warm the TRT cache.
+        // `all` (any case, trimmed) expands to loadable ONNX models in sorted
+        // (BTreeMap) order — used by the GPU Docker image at boot.
         assert_eq!(
             parse_preload_ids(Some("all"), &catalog).unwrap(),
             vec!["a", "b", "c"]
@@ -444,6 +487,20 @@ mod tests {
         assert!(parse_preload_ids(Some("all"), &Catalog::default())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn parse_preload_ids_all_sentinel_skips_tflite_models() {
+        let catalog = catalog_with_formats(&[
+            ("onnx-a", "onnx"),
+            ("mobile-tflite", "tflite"),
+            ("onnx-b", "onnx"),
+        ]);
+
+        assert_eq!(
+            parse_preload_ids(Some("all"), &catalog).unwrap(),
+            vec!["onnx-a", "onnx-b"]
+        );
     }
 
     fn unique_dir(name: &str) -> PathBuf {

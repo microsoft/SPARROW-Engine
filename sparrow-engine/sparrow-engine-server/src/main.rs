@@ -107,6 +107,9 @@ async fn run_server() {
     }
 
     let preload_raw = std::env::var("SPARROW_ENGINE_PRELOAD").ok();
+    let preload_all_requested = preload_raw
+        .as_deref()
+        .is_some_and(|raw| raw.trim().eq_ignore_ascii_case("all"));
     let preload_ids = match parse_preload_ids(preload_raw.as_deref(), &catalog) {
         Ok(ids) => ids,
         Err(e) => {
@@ -116,6 +119,14 @@ async fn run_server() {
     };
     for model_id in preload_ids {
         if let Err(e) = engine.get_or_load_model(&model_id) {
+            if preload_all_requested {
+                warn!(
+                    model_id = %model_id,
+                    error = %e,
+                    "SPARROW_ENGINE_PRELOAD=all skipped model unsupported by this server flavor"
+                );
+                continue;
+            }
             error!(model_id = %model_id, error = %e, "failed to preload model");
             std::process::exit(1);
         }
