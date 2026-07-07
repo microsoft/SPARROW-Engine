@@ -698,6 +698,43 @@ fn make_progress_bar(total: u64, quiet: bool) -> ProgressBar {
     bar
 }
 
+fn record_file_error(
+    bar: &ProgressBar,
+    failures: &mut Vec<String>,
+    file: &Path,
+    err: &dyn std::fmt::Display,
+) {
+    let msg = format!("error: {}: {err}", file.display());
+    if !bar.is_hidden() {
+        bar.println(&msg);
+    }
+    failures.push(msg);
+}
+
+fn emit_hidden_failures_if_partial(
+    bar: &ProgressBar,
+    failures: &[String],
+    errors: usize,
+    total: usize,
+) {
+    if bar.is_hidden() && errors > 0 && errors < total {
+        for failure in failures {
+            eprintln!("{failure}");
+        }
+    }
+}
+
+fn all_files_failed_message(failures: &[String]) -> String {
+    match failures {
+        [] => "All files failed processing.".to_string(),
+        [only] => only
+            .strip_prefix("error: ")
+            .unwrap_or(only.as_str())
+            .to_string(),
+        _ => format!("All files failed processing:\n{}", failures.join("\n")),
+    }
+}
+
 /// Parse device string ("auto", "cpu", "cuda:0") into Device enum.
 fn parse_device(s: &str) -> Result<Device, Box<dyn std::error::Error>> {
     match s.to_lowercase().as_str() {
@@ -1424,6 +1461,7 @@ fn cmd_detect_with_engine(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut errors = 0usize;
+    let mut failures = Vec::new();
     let needs_collect = args.summary || args.export_format.is_some() || args.visualize;
     let mut collected: Vec<(PathBuf, DetectResult)> = Vec::new();
 
@@ -1449,18 +1487,17 @@ fn cmd_detect_with_engine(
                 }
             }
             Err(e) => {
-                // Preserve a newline above the error line so it doesn't
-                // blend into the progress bar under `--quiet` off-cases.
-                bar.println(format!("error: {}: {e}", file.display()));
+                record_file_error(&bar, &mut failures, file, &e);
                 errors += 1;
             }
         }
         bar.inc(1);
     }
     bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
 
     if errors == total {
-        return Err("All files failed processing.".into());
+        return Err(all_files_failed_message(&failures).into());
     }
 
     // Export if requested.
@@ -1611,6 +1648,7 @@ fn cmd_classify_with_engine(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut errors = 0usize;
+    let mut failures = Vec::new();
     let needs_collect = args.visualize;
     let mut collected: Vec<(PathBuf, ClassifyResult)> = Vec::new();
 
@@ -1633,13 +1671,14 @@ fn cmd_classify_with_engine(
                 }
             }
             Err(e) => {
-                bar.println(format!("error: {}: {e}", file.display()));
+                record_file_error(&bar, &mut failures, file, &e);
                 errors += 1;
             }
         }
         bar.inc(1);
     }
     bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
 
     // Visualize if requested.
     if args.visualize {
@@ -1658,7 +1697,7 @@ fn cmd_classify_with_engine(
     }
 
     if errors == total {
-        return Err("All files failed processing.".into());
+        return Err(all_files_failed_message(&failures).into());
     }
     Ok(())
 }
@@ -1739,6 +1778,7 @@ fn cmd_embed_with_engine(
     let mut successful_files = Vec::new();
     let mut results = Vec::new();
     let mut errors = 0usize;
+    let mut failures = Vec::new();
     for file in &files {
         bar.set_message(file.display().to_string());
         let image = ImageInput::FilePath(file.clone());
@@ -1748,15 +1788,16 @@ fn cmd_embed_with_engine(
                 results.push(result);
             }
             Err(e) => {
-                bar.println(format!("error: {}: {e}", file.display()));
+                record_file_error(&bar, &mut failures, file, &e);
                 errors += 1;
             }
         }
         bar.inc(1);
     }
     bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
     if errors == total {
-        return Err("All files failed processing.".into());
+        return Err(all_files_failed_message(&failures).into());
     }
 
     match args.format {
@@ -2005,6 +2046,7 @@ fn cmd_detect_audio_with_engine(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut errors = 0usize;
+    let mut failures = Vec::new();
     let mut audio_viz_attempts = 0usize;
     let mut audio_viz_fail = 0usize;
 
@@ -2122,16 +2164,17 @@ fn cmd_detect_audio_with_engine(
                 }
             }
             Err(e) => {
-                bar.println(format!("error: {}: {e}", file.display()));
+                record_file_error(&bar, &mut failures, file, &e);
                 errors += 1;
             }
         }
         bar.inc(1);
     }
     bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
 
     if errors == total {
-        return Err("All files failed processing.".into());
+        return Err(all_files_failed_message(&failures).into());
     }
     if is_all_viz_failed(audio_viz_fail, audio_viz_attempts) {
         return Err("All visualizations failed".into());
@@ -2353,6 +2396,7 @@ fn cmd_pipeline_with_engine(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut errors = 0usize;
+    let mut failures = Vec::new();
     let needs_collect = args.visualize || args.export_format.is_some();
     let mut collected: Vec<(PathBuf, PipelineResult)> = Vec::new();
 
@@ -2382,16 +2426,17 @@ fn cmd_pipeline_with_engine(
                 }
             }
             Err(e) => {
-                bar.println(format!("error: {}: {e}", file.display()));
+                record_file_error(&bar, &mut failures, file, &e);
                 errors += 1;
             }
         }
         bar.inc(1);
     }
     bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
 
     if errors == total {
-        return Err("All files failed processing.".into());
+        return Err(all_files_failed_message(&failures).into());
     }
 
     // Export if requested.
@@ -3839,6 +3884,23 @@ mod tests {
                 "non-TTY stderr should auto-hide the progress bar"
             );
         }
+    }
+
+    #[test]
+    fn all_files_failed_message_includes_per_file_errors() {
+        let msg = all_files_failed_message(&[
+            "error: bad.jpg: decode failed".to_string(),
+            "error: bad.wav: invalid header".to_string(),
+        ]);
+        assert!(msg.contains("All files failed processing:"));
+        assert!(msg.contains("bad.jpg: decode failed"));
+        assert!(msg.contains("bad.wav: invalid header"));
+    }
+
+    #[test]
+    fn all_files_failed_message_single_file_is_actionable() {
+        let msg = all_files_failed_message(&["error: bad.jpg: decode failed".to_string()]);
+        assert_eq!(msg, "bad.jpg: decode failed");
     }
 
     #[test]
