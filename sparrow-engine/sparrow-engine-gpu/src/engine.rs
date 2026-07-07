@@ -161,7 +161,18 @@ impl LoadedModel {
     /// so adding a new manifest field touches exactly one site.
     pub(crate) fn to_model_info(&self) -> ModelInfo {
         ModelInfo {
-            id: self.manifest.id.clone(),
+            // Report the directory name (parent of manifest.toml) — the id
+            // `detect()`/`classify()` resolve by — not the manifest's
+            // self-declared id, so model_info agrees with detect even for a
+            // model whose manifest id drifted from its directory. Mirrors
+            // sparrow_engine_core::catalog::list_available_models.
+            id: self
+                .path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
+                .map(String::from)
+                .unwrap_or_else(|| self.manifest.id.clone()),
             path: self.path.clone(),
             model_type: self.model_type(),
             default: self.manifest.default,

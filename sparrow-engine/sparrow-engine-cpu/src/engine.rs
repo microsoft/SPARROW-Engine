@@ -608,7 +608,16 @@ impl Engine {
             .values()
             .filter(|m| m.active.load(Ordering::Acquire))
             .map(|m| ModelInfo {
-                id: m.manifest.id.clone(),
+                // Directory name (parent of manifest.toml) = the id detect()
+                // resolves by; keeps model_info/loaded_models consistent with
+                // detect even if a manifest's id drifted from its directory.
+                id: m
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| m.manifest.id.clone()),
                 path: m.path.clone(),
                 model_type: derive_model_type(
                     &m.manifest.preprocess_method,

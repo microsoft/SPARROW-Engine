@@ -1457,8 +1457,12 @@ pub(crate) fn collect_segments(
     segment_offsets: &[usize],
     total_samples: usize,
     win: &WindowParams,
+    labels: &[String],
     on_segment: &mut Option<&mut dyn FnMut(&AudioSegment)>,
 ) -> Vec<AudioSegment> {
+    // Binary detector: at most one label, used to populate AudioClass.label —
+    // mirrors sparrow-engine-cpu/src/detect_audio.rs:544 (`labels.first()`).
+    let detector_label = labels.first().cloned();
     let mut segments: Vec<AudioSegment> = Vec::new();
     for (i, &seg_offset) in segment_offsets.iter().enumerate() {
         let logit = logits[i];
@@ -1483,7 +1487,7 @@ pub(crate) fn collect_segments(
                 confidence,
                 classes: vec![AudioClass {
                     class_idx: 0,
-                    label: None,
+                    label: detector_label.clone(),
                     probability: confidence,
                 }],
             };
@@ -1507,7 +1511,7 @@ fn collect_segments_for_postprocess(
 ) -> Vec<AudioSegment> {
     match *postprocess {
         AudioPostprocess::Detector => {
-            collect_segments(logits, segment_offsets, total_samples, win, on_segment)
+            collect_segments(logits, segment_offsets, total_samples, win, labels, on_segment)
         }
         AudioPostprocess::Classifier { num_classes, top_k } => collect_classifier_segments(
             logits,

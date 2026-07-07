@@ -170,8 +170,22 @@ pub fn list_available_models(model_dir: &Path) -> Vec<ModelInfo> {
         }
         match manifest::load_manifest(&manifest_path) {
             Ok(m) => {
+                // Report the DIRECTORY name as the model id, not the manifest's
+                // self-declared `m.id`. `detect()` / `classify()` resolve a model
+                // by `model_dir.join(<id>)` (the directory name), so the id
+                // reported here must be the same one those APIs accept — otherwise
+                // `detect(model_info(x).id)` fails whenever a manifest's internal
+                // id drifts from its directory (e.g. a mis-published model whose
+                // manifest still carries an old id). The two normally match by
+                // onboarding convention; using the directory name makes model_info
+                // and detect agree even when they don't.
+                let dir_id = entry_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(String::from)
+                    .unwrap_or(m.id);
                 models.push(ModelInfo {
-                    id: m.id,
+                    id: dir_id,
                     path: manifest_path,
                     model_type: derive_model_type(
                         &m.preprocess_method,
@@ -440,6 +454,57 @@ format = "one_per_line"
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "test-model");
         assert_eq!(models[0].model_type, ModelType::Detector);
+    }
+
+    #[test]
+    fn list_available_models_reports_directory_name_not_manifest_id() {
+        // Regression (2026-07-07): a model whose manifest self-declares an id
+        // that differs from its directory (e.g. a mis-published model) must be
+        // reported under its DIRECTORY name — the id `detect()`/`classify()`
+        // resolve by (`model_dir.join(<id>)`). Otherwise model_info() and
+        // detect() disagree. (Real trigger: MDV5a dir vs `Species_Net_MDV5a`.)
+        let dir = tempfile::tempdir().unwrap();
+        let model_dir = dir.path().join("dir-name-id");
+        std::fs::create_dir(&model_dir).unwrap();
+        let onnx_path = model_dir.join("model.onnx");
+        std::fs::write(&onnx_path, b"fake onnx content for testing").unwrap();
+        let hash = crate::hash::hash_file(&onnx_path).unwrap();
+        let size = std::fs::metadata(&onnx_path).unwrap().len();
+        let manifest = format!(
+            r#"
+[model]
+id = "stale-manifest-id"
+format = "onnx"
+file = "model.onnx"
+onnx_sha256 = "{hash}"
+onnx_size_bytes = {size}
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+        );
+        std::fs::write(model_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(model_dir.join("labels.txt"), "animal\n").unwrap();
+
+        let models = list_available_models(dir.path());
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].id, "dir-name-id",
+            "model id must be the resolvable directory name, not the manifest's self-declared id"
+        );
     }
 
     #[test]
@@ -913,6 +978,11 @@ format = "one_per_line"
             1,
             "list_available_models must follow dir symlinks (regression guard for R3 B5 / R5 C1)"
         );
-        assert_eq!(models[0].id, "real-megadet");
+        // The reported id is the dir-ENTRY name (the symlink in the scanned
+        // model_dir), NOT the manifest's self-declared id — because that entry
+        // name is what `detect()`/`classify()` resolve by (model_dir.join(id)).
+        // A deploy that symlinks `model_dir/<alias> -> /shared/<versioned>/`
+        // must be detectable via `<alias>`, and model_info must agree.
+        assert_eq!(models[0].id, "symlinked-megadet");
     }
 }
