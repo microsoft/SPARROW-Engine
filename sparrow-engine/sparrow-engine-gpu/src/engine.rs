@@ -244,6 +244,7 @@ pub struct Engine {
     /// race in [`Engine::get_or_load_model`]. Mirrors `sparrow-engine-cpu`.
     loading_lock: Mutex<()>,
     trt_build_gate: Arc<Mutex<()>>,
+    trt_warmup_threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
     trt_hw_capable: bool,
 }
 
@@ -693,6 +694,7 @@ impl Engine {
             pipelines: Mutex::new(HashMap::new()),
             loading_lock: Mutex::new(()),
             trt_build_gate: Arc::new(Mutex::new(())),
+            trt_warmup_threads: Mutex::new(Vec::new()),
             trt_hw_capable,
         })
     }
@@ -1021,6 +1023,7 @@ impl Engine {
             BeginWarm::AlreadyReady => Ok(WarmupOutcome::AlreadyReady),
             BeginWarm::Coalesced => Ok(WarmupOutcome::Started),
             BeginWarm::Owner => {
+                self.join_finished_trt_warmups();
                 let models = Arc::clone(&self.models);
                 let engine_inner = Arc::clone(&self.inner);
                 let build_gate = Arc::clone(&self.trt_build_gate);
@@ -1031,13 +1034,68 @@ impl Engine {
                     .spawn(move || {
                         run_trt_warmup_build(engine_inner, models, build_gate, model_id, loaded);
                     }) {
-                    Ok(_thread) => Ok(WarmupOutcome::Started),
+                    Ok(thread) => {
+                        match self.trt_warmup_threads.lock() {
+                            Ok(mut threads) => threads.push(thread),
+                            Err(poisoned) => {
+                                tracing::warn!(
+                                    "TensorRT warm-up thread registry lock poisoned; recovering"
+                                );
+                                poisoned.into_inner().push(thread);
+                            }
+                        }
+                        Ok(WarmupOutcome::Started)
+                    }
                     Err(err) => {
                         let detail = format!("failed to spawn TensorRT warm-up thread: {err}");
                         handle.inner.warm.mark_error(detail.clone());
                         Err(SparrowEngineError::Ort(detail))
                     }
                 }
+            }
+        }
+    }
+
+    fn join_finished_trt_warmups(&self) {
+        let mut threads = match self.trt_warmup_threads.lock() {
+            Ok(threads) => threads,
+            Err(poisoned) => {
+                tracing::warn!("TensorRT warm-up thread registry lock poisoned while reaping");
+                poisoned.into_inner()
+            }
+        };
+
+        let mut pending = Vec::new();
+        for thread in threads.drain(..) {
+            if thread.is_finished() {
+                if let Err(payload) = thread.join() {
+                    tracing::warn!(
+                        panic = %panic_payload_to_string(payload),
+                        "TensorRT warm-up thread panicked"
+                    );
+                }
+            } else {
+                pending.push(thread);
+            }
+        }
+        *threads = pending;
+    }
+
+    pub fn join_trt_warmups(&self) {
+        let mut threads = match self.trt_warmup_threads.lock() {
+            Ok(threads) => threads,
+            Err(poisoned) => {
+                tracing::warn!("TensorRT warm-up thread registry lock poisoned during shutdown");
+                poisoned.into_inner()
+            }
+        };
+
+        for thread in threads.drain(..) {
+            if let Err(payload) = thread.join() {
+                tracing::warn!(
+                    panic = %panic_payload_to_string(payload),
+                    "TensorRT warm-up thread panicked during shutdown"
+                );
             }
         }
     }
@@ -1312,6 +1370,7 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        self.join_trt_warmups();
         // Mirrors `sparrow_engine_cpu::Engine::drop` (MT-17 mitigation): mark
         // every loaded model inactive so stale handles see `ModelUnloaded`
         // rather than reach into a freed session. Then LEAK the loaded

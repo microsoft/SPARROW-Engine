@@ -681,6 +681,8 @@ impl Engine {
         ))
     }
 
+    pub fn join_trt_warmups(&self) {}
+
     pub fn trt_warmup_blocking(&self, id: &str) -> Result<TrtStateView> {
         self.ensure_model_known_for_trt(id)?;
         Err(SparrowEngineError::TrtWarmupRejected(

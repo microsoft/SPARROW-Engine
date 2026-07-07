@@ -183,6 +183,11 @@ async fn run_server() {
         } => {}
     }
 
+    let engine = state.engine.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || engine.join_trt_warmups()).await {
+        warn!(error = %e, "TensorRT warm-up shutdown join task failed");
+    }
+
     info!("server shut down");
 }
 
