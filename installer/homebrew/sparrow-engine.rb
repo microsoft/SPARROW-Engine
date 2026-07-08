@@ -1,8 +1,8 @@
 class SparrowEngine < Formula
   desc "Camera-trap ML inference engine (sparrow-engine CLI binary)"
-  homepage "https://github.com/microsoft/Pytorch-Wildlife"
+  homepage "https://github.com/microsoft/SPARROW-Engine"
   license "MIT"
-  version "0.1.10"
+  version "0.1.21"
 
   # RP-4 (2026-05-26): the formula points at the GH Release tarballs produced
   # by .github/workflows/release.yml § build-cli-* and attached by
@@ -20,14 +20,14 @@ class SparrowEngine < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/microsoft/Pytorch-Wildlife/releases/download/v#{version}/sparrow-engine-cpu-#{version}-macos-aarch64.tar.gz"
+      url "https://github.com/microsoft/SPARROW-Engine/releases/download/v#{version}/sparrow-engine-cpu-#{version}-macos-aarch64.tar.gz"
       sha256 "REPLACE_WITH_macos-aarch64_sha256"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/microsoft/Pytorch-Wildlife/releases/download/v#{version}/sparrow-engine-cpu-#{version}-linux-x86_64.tar.gz"
+      url "https://github.com/microsoft/SPARROW-Engine/releases/download/v#{version}/sparrow-engine-cpu-#{version}-linux-x86_64.tar.gz"
       sha256 "REPLACE_WITH_linux-x86_64_sha256"
     end
   end

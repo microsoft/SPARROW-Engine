@@ -1,8 +1,8 @@
 class SparrowEngineGpu < Formula
   desc "Camera-trap ML inference engine — GPU (NVIDIA CUDA) CLI binary"
-  homepage "https://github.com/microsoft/Pytorch-Wildlife"
+  homepage "https://github.com/microsoft/SPARROW-Engine"
   license "MIT"
-  version "0.1.10"
+  version "0.1.21"
 
   # RP-4 + RP-17 (2026-05-27): canonical GPU formula template. Substitution
   # workflow mirrors the CPU formula (`sparrow-engine.rb`):
@@ -19,7 +19,7 @@ class SparrowEngineGpu < Formula
 
   on_linux do
     on_intel do
-      url "https://github.com/microsoft/Pytorch-Wildlife/releases/download/v#{version}/sparrow-engine-gpu-#{version}-linux-x86_64.tar.gz"
+      url "https://github.com/microsoft/SPARROW-Engine/releases/download/v#{version}/sparrow-engine-gpu-#{version}-linux-x86_64.tar.gz"
       sha256 "REPLACE_WITH_gpu_linux-x86_64_sha256"
     end
   end
@@ -59,7 +59,7 @@ class SparrowEngineGpu < Formula
         spe-gpu device       # expected: {"device":"cuda:0"}
 
       Full GPU install path:
-        https://github.com/microsoft/Pytorch-Wildlife/blob/sparrow-engine-dev/docs/user-manual.md
+        https://github.com/microsoft/SPARROW-Engine/blob/main/docs/user-manual.md
 
       The tarball is ~256 MB — bundles libonnxruntime + ORT CUDA provider
       sidecars. NVIDIA-managed shared libraries (cuDNN / cuBLAS / cuRAND /
