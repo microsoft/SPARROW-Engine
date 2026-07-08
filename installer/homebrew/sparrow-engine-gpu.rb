@@ -1,8 +1,8 @@
 class SparrowEngineGpu < Formula
   desc "Camera-trap ML inference engine — GPU (NVIDIA CUDA) CLI binary"
   homepage "https://github.com/microsoft/SPARROW-Engine"
-  license "MIT"
   version "0.1.21"
+  license "MIT"
 
   # RP-4 + RP-17 (2026-05-27): canonical GPU formula template. Substitution
   # workflow mirrors the CPU formula (`sparrow-engine.rb`):

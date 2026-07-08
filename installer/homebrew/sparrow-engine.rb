@@ -1,8 +1,8 @@
 class SparrowEngine < Formula
   desc "Camera-trap ML inference engine (sparrow-engine CLI binary)"
   homepage "https://github.com/microsoft/SPARROW-Engine"
-  license "MIT"
   version "0.1.21"
+  license "MIT"
 
   # RP-4 (2026-05-26): the formula points at the GH Release tarballs produced
   # by .github/workflows/release.yml § build-cli-* and attached by
