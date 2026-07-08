@@ -1223,7 +1223,7 @@ jobs:
             docker.io/zhongqimiao/sparrow-engine-server:latest
             docker.io/zhongqimiao/sparrow-engine-server:sparrow-combined
           labels: |
-            org.opencontainers.image.source=https://github.com/microsoft/Pytorch-Wildlife
+            org.opencontainers.image.source=https://github.com/microsoft/SPARROW-Engine
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
           # Buildcache lives in a SEPARATE image on GHCR (not as a tag on the
@@ -1233,7 +1233,15 @@ jobs:
           # stays private to PW on GHCR even though runtime images moved to
           # Docker Hub (RP-35).
           cache-from: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:cpu
-          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:cpu,mode=max
+          # ignore-error: the GHCR buildcache write requires `packages: write` on
+          # the `microsoft/sparrow-engine-server-buildcache` package, which the
+          # repo-switch to microsoft/SPARROW-Engine broke (buildx failed with
+          # `permission_denied: write_package`, failing the whole publish even
+          # though the runtime image exported fine). The buildcache is an
+          # optimization, not essential — never fail the image publish on it.
+          # Restore the cache write by granting the repo write access to the
+          # GHCR package (org packages settings). OQ-2026-07-06-7.
+          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:cpu,mode=max,ignore-error=true
 
   build-and-push-docker-gpu:
     name: Build + push GPU Docker image to Docker Hub
@@ -1288,11 +1296,13 @@ jobs:
             docker.io/zhongqimiao/sparrow-engine-server-gpu:latest
             docker.io/zhongqimiao/sparrow-engine-server-gpu:sparrow-combined
           labels: |
-            org.opencontainers.image.source=https://github.com/microsoft/Pytorch-Wildlife
+            org.opencontainers.image.source=https://github.com/microsoft/SPARROW-Engine
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
           cache-from: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:gpu
-          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:gpu,mode=max
+          # ignore-error: see the CPU step above — the GHCR buildcache write is
+          # broken by the repo-switch perms and must not fail the image publish.
+          cache-to: type=registry,ref=ghcr.io/microsoft/sparrow-engine-server-buildcache:gpu,mode=max,ignore-error=true
 
   # ---------------------------------------------------------------------------
   # Attach CLI tarballs as GitHub Release assets on prod tag push.
