@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.21
+
+- fix: GPU audio-detector models now return the class label (was `null` on the GPU flavor; CPU was correct).
+- fix: `model_info()` and `detect()`/`classify()` resolve a model by the same id (the on-disk directory name),
+  so a model whose manifest id drifts from its directory no longer disagrees between the two APIs.
+- fix: an explicitly-named id in `SPARROW_ENGINE_PRELOAD` that is unsupported by the running server flavor
+  (e.g. a TFLite id on the desktop server) is skipped with a warning instead of aborting boot.
+- ci: the Docker Hub dual-image release no longer fails on a GHCR build-cache permission error (the buildcache
+  export is now non-fatal).
+
+## v0.1.20
+
+- fix: the server no longer segfaults on shutdown while a TensorRT warm-up is active; the TensorRT HTTP
+  warm-up hang is resolved with a timeout + error detail.
+- fix: `SPARROW_ENGINE_PRELOAD=all` is flavor-aware — it skips catalog models unsupported by the running flavor
+  instead of aborting boot.
+- fix: the GPU classifier accepts `normalization = "none"` (CPU/GPU parity for graph-normalized models).
+- fix: CLI batch commands surface the specific per-file failure cause instead of a generic message.
+
+## v0.1.19
+
+- feat: MegaDetector v6 variant onboarding (ONB-2) — the RT-DETRv2 `rtdetr_topk` detector postprocess contract
+  plus 9 new catalog variants; cv2-compatible bilinear (non-antialias) preprocessing for detector fidelity.
+- fix: audit-fix behavioral fixes (TrtState token mapping consolidated into `as_token()`).
+
+## v0.1.18
+
+- chore: maintenance release (version bump).
+
 ## v0.1.17
 
 <one-line summary — filled by release agent at SKILL.md Stage 10d>
