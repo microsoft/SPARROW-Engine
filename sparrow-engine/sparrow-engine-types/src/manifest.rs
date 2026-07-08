@@ -278,6 +278,56 @@ impl TrtConfig {
             TrtMode::Off
         }
     }
+
+    /// A default on-demand `TrtConfig` for a section-less ONNX manifest:
+    /// CUDA-served, TensorRT built only on explicit warm-up, FP16 builder,
+    /// default optimization level. Used by [`warmup_trt_config`] so the GPU
+    /// warm-up path lowers a section-less ONNX model to TensorRT, matching the
+    /// `/v1/catalog` projection.
+    pub fn on_demand_default() -> Self {
+        Self {
+            enabled: true,
+            mode: Some(TrtMode::OnDemand),
+            precision: TrtPrecision::default(),
+            builder_optimization_level: default_trt_builder_optimization_level(),
+            engine_hw_compatible: false,
+            profile_min: None,
+            profile_opt: None,
+            profile_max: None,
+        }
+    }
+}
+
+/// Resolve the effective TensorRT mode for a model, applying the section-less
+/// default in ONE place so every consumer agrees.
+///
+/// - An explicit `[inference.trt]` section is honoured via
+///   [`TrtConfig::effective_mode`].
+/// - A manifest with NO section is TRT-compatible by default for ONNX models
+///   ([`TrtMode::OnDemand`]: served on CUDA, TensorRT built only on explicit
+///   warm-up) and [`TrtMode::Off`] for non-ONNX artifacts (tflite / cascade
+///   cannot lower to TensorRT).
+///
+/// Single-sourced so the `/v1/catalog` projection (`discover.rs`) and the GPU
+/// warm-up path (`engine.rs`) can never disagree (OQ-2026-07-07-1).
+pub fn resolve_trt_mode(trt: Option<&TrtConfig>, format: &str) -> TrtMode {
+    match trt {
+        Some(config) => config.effective_mode(),
+        None if format == "onnx" => TrtMode::OnDemand,
+        None => TrtMode::Off,
+    }
+}
+
+/// The `TrtConfig` to force during an explicit warm-up build, applying the
+/// section-less default. Returns `None` when the model is not TRT-eligible
+/// (explicit `off`, or a non-ONNX artifact); a section-less ONNX manifest
+/// yields [`TrtConfig::on_demand_default`] so the warm-up path lowers it to
+/// TensorRT.
+pub fn warmup_trt_config(trt: Option<&TrtConfig>, format: &str) -> Option<TrtConfig> {
+    match resolve_trt_mode(trt, format) {
+        TrtMode::Off => None,
+        _ => Some(trt.cloned().unwrap_or_else(TrtConfig::on_demand_default)),
+    }
 }
 
 fn warn_trt_mode_enabled_contradiction(mode: TrtMode, enabled: bool) {
@@ -1946,6 +1996,35 @@ audio = [1, 1, 224, 90]
         let bare_section: TrtConfig = toml::from_str("\n").unwrap();
         assert!(bare_section.enabled);
         assert_eq!(bare_section.effective_mode(), TrtMode::OnDemand);
+    }
+
+    #[test]
+    fn resolve_trt_mode_applies_section_less_default_by_format() {
+        // No [inference.trt] section: ONNX defaults on-demand, non-ONNX Off.
+        assert_eq!(resolve_trt_mode(None, "onnx"), TrtMode::OnDemand);
+        assert_eq!(resolve_trt_mode(None, "tflite"), TrtMode::Off);
+        // An explicit section is honoured regardless of format.
+        let off: TrtConfig = toml::from_str("mode = \"off\"\n").unwrap();
+        let always: TrtConfig = toml::from_str("mode = \"always\"\n").unwrap();
+        assert_eq!(resolve_trt_mode(Some(&off), "onnx"), TrtMode::Off);
+        assert_eq!(resolve_trt_mode(Some(&always), "onnx"), TrtMode::Always);
+    }
+
+    #[test]
+    fn warmup_trt_config_synthesizes_for_section_less_onnx_only() {
+        // Section-less ONNX -> a forced on-demand config so warm-up builds TRT.
+        let synth = warmup_trt_config(None, "onnx").expect("section-less onnx is warmable");
+        assert_eq!(synth.effective_mode(), TrtMode::OnDemand);
+        // Non-ONNX and explicit `off` are not warmable -> None.
+        assert!(warmup_trt_config(None, "tflite").is_none());
+        let off: TrtConfig = toml::from_str("mode = \"off\"\n").unwrap();
+        assert!(warmup_trt_config(Some(&off), "onnx").is_none());
+        // Explicit on-demand is passed through.
+        let on_demand: TrtConfig = toml::from_str("mode = \"on_demand\"\n").unwrap();
+        assert_eq!(
+            warmup_trt_config(Some(&on_demand), "onnx").map(|c| c.effective_mode()),
+            Some(TrtMode::OnDemand)
+        );
     }
 
     #[test]

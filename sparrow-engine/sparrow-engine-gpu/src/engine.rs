@@ -351,14 +351,13 @@ struct TrtWarmupFacts {
 fn trt_warmup_rejection_for_facts(
     id: &str,
     trt: Option<&sparrow_engine_types::manifest::TrtConfig>,
+    format: &str,
     facts: TrtWarmupFacts,
 ) -> Option<TrtWarmupRejection> {
     if facts.trt_disabled {
         return Some(TrtWarmupRejection::Disabled);
     }
-    let mode = trt
-        .map(|config| config.effective_mode())
-        .unwrap_or(TrtMode::Off);
+    let mode = manifest::resolve_trt_mode(trt, format);
     if mode == TrtMode::Off {
         return Some(TrtWarmupRejection::NotEligible(format!(
             "model '{id}' does not enable [inference.trt] warm-up"
@@ -414,7 +413,14 @@ fn run_trt_warmup_build(
     let _gate = recover_trt_build_gate(&build_gate);
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<LoadedModelInner> {
         let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
-        crate::trt::ep::with_trt_warmup_build(expected.manifest.trt.clone(), || {
+        // Force the effective TRT config so a section-less ONNX manifest (which
+        // resolves to on-demand, matching /v1/catalog) actually lowers to
+        // TensorRT here — not just the explicit-section models (OQ-2026-07-07-1).
+        let forced = manifest::warmup_trt_config(
+            expected.manifest.trt.as_ref(),
+            &expected.manifest.format,
+        );
+        crate::trt::ep::with_trt_warmup_build(forced, || {
             build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
         })
     }));
@@ -973,7 +979,9 @@ impl Engine {
                 std::env::var("SPARROW_ENGINE_TRT_DISABLE").ok().as_deref(),
             ),
         };
-        if let Some(rejection) = trt_warmup_rejection_for_facts(id, manifest.trt.as_ref(), facts) {
+        if let Some(rejection) =
+            trt_warmup_rejection_for_facts(id, manifest.trt.as_ref(), &manifest.format, facts)
+        {
             return Err(trt_warmup_rejected(rejection));
         }
         Ok(())
@@ -1603,6 +1611,7 @@ mod tests {
         let rejection = trt_warmup_rejection_for_facts(
             "m",
             Some(&config),
+            "onnx",
             TrtWarmupFacts {
                 sm_major: 7,
                 sm_minor: 0,
@@ -1620,6 +1629,7 @@ mod tests {
         let rejection = trt_warmup_rejection_for_facts(
             "m",
             Some(&config),
+            "onnx",
             TrtWarmupFacts {
                 sm_major: 8,
                 sm_minor: 9,
@@ -1759,6 +1769,7 @@ mod tests {
         let rejection = trt_warmup_rejection_for_facts(
             "m",
             Some(&config),
+            "onnx",
             TrtWarmupFacts {
                 sm_major: 7,
                 sm_minor: 0,
@@ -1779,6 +1790,7 @@ mod tests {
         let rejection = trt_warmup_rejection_for_facts(
             "m",
             Some(&config),
+            "onnx",
             TrtWarmupFacts {
                 sm_major: 8,
                 sm_minor: 9,
@@ -1799,6 +1811,7 @@ mod tests {
         let rejection = trt_warmup_rejection_for_facts(
             "m",
             Some(&config),
+            "onnx",
             TrtWarmupFacts {
                 sm_major: 8,
                 sm_minor: 9,
@@ -1807,6 +1820,24 @@ mod tests {
             },
         );
         assert!(rejection.is_none());
+    }
+
+    #[test]
+    fn trt_warmup_gate_accepts_section_less_onnx_and_rejects_non_onnx() {
+        // OQ-2026-07-07-1: a section-less ONNX manifest (trt = None) is warm-up
+        // eligible on capable hardware, matching the /v1/catalog projection,
+        // while a section-less non-ONNX artifact stays not-eligible.
+        let facts = TrtWarmupFacts {
+            sm_major: 8,
+            sm_minor: 9,
+            trt_libs_present: true,
+            trt_disabled: false,
+        };
+        assert!(trt_warmup_rejection_for_facts("m", None, "onnx", facts).is_none());
+        assert!(matches!(
+            trt_warmup_rejection_for_facts("m", None, "tflite", facts),
+            Some(TrtWarmupRejection::NotEligible(_))
+        ));
     }
 
     fn dummy_pipeline_manifest(id: &str) -> PipelineManifest {

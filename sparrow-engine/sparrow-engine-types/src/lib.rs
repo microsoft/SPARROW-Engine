@@ -26,7 +26,8 @@ pub use model_type::derive_model_type;
 pub use preprocess_meta::{PreprocessConfig, PreprocessMeta};
 pub use engine_config::EngineConfig;
 pub use manifest::{
-    ModelManifest, PipelineManifest, ProvenanceRecord, TrtConfig, TrtMode, TrtPrecision,
+    resolve_trt_mode, warmup_trt_config, ModelManifest, PipelineManifest, ProvenanceRecord,
+    TrtConfig, TrtMode, TrtPrecision,
 };
 pub use drift_metrics::{DriftMetrics, DriftReference};
 pub use inference_log::{InferenceLogRecord, SCHEMA_VERSION};

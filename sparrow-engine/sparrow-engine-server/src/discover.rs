@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine_dispatch::manifest::{self, PipelineManifest, PipelineRole};
-use crate::engine_dispatch::{derive_model_type, ModelInfo, TrtMode};
+use crate::engine_dispatch::{derive_model_type, resolve_trt_mode, ModelInfo, TrtMode};
 
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
@@ -100,25 +100,11 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                 // duplicate-on-insert is unreachable from sibling directories.
                 let model_type =
                     derive_model_type(&m.preprocess_method, &m.postprocess_method, m.subtype);
-                // A manifest with no [inference.trt] section is TRT-compatible by
-                // default: served on CUDA, with TensorRT built only on explicit
-                // warm-up (OnDemand). Genuinely TRT-incompatible models (raw-audio
-                // in-graph DFT, OWL open-vocab transformer) opt out with an explicit
-                // `mode = "off"`. Non-ONNX artifacts (tflite/cascade) cannot be
-                // lowered to TensorRT at all, so a section-less one stays Off.
-                // (OQ-2026-07-07-1: the old blanket Off default made section-less
-                // manifests project as `Unsupported` on /v1/catalog.)
-                let trt_mode = m
-                    .trt
-                    .as_ref()
-                    .map(|trt| trt.effective_mode())
-                    .unwrap_or_else(|| {
-                        if m.format == "onnx" {
-                            TrtMode::OnDemand
-                        } else {
-                            TrtMode::Off
-                        }
-                    });
+                // Section-less default is single-sourced in `resolve_trt_mode`
+                // so the catalog projection and the GPU warm-up path never
+                // disagree (OQ-2026-07-07-1): a section-less ONNX manifest is
+                // TRT-compatible on-demand; non-ONNX (tflite/cascade) is Off.
+                let trt_mode = resolve_trt_mode(m.trt.as_ref(), &m.format);
                 catalog.model_formats.insert(id.clone(), m.format.clone());
                 catalog.trt_modes.insert(id.clone(), trt_mode);
                 catalog.models.insert(
