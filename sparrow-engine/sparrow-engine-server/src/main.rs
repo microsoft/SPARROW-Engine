@@ -5,7 +5,7 @@ use clap::Parser;
 use sparrow_engine_server::cli::{Cli, Command};
 use sparrow_engine_server::config::{Config, LogFormat};
 use sparrow_engine_server::discover::{discover_catalog, parse_preload_ids, Catalog};
-use sparrow_engine_server::engine_dispatch::{Device, Engine, EngineConfig};
+use sparrow_engine_server::engine_dispatch::{Device, Engine, EngineConfig, SparrowEngineError};
 use sparrow_engine_server::router;
 use sparrow_engine_server::state::AppState;
 use tokio::net::TcpListener;
@@ -119,11 +119,20 @@ async fn run_server() {
     };
     for model_id in preload_ids {
         if let Err(e) = engine.get_or_load_model(&model_id) {
-            if preload_all_requested {
+            // A model that is in the catalog but cannot load in THIS server
+            // flavor (e.g. a TFLite id on the desktop ORT server) is a known
+            // deployment limitation, not a user error — skip it with a warning
+            // whether it was requested via `all` or named explicitly. Unknown /
+            // typo'd ids were already rejected by parse_preload_ids above, so an
+            // explicit id reaching here is in-catalog. Any OTHER load error
+            // (corrupt model, OOM, …) still aborts boot. (OQ-2026-07-06-6.)
+            let flavor_incompatible =
+                matches!(e, SparrowEngineError::UnsupportedFormat { .. });
+            if preload_all_requested || flavor_incompatible {
                 warn!(
                     model_id = %model_id,
                     error = %e,
-                    "SPARROW_ENGINE_PRELOAD=all skipped model unsupported by this server flavor"
+                    "skipping preload of model unsupported by this server flavor"
                 );
                 continue;
             }
