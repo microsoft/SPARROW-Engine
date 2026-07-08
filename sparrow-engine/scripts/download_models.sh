@@ -242,11 +242,37 @@ for i in "${!IDS[@]}"; do
   echo ""
   echo "==> ${m}"
 
-  # Skip only if the model is already fully present. `manifest.toml` covers
-  # onnx/tflite models; `pipeline.toml` covers cascade descriptors.
+  # The catalog's current expected MD5 for this ZIP (empty when verification
+  # is off or the record API published none for it).
+  expected_md5="${MD5[$zipname]:-}"
+
+  # Decide whether an already-present model is still current. A re-publish
+  # under the same id (e.g. a manifest fix) keeps the local dir in place, so a
+  # bare "skip if the dir exists" would silently serve a stale copy
+  # (OQ-2026-07-06-12). Each install is stamped with its verified ZIP MD5;
+  # here we re-fetch when the catalog's MD5 no longer matches that stamp.
+  # `manifest.toml` covers onnx/tflite models; `pipeline.toml` covers cascade
+  # descriptors.
   if [[ $FORCE -eq 0 ]] && [[ -f "$DEST/$m/manifest.toml" || -f "$DEST/$m/pipeline.toml" ]]; then
-    echo "  already present; skipping. Use --force to re-download."
-    continue
+    stamp_file="$DEST/$m/.sparrow_zip_md5"
+    if [[ $VERIFY -eq 1 && -n "$expected_md5" ]]; then
+      recorded_md5="$(cat "$stamp_file" 2>/dev/null || true)"
+      if [[ "$recorded_md5" == "$expected_md5" ]]; then
+        echo "  already present (checksum up to date); skipping. Use --force to re-download."
+        continue
+      elif [[ -z "$recorded_md5" ]]; then
+        echo "  already present but not checksum-stamped (installed by an older"
+        echo "  downloader); skipping. Use --force to re-download and stamp it."
+        continue
+      else
+        echo "  local copy is STALE — the published checksum changed; re-downloading."
+        echo "    (stamped ${recorded_md5}, catalog now ${expected_md5})"
+        # fall through to re-download
+      fi
+    else
+      echo "  already present; skipping (checksum not verified — use --force to re-download)."
+      continue
+    fi
   fi
 
   ZIP_URL="$ZENODO_BASE/${zipname}"
@@ -258,8 +284,7 @@ for i in "${!IDS[@]}"; do
   # MD5 verification against the Zenodo record API (v0.10.0 records ship no
   # checksums.sha256 file; the per-file API md5 is the source of truth).
   if [[ $VERIFY -eq 1 ]]; then
-    expected="${MD5[$zipname]:-}"
-    if [[ -z "$expected" ]]; then
+    if [[ -z "$expected_md5" ]]; then
       # The API returned checksums for other files but none for this one — a
       # genuine integrity gap. Fail closed (use --no-verify to override).
       echo "  [FAIL] no MD5 published for ${zipname}; refusing to install unverified." >&2
@@ -268,10 +293,10 @@ for i in "${!IDS[@]}"; do
       exit 1
     fi
     actual="$(md5sum "$ZIP_PATH" | awk '{print $1}')"
-    if [[ "$actual" == "$expected" ]]; then
+    if [[ "$actual" == "$expected_md5" ]]; then
       echo "  [OK] MD5 verified"
     else
-      echo "  [FAIL] MD5 mismatch for ${zipname} (expected ${expected}, got ${actual})" >&2
+      echo "  [FAIL] MD5 mismatch for ${zipname} (expected ${expected_md5}, got ${actual})" >&2
       echo "         download is corrupt or tampered; aborting." >&2
       rm -f "$ZIP_PATH"
       exit 1
@@ -294,6 +319,12 @@ for i in "${!IDS[@]}"; do
     # Guarded: $m is always a non-empty catalog id, but :? aborts if it isn't.
     rm -rf "${DEST:?}/${m:?}"
     mv "$STAGE/$m" "$DEST/$m"
+    # Stamp the install with the verified ZIP MD5 so a later run can detect a
+    # re-publish under the same id and re-fetch (OQ-2026-07-06-12). Only written
+    # when a checksum was actually verified.
+    if [[ $VERIFY -eq 1 && -n "$expected_md5" ]]; then
+      printf '%s\n' "$expected_md5" > "$DEST/$m/.sparrow_zip_md5"
+    fi
   else
     echo "  WARN: ${zipname} did not contain ${m}/ at its root; not installed." >&2
   fi
