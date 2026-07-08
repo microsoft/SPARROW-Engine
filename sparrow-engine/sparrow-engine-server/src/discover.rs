@@ -100,11 +100,25 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                 // duplicate-on-insert is unreachable from sibling directories.
                 let model_type =
                     derive_model_type(&m.preprocess_method, &m.postprocess_method, m.subtype);
+                // A manifest with no [inference.trt] section is TRT-compatible by
+                // default: served on CUDA, with TensorRT built only on explicit
+                // warm-up (OnDemand). Genuinely TRT-incompatible models (raw-audio
+                // in-graph DFT, OWL open-vocab transformer) opt out with an explicit
+                // `mode = "off"`. Non-ONNX artifacts (tflite/cascade) cannot be
+                // lowered to TensorRT at all, so a section-less one stays Off.
+                // (OQ-2026-07-07-1: the old blanket Off default made section-less
+                // manifests project as `Unsupported` on /v1/catalog.)
                 let trt_mode = m
                     .trt
                     .as_ref()
                     .map(|trt| trt.effective_mode())
-                    .unwrap_or(TrtMode::Off);
+                    .unwrap_or_else(|| {
+                        if m.format == "onnx" {
+                            TrtMode::OnDemand
+                        } else {
+                            TrtMode::Off
+                        }
+                    });
                 catalog.model_formats.insert(id.clone(), m.format.clone());
                 catalog.trt_modes.insert(id.clone(), trt_mode);
                 catalog.models.insert(
@@ -776,6 +790,90 @@ model = "{classifier2}"
             !catalog.pipelines.contains_key("mixed"),
             "pipeline with audio classifier trailing an image classifier must be excluded from catalog"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn section_less_manifest_trt_mode_defaults_by_format() {
+        // OQ-2026-07-07-1: a manifest with no [inference.trt] section is
+        // TRT-compatible by default (OnDemand) for ONNX, so /v1/catalog stops
+        // mislabeling it "unsupported". Explicit `mode = "off"` still opts out,
+        // and a section-less non-ONNX (tflite) artifact stays Off.
+        let dir = unique_dir("trt_default_mode_by_format");
+
+        // (a) section-less ONNX detector -> OnDemand
+        write_detector_manifest(&dir, "plain-onnx", "plain-onnx", None);
+
+        // (b) explicit `[inference.trt] mode = "off"` ONNX classifier -> Off
+        let off_dir = dir.join("explicit-off");
+        fs::create_dir_all(&off_dir).unwrap();
+        fs::write(
+            off_dir.join("manifest.toml"),
+            r#"[model]
+id = "explicit-off"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [480, 480]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[inference.trt]
+mode = "off"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#,
+        )
+        .unwrap();
+
+        // (c) section-less non-ONNX (tflite) -> Off (can't lower to TensorRT)
+        let tflite_dir = dir.join("mobile-tflite");
+        fs::create_dir_all(&tflite_dir).unwrap();
+        fs::write(
+            tflite_dir.join("manifest.toml"),
+            r#"[model]
+id = "mobile-tflite"
+format = "tflite"
+file = "model.tflite"
+
+[preprocessing]
+method = "resize"
+input_size = [480, 480]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#,
+        )
+        .unwrap();
+
+        let catalog = discover_catalog(&dir);
+        // All three manifests must load (so the format-branch is actually exercised).
+        assert!(catalog.models.contains_key("plain-onnx"));
+        assert!(catalog.models.contains_key("explicit-off"));
+        assert!(catalog.models.contains_key("mobile-tflite"));
+
+        assert_eq!(catalog.trt_mode("plain-onnx"), TrtMode::OnDemand);
+        assert_eq!(catalog.trt_mode("explicit-off"), TrtMode::Off);
+        assert_eq!(catalog.trt_mode("mobile-tflite"), TrtMode::Off);
         let _ = fs::remove_dir_all(dir);
     }
 }
