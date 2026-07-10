@@ -160,6 +160,9 @@ mod tests {
             training_dataset_id: Some("ds-2026-04-camera-trap-r1".to_string()),
             training_experiment_id: Some("exp-mdv6-fp16-r3".to_string()),
             training_repo_commit: Some("9c4b6a3".to_string()),
+            developer: None,
+            owner: None,
+            ai4g_relationship: None,
         });
         let json_str = serde_json::to_string(&record).expect("serialize");
         assert!(
