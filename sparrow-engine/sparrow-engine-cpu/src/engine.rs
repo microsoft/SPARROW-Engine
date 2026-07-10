@@ -1333,6 +1333,8 @@ mod tests {
                     model: "classifier-model".to_string(),
                 },
             ],
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
+            provenance: None,
         }
     }
 
@@ -1752,6 +1754,7 @@ mod tests {
             description: None,
             provenance: None,
             drift_reference: None,
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
         })
     }
 

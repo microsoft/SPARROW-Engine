@@ -1853,6 +1853,8 @@ mod tests {
                     model: "classifier-model".to_string(),
                 },
             ],
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
+            provenance: None,
         }
     }
 

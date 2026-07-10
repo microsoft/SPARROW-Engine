@@ -242,6 +242,7 @@ mod tests {
             description: None,
             provenance: None,
             drift_reference: None,
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
         }
     }
 

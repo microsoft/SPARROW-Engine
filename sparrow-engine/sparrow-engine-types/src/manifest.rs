@@ -494,6 +494,11 @@ pub struct ModelManifest {
     /// distribution against which per-request `DriftMetrics::class_distribution_psi`
     /// is computed. `None` ⇒ PSI is `None` in every request's drift snapshot.
     pub drift_reference: Option<DriftReference>,
+
+    /// Backward-compatible catalog metadata parsed from flat keys inside
+    /// `[model]` (model-zoo metadata update, additive 2026-07). Defaults to an
+    /// all-empty `CatalogMetadata` for manifests that carry none of the keys.
+    pub catalog_metadata: CatalogMetadata,
 }
 
 /// A single step in a pipeline.
@@ -515,6 +520,16 @@ pub enum PipelineRole {
 pub struct PipelineManifest {
     pub id: String,
     pub steps: Vec<PipelineStep>,
+
+    /// Backward-compatible catalog metadata parsed from flat keys inside
+    /// `[pipeline]` (model-zoo metadata update, additive 2026-07). Defaults to
+    /// an all-empty `CatalogMetadata` for pipelines that carry none of the keys.
+    pub catalog_metadata: CatalogMetadata,
+
+    /// Optional `[provenance]` section on a pipeline manifest (additive
+    /// 2026-07). Mirrors the model-manifest provenance surface; `None` when the
+    /// pipeline omits the section.
+    pub provenance: Option<ProvenanceRecord>,
 }
 
 /// Optional `[provenance]` section on a model manifest — three pointer fields
@@ -538,6 +553,115 @@ pub struct ProvenanceRecord {
     pub training_experiment_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub training_repo_commit: Option<String>,
+
+    /// Model-zoo attribution (additive, 2026-07). Organization that trained /
+    /// developed the model. Optional; catalog validation (not this generic
+    /// parser) owns any controlled-vocabulary rule on the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer: Option<String>,
+    /// Model-zoo attribution (additive, 2026-07). Organization that owns /
+    /// stewards the model. Optional; catalog validation owns vocabulary rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Model-zoo attribution (additive, 2026-07). Relationship of the model to
+    /// the AI for Good (AI4G) program. Optional; unknown strings fail the
+    /// manifest/pipeline parse with a contextual error rather than panicking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai4g_relationship: Option<Ai4gRelationship>,
+}
+
+/// Geographic applicability scope of a model (model-zoo catalog metadata,
+/// additive 2026-07). Serialized as snake_case (`global` | `regional` |
+/// `foundational`) on both the TOML manifest surface and the JSON catalog API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeoScope {
+    /// Applies worldwide; `geo_regions` must be empty.
+    Global,
+    /// Applies to specific regions; `geo_regions` must be non-empty.
+    Regional,
+    /// A foundational / backbone model with no geographic specialization;
+    /// `geo_regions` must be empty.
+    Foundational,
+}
+
+impl GeoScope {
+    /// Parse a manifest string value into a `GeoScope`. Returns `None` for
+    /// unknown strings so the caller can raise a contextual
+    /// manifest/pipeline error instead of a raw serde/TOML error.
+    fn parse_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "global" => Some(Self::Global),
+            "regional" => Some(Self::Regional),
+            "foundational" => Some(Self::Foundational),
+            _ => None,
+        }
+    }
+}
+
+/// Relationship of a model to the AI for Good (AI4G) program (model-zoo catalog
+/// metadata, additive 2026-07). Serialized as snake_case (`first_party` |
+/// `third_party` | `unverified`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ai4gRelationship {
+    /// Developed inside the AI4G program.
+    FirstParty,
+    /// Developed by a third party, integrated into the catalog.
+    ThirdParty,
+    /// Relationship not yet verified.
+    Unverified,
+}
+
+impl Ai4gRelationship {
+    /// Parse a manifest string value into an `Ai4gRelationship`. Returns `None`
+    /// for unknown strings so the caller can raise a contextual
+    /// manifest/pipeline error instead of a raw serde/TOML error.
+    fn parse_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "first_party" => Some(Self::FirstParty),
+            "third_party" => Some(Self::ThirdParty),
+            "unverified" => Some(Self::Unverified),
+            _ => None,
+        }
+    }
+}
+
+/// Backward-compatible catalog metadata shared by model and pipeline manifests
+/// (model-zoo metadata update, additive 2026-07). Every field is optional /
+/// defaultable; a descriptor carrying none of these keys loads unchanged.
+///
+/// Parsed from FLAT keys inside `[model]` (model manifests) or `[pipeline]`
+/// (pipeline manifests). The engine round-trips these values; controlled-
+/// vocabulary content rules (e.g. which organizations are allowed) live in the
+/// catalog-integrity layer, not this generic parser.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogMetadata {
+    /// Human-facing display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Family tags (e.g. detector family). Missing key => empty vec. Values
+    /// must be non-empty and unique.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family: Vec<String>,
+    /// Whether the model predicts species directly (`true`) or requires a
+    /// detector gate class (`false`). `None` when unspecified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub species_direct: Option<bool>,
+    /// Detector gate class this model gates on. Required iff
+    /// `species_direct == Some(false)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_gate_class: Option<String>,
+    /// Geographic scope. Governs the `geo_regions` / `geo_locality` rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo_scope: Option<GeoScope>,
+    /// Region IDs (lowercase snake_case ASCII slugs). Missing key => empty vec.
+    /// Non-empty only for `geo_scope = regional`; values must be unique.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geo_regions: Vec<String>,
+    /// Free-form locality label, valid only for `geo_scope = regional`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo_locality: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +699,10 @@ struct RawDriftReference {
 
 /// Raw TOML mirror of `ProvenanceRecord`. Each field is `#[serde(default)]`
 /// so missing entries become `None` instead of failing the parse.
+///
+/// `ai4g_relationship` is parsed as a raw `String` (not the enum) so an unknown
+/// value yields a contextual `InvalidManifest`/`InvalidPipeline` error at
+/// conversion time rather than an opaque `TomlParse` error.
 #[derive(Deserialize, Default)]
 struct RawProvenance {
     #[serde(default)]
@@ -583,6 +711,29 @@ struct RawProvenance {
     training_experiment_id: Option<String>,
     #[serde(default)]
     training_repo_commit: Option<String>,
+    #[serde(default)]
+    developer: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    ai4g_relationship: Option<String>,
+}
+
+/// Owned bundle of the raw flat catalog-metadata keys pulled from `[model]` or
+/// `[pipeline]`. Not a `Deserialize` target itself — the keys are parsed as
+/// flat fields on `RawModel` / `RawPipeline` (the manifest surface is flat, not
+/// nested), then moved into this bundle for the shared `build_catalog_metadata`
+/// validation path. `geo_scope` stays a raw `String` for the same contextual-
+/// error reason as `RawProvenance::ai4g_relationship`.
+#[derive(Default)]
+struct RawCatalogMetadata {
+    display_name: Option<String>,
+    family: Vec<String>,
+    species_direct: Option<bool>,
+    detector_gate_class: Option<String>,
+    geo_scope: Option<String>,
+    geo_regions: Vec<String>,
+    geo_locality: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -609,6 +760,22 @@ struct RawModel {
     version: Option<String>,
     #[serde(default)]
     description: Option<String>,
+
+    // -- Flat catalog-metadata keys inside [model] (additive 2026-07) --
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    family: Vec<String>,
+    #[serde(default)]
+    species_direct: Option<bool>,
+    #[serde(default)]
+    detector_gate_class: Option<String>,
+    #[serde(default)]
+    geo_scope: Option<String>,
+    #[serde(default)]
+    geo_regions: Vec<String>,
+    #[serde(default)]
+    geo_locality: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -719,12 +886,32 @@ struct RawPipelineToml {
     pipeline: RawPipeline,
     /// Present if this is actually a model manifest (used for discrimination).
     model: Option<toml::Value>,
+    /// Optional `[provenance]` section (additive 2026-07) — pipelines gained a
+    /// provenance surface mirroring model manifests.
+    #[serde(default)]
+    provenance: Option<RawProvenance>,
 }
 
 #[derive(Deserialize)]
 struct RawPipeline {
     id: String,
     steps: Vec<RawPipelineStep>,
+
+    // -- Flat catalog-metadata keys inside [pipeline] (additive 2026-07) --
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    family: Vec<String>,
+    #[serde(default)]
+    species_direct: Option<bool>,
+    #[serde(default)]
+    detector_gate_class: Option<String>,
+    #[serde(default)]
+    geo_scope: Option<String>,
+    #[serde(default)]
+    geo_regions: Vec<String>,
+    #[serde(default)]
+    geo_locality: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1427,12 +1614,27 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         }
     };
 
-    // -- Round-trip optional [provenance] section (Phase 4 W1) --
-    let provenance = raw.provenance.map(|p| ProvenanceRecord {
-        training_dataset_id: p.training_dataset_id,
-        training_experiment_id: p.training_experiment_id,
-        training_repo_commit: p.training_repo_commit,
-    });
+    // -- Build + validate optional [provenance] section. Phase 4 W1 pointer
+    // fields are preserved; developer/owner/ai4g_relationship are additive
+    // (model-zoo metadata, 2026-07). --
+    let provenance = raw
+        .provenance
+        .map(build_provenance_record)
+        .transpose()
+        .map_err(SparrowEngineError::InvalidManifest)?;
+
+    // -- Build + validate flat catalog-metadata keys from [model]
+    // (model-zoo metadata, 2026-07). Absent keys ⇒ CatalogMetadata::default(). --
+    let catalog_metadata = build_catalog_metadata(RawCatalogMetadata {
+        display_name: raw.model.display_name,
+        family: raw.model.family,
+        species_direct: raw.model.species_direct,
+        detector_gate_class: raw.model.detector_gate_class,
+        geo_scope: raw.model.geo_scope,
+        geo_regions: raw.model.geo_regions,
+        geo_locality: raw.model.geo_locality,
+    })
+    .map_err(SparrowEngineError::InvalidManifest)?;
 
     // -- Round-trip optional [drift_reference] section (Phase 4 W4) --
     let drift_reference = raw.drift_reference.map(|d| DriftReference {
@@ -1516,6 +1718,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         description: raw.model.description,
         provenance,
         drift_reference,
+        catalog_metadata,
     })
 }
 
@@ -1578,9 +1781,31 @@ pub fn load_pipeline_manifest(path: &Path) -> Result<PipelineManifest> {
         )));
     }
 
+    // -- Build + validate flat catalog-metadata keys from [pipeline]
+    // (model-zoo metadata, 2026-07). Absent keys ⇒ CatalogMetadata::default(). --
+    let catalog_metadata = build_catalog_metadata(RawCatalogMetadata {
+        display_name: raw.pipeline.display_name,
+        family: raw.pipeline.family,
+        species_direct: raw.pipeline.species_direct,
+        detector_gate_class: raw.pipeline.detector_gate_class,
+        geo_scope: raw.pipeline.geo_scope,
+        geo_regions: raw.pipeline.geo_regions,
+        geo_locality: raw.pipeline.geo_locality,
+    })
+    .map_err(SparrowEngineError::InvalidPipeline)?;
+
+    // -- Build + validate optional [provenance] section (additive 2026-07). --
+    let provenance = raw
+        .provenance
+        .map(build_provenance_record)
+        .transpose()
+        .map_err(SparrowEngineError::InvalidPipeline)?;
+
     Ok(PipelineManifest {
         id: raw.pipeline.id,
         steps,
+        catalog_metadata,
+        provenance,
     })
 }
 
@@ -1706,13 +1931,178 @@ fn validate_trt_config(trt: &Option<TrtConfig>) -> Result<()> {
     Ok(())
 }
 
+/// Validate that an optional string, when present, is not empty or
+/// whitespace-only. Returns the value unchanged on success. Used for the
+/// catalog / provenance optional string fields (model-zoo metadata, 2026-07).
+fn validate_opt_nonblank(
+    value: Option<String>,
+    field: &str,
+) -> std::result::Result<Option<String>, String> {
+    match value {
+        Some(s) if s.trim().is_empty() => Err(format!("{field} must not be empty or whitespace")),
+        other => Ok(other),
+    }
+}
+
+/// True if any value appears more than once (order-preserving uniqueness check).
+fn has_duplicates(items: &[String]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    items.iter().any(|item| !seen.insert(item.as_str()))
+}
+
+/// True if `s` is a lowercase snake_case ASCII slug: starts with `[a-z]`, then
+/// any of `[a-z0-9_]`. Used for geography region IDs.
+fn is_geo_region_slug(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    s.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Build and validate a `CatalogMetadata` from the raw flat manifest keys.
+///
+/// Returns an error *message* (not a typed error) so the caller can wrap it in
+/// the descriptor-appropriate variant — `InvalidManifest` for model manifests,
+/// `InvalidPipeline` for pipeline manifests. Enforces the model-zoo metadata
+/// content rules (non-blank / uniqueness / slug / geography-scope coherence /
+/// species-gate coherence). Descriptors carrying none of the keys validate to
+/// `CatalogMetadata::default()`.
+fn build_catalog_metadata(raw: RawCatalogMetadata) -> std::result::Result<CatalogMetadata, String> {
+    let display_name = validate_opt_nonblank(raw.display_name, "display_name")?;
+
+    // -- family: non-blank + unique --
+    for value in &raw.family {
+        if value.trim().is_empty() {
+            return Err("family values must not be empty or whitespace".to_string());
+        }
+    }
+    if has_duplicates(&raw.family) {
+        return Err("family values must be unique".to_string());
+    }
+    let family = raw.family;
+
+    let species_direct = raw.species_direct;
+    let detector_gate_class =
+        validate_opt_nonblank(raw.detector_gate_class, "detector_gate_class")?;
+
+    // -- geo_scope: unknown strings fail with a contextual error, not a panic --
+    let geo_scope = match raw.geo_scope {
+        None => None,
+        Some(s) => Some(GeoScope::parse_manifest_value(&s).ok_or_else(|| {
+            format!("Unknown geo_scope: '{s}' (expected 'global', 'regional', or 'foundational')")
+        })?),
+    };
+
+    // -- geo_regions: non-blank + slug + unique --
+    for value in &raw.geo_regions {
+        if value.trim().is_empty() {
+            return Err("geo_regions values must not be empty or whitespace".to_string());
+        }
+        if !is_geo_region_slug(value) {
+            return Err(format!(
+                "geo_regions value '{value}' must be a lowercase snake_case ASCII slug"
+            ));
+        }
+    }
+    if has_duplicates(&raw.geo_regions) {
+        return Err("geo_regions values must be unique".to_string());
+    }
+    let geo_regions = raw.geo_regions;
+
+    let geo_locality = validate_opt_nonblank(raw.geo_locality, "geo_locality")?;
+
+    // -- Cross-field geography coherence --
+    match geo_scope {
+        None => {
+            if !geo_regions.is_empty() {
+                return Err("geo_regions requires a geo_scope".to_string());
+            }
+            if geo_locality.is_some() {
+                return Err("geo_locality requires a geo_scope".to_string());
+            }
+        }
+        Some(GeoScope::Regional) => {
+            if geo_regions.is_empty() {
+                return Err(
+                    "geo_scope = 'regional' requires at least one geo_regions value".to_string(),
+                );
+            }
+        }
+        Some(GeoScope::Global) | Some(GeoScope::Foundational) => {
+            if !geo_regions.is_empty() {
+                return Err(
+                    "geo_scope = 'global' or 'foundational' requires an empty geo_regions list"
+                        .to_string(),
+                );
+            }
+            if geo_locality.is_some() {
+                return Err("geo_locality is only valid for geo_scope = 'regional'".to_string());
+            }
+        }
+    }
+
+    // -- species_direct / detector_gate_class coherence --
+    match (species_direct, detector_gate_class.is_some()) {
+        (Some(false), false) => {
+            return Err("species_direct = false requires detector_gate_class".to_string());
+        }
+        (Some(true), true) => {
+            return Err("species_direct = true forbids detector_gate_class".to_string());
+        }
+        (None, true) => {
+            return Err("detector_gate_class requires species_direct = false".to_string());
+        }
+        _ => {}
+    }
+
+    Ok(CatalogMetadata {
+        display_name,
+        family,
+        species_direct,
+        detector_gate_class,
+        geo_scope,
+        geo_regions,
+        geo_locality,
+    })
+}
+
+/// Build and validate a `ProvenanceRecord` from a raw `[provenance]` section.
+///
+/// Returns an error *message* so the caller can wrap it in the descriptor-
+/// appropriate variant. The three training pointer fields are round-tripped
+/// verbatim (never interpreted). `developer` / `owner` must be non-blank when
+/// present; the generic parser deliberately does NOT enforce any organization-
+/// name vocabulary (catalog integrity owns that content rule).
+/// `ai4g_relationship` unknown strings fail with a contextual error.
+fn build_provenance_record(raw: RawProvenance) -> std::result::Result<ProvenanceRecord, String> {
+    let developer = validate_opt_nonblank(raw.developer, "developer")?;
+    let owner = validate_opt_nonblank(raw.owner, "owner")?;
+    let ai4g_relationship = match raw.ai4g_relationship {
+        None => None,
+        Some(s) => Some(Ai4gRelationship::parse_manifest_value(&s).ok_or_else(|| {
+            format!(
+                "Unknown ai4g_relationship: '{s}' (expected 'first_party', 'third_party', or 'unverified')"
+            )
+        })?),
+    };
+    Ok(ProvenanceRecord {
+        training_dataset_id: raw.training_dataset_id,
+        training_experiment_id: raw.training_experiment_id,
+        training_repo_commit: raw.training_repo_commit,
+        developer,
+        owner,
+        ai4g_relationship,
+    })
+}
+
 /// Reject paths containing parent-directory components (`..`) or absolute prefixes.
 ///
 /// Uses `Path::components()` so filenames like `model..v2.onnx` pass cleanly.
 fn reject_unsafe_path(p: &str, field: &str) -> Result<()> {
     let path = Path::new(p);
-
-    // Reject absolute paths (Unix `/…` or Windows `C:\…`, `\\…`).
     if path.is_absolute() || p.starts_with('\\') {
         return Err(SparrowEngineError::PathTraversal(format!(
             "{field}: absolute path not allowed: '{p}'"
@@ -4396,5 +4786,378 @@ format = "one_per_line"
             "empty inline table must yield empty BTreeMap, got {} entries",
             r.class_distribution.len()
         );
+    }
+
+    // -- Catalog metadata + extended provenance (model-zoo update, 2026-07) --
+
+    /// Load a model manifest whose `[model]` section is augmented with the
+    /// given extra lines (flat catalog-metadata keys). Returns the raw result
+    /// so both success and error paths can be asserted.
+    fn load_model_with_meta(extra_model_lines: &str) -> Result<ModelManifest> {
+        let toml = format!(
+            r#"
+[model]
+id = "m"
+format = "onnx"
+file = "model.onnx"
+{extra_model_lines}
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+pad_value = 0.5
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+confidence_threshold = 0.2
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+        );
+        let dir = write_temp_file("manifest.toml", &toml);
+        load_manifest(&dir.path().join("manifest.toml"))
+    }
+
+    /// Load a pipeline manifest whose `[pipeline]` section is augmented with the
+    /// given extra lines (flat catalog-metadata keys).
+    fn load_pipeline_with_meta(extra_pipeline_lines: &str) -> Result<PipelineManifest> {
+        let toml = format!(
+            r#"
+[pipeline]
+id = "p"
+{extra_pipeline_lines}
+
+[[pipeline.steps]]
+role = "detector"
+model = "d"
+"#
+        );
+        let dir = write_temp_file("pipeline.toml", &toml);
+        load_pipeline_manifest(&dir.path().join("pipeline.toml"))
+    }
+
+    #[test]
+    fn catalog_metadata_full_model_round_trip() {
+        let toml = r#"
+[model]
+id = "megadetector-v6"
+format = "onnx"
+file = "model.onnx"
+display_name = "MegaDetector v6"
+family = ["megadetector", "yolo"]
+species_direct = false
+detector_gate_class = "animal"
+geo_scope = "regional"
+geo_regions = ["north_america", "south_america"]
+geo_locality = "Pacific Northwest"
+
+[preprocessing]
+method = "letterbox"
+input_size = [1280, 1280]
+layout = "nchw"
+normalization = "unit"
+pad_value = 0.447
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+confidence_threshold = 0.2
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+
+[provenance]
+training_dataset_id = "ds-1"
+training_experiment_id = "exp-1"
+training_repo_commit = "abc123"
+developer = "AI4G"
+owner = "Conservation Org"
+ai4g_relationship = "first_party"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        let cm = &m.catalog_metadata;
+        assert_eq!(cm.display_name.as_deref(), Some("MegaDetector v6"));
+        assert_eq!(cm.family, vec!["megadetector", "yolo"]);
+        assert_eq!(cm.species_direct, Some(false));
+        assert_eq!(cm.detector_gate_class.as_deref(), Some("animal"));
+        assert_eq!(cm.geo_scope, Some(GeoScope::Regional));
+        assert_eq!(cm.geo_regions, vec!["north_america", "south_america"]);
+        assert_eq!(cm.geo_locality.as_deref(), Some("Pacific Northwest"));
+
+        let p = m.provenance.expect("provenance present");
+        assert_eq!(p.training_dataset_id.as_deref(), Some("ds-1"));
+        assert_eq!(p.training_experiment_id.as_deref(), Some("exp-1"));
+        assert_eq!(p.training_repo_commit.as_deref(), Some("abc123"));
+        assert_eq!(p.developer.as_deref(), Some("AI4G"));
+        assert_eq!(p.owner.as_deref(), Some("Conservation Org"));
+        assert_eq!(p.ai4g_relationship, Some(Ai4gRelationship::FirstParty));
+    }
+
+    #[test]
+    fn catalog_metadata_full_pipeline_round_trip() {
+        let toml = r#"
+[pipeline]
+id = "megadet-deepfaune"
+display_name = "MegaDetector + DeepFaune"
+family = ["wildlife"]
+species_direct = true
+geo_scope = "global"
+
+[[pipeline.steps]]
+role = "detector"
+model = "megadetector-v6-yolov9c"
+
+[[pipeline.steps]]
+role = "classifier"
+model = "deepfaune-v1"
+
+[provenance]
+developer = "AI4G"
+owner = "AI4G"
+ai4g_relationship = "third_party"
+"#;
+        let dir = write_temp_file("pipeline.toml", toml);
+        let pl = load_pipeline_manifest(&dir.path().join("pipeline.toml")).unwrap();
+
+        let cm = &pl.catalog_metadata;
+        assert_eq!(cm.display_name.as_deref(), Some("MegaDetector + DeepFaune"));
+        assert_eq!(cm.family, vec!["wildlife"]);
+        assert_eq!(cm.species_direct, Some(true));
+        assert_eq!(cm.detector_gate_class, None);
+        assert_eq!(cm.geo_scope, Some(GeoScope::Global));
+        assert!(cm.geo_regions.is_empty());
+        assert_eq!(cm.geo_locality, None);
+
+        let p = pl.provenance.expect("provenance present");
+        assert_eq!(p.developer.as_deref(), Some("AI4G"));
+        assert_eq!(p.owner.as_deref(), Some("AI4G"));
+        assert_eq!(p.ai4g_relationship, Some(Ai4gRelationship::ThirdParty));
+        // Training pointer fields absent ⇒ None, no interference with the
+        // additive attribution fields.
+        assert_eq!(p.training_dataset_id, None);
+    }
+
+    #[test]
+    fn catalog_metadata_absent_defaults_model() {
+        // A manifest with none of the new keys loads with an all-empty
+        // CatalogMetadata and no provenance (backward compatibility).
+        let m = load_model_with_meta("").unwrap();
+        assert_eq!(m.catalog_metadata, CatalogMetadata::default());
+        assert_eq!(m.provenance, None);
+    }
+
+    #[test]
+    fn catalog_metadata_absent_defaults_pipeline() {
+        let pl = load_pipeline_with_meta("").unwrap();
+        assert_eq!(pl.catalog_metadata, CatalogMetadata::default());
+        assert_eq!(pl.provenance, None);
+    }
+
+    #[test]
+    fn catalog_metadata_unknown_geo_scope_errors_model() {
+        let err = load_model_with_meta("geo_scope = \"continental\"").unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidManifest(ref s) if s.contains("geo_scope")),
+            "expected contextual InvalidManifest, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_metadata_unknown_ai4g_relationship_errors_model() {
+        let toml = r#"
+[model]
+id = "m"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+pad_value = 0.5
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+confidence_threshold = 0.2
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+
+[provenance]
+ai4g_relationship = "partner"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidManifest(ref s) if s.contains("ai4g_relationship")),
+            "expected contextual InvalidManifest, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_metadata_unknown_geo_scope_errors_pipeline() {
+        let err = load_pipeline_with_meta("geo_scope = \"continental\"").unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidPipeline(ref s) if s.contains("geo_scope")),
+            "expected contextual InvalidPipeline, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_metadata_unknown_ai4g_relationship_errors_pipeline() {
+        let toml = r#"
+[pipeline]
+id = "p"
+
+[[pipeline.steps]]
+role = "detector"
+model = "d"
+
+[provenance]
+ai4g_relationship = "partner"
+"#;
+        let dir = write_temp_file("pipeline.toml", toml);
+        let err = load_pipeline_manifest(&dir.path().join("pipeline.toml")).unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::InvalidPipeline(ref s) if s.contains("ai4g_relationship")),
+            "expected contextual InvalidPipeline, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_metadata_blank_and_uniqueness_rules() {
+        // Blank display name.
+        assert!(load_model_with_meta("display_name = \"   \"").is_err());
+        // Empty family value.
+        assert!(load_model_with_meta("family = [\"yolo\", \"\"]").is_err());
+        // Duplicate family value.
+        assert!(load_model_with_meta("family = [\"yolo\", \"yolo\"]").is_err());
+        // Blank detector gate label (also missing species_direct=false, but the
+        // non-blank rule fires regardless).
+        assert!(
+            load_model_with_meta("species_direct = false\ndetector_gate_class = \"  \"").is_err()
+        );
+    }
+
+    #[test]
+    fn catalog_metadata_geo_region_slug_rules() {
+        let base = "geo_scope = \"regional\"\n";
+        // Uppercase is rejected.
+        assert!(load_model_with_meta(&format!("{base}geo_regions = [\"North_America\"]")).is_err());
+        // Hyphen is rejected (snake_case only).
+        assert!(load_model_with_meta(&format!("{base}geo_regions = [\"north-america\"]")).is_err());
+        // Leading digit is rejected (must start with [a-z]).
+        assert!(load_model_with_meta(&format!("{base}geo_regions = [\"1region\"]")).is_err());
+        // Duplicate regions rejected.
+        assert!(load_model_with_meta(&format!("{base}geo_regions = [\"a\", \"a\"]")).is_err());
+        // Valid lowercase snake_case slug with digits accepted.
+        let m =
+            load_model_with_meta(&format!("{base}geo_regions = [\"region_1\", \"na\"]")).unwrap();
+        assert_eq!(m.catalog_metadata.geo_regions, vec!["region_1", "na"]);
+    }
+
+    #[test]
+    fn catalog_metadata_geo_scope_coherence() {
+        // regional requires >= 1 region.
+        assert!(load_model_with_meta("geo_scope = \"regional\"").is_err());
+        // global forbids regions.
+        assert!(load_model_with_meta("geo_scope = \"global\"\ngeo_regions = [\"na\"]").is_err());
+        // foundational forbids regions.
+        assert!(
+            load_model_with_meta("geo_scope = \"foundational\"\ngeo_regions = [\"na\"]").is_err()
+        );
+        // regions without a scope is invalid.
+        assert!(load_model_with_meta("geo_regions = [\"na\"]").is_err());
+        // locality without a scope is invalid.
+        assert!(load_model_with_meta("geo_locality = \"PNW\"").is_err());
+        // locality with global is invalid (only regional).
+        assert!(load_model_with_meta("geo_scope = \"global\"\ngeo_locality = \"PNW\"").is_err());
+
+        // regional + regions (no locality) is valid.
+        let m = load_model_with_meta("geo_scope = \"regional\"\ngeo_regions = [\"na\"]").unwrap();
+        assert_eq!(m.catalog_metadata.geo_scope, Some(GeoScope::Regional));
+        assert_eq!(m.catalog_metadata.geo_locality, None);
+        // global (no regions) is valid.
+        assert!(load_model_with_meta("geo_scope = \"global\"").is_ok());
+        // foundational (no regions) is valid.
+        assert!(load_model_with_meta("geo_scope = \"foundational\"").is_ok());
+    }
+
+    #[test]
+    fn catalog_metadata_species_gate_coherence() {
+        // species_direct = false requires a gate class.
+        assert!(load_model_with_meta("species_direct = false").is_err());
+        // species_direct = true forbids a gate class.
+        assert!(
+            load_model_with_meta("species_direct = true\ndetector_gate_class = \"animal\"")
+                .is_err()
+        );
+        // gate class without species_direct = false is invalid.
+        assert!(load_model_with_meta("detector_gate_class = \"animal\"").is_err());
+
+        // species_direct = false + gate is valid.
+        let m = load_model_with_meta(
+            "species_direct = false\ndetector_gate_class = \"animal\"\n\
+                geo_scope = \"foundational\"",
+        )
+        .unwrap();
+        assert_eq!(m.catalog_metadata.species_direct, Some(false));
+        assert_eq!(
+            m.catalog_metadata.detector_gate_class.as_deref(),
+            Some("animal")
+        );
+        // species_direct = true (no gate) is valid.
+        assert!(load_model_with_meta("species_direct = true").is_ok());
+    }
+
+    #[test]
+    fn catalog_metadata_provenance_developer_owner_nonblank() {
+        // Blank developer is rejected.
+        let toml_blank = r#"
+[model]
+id = "m"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+pad_value = 0.5
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+confidence_threshold = 0.2
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+
+[provenance]
+developer = "   "
+"#;
+        let dir = write_temp_file("manifest.toml", toml_blank);
+        assert!(load_manifest(&dir.path().join("manifest.toml")).is_err());
     }
 }

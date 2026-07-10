@@ -9,7 +9,9 @@ use axum::extract::{Json, Path as AxumPath, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::engine_dispatch::manifest::{PipelineManifest, PipelineRole, PipelineStep};
+use crate::engine_dispatch::manifest::{
+    CatalogMetadata, PipelineManifest, PipelineRole, PipelineStep,
+};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -95,6 +97,8 @@ pub async fn create_pipeline(
                     model: req.classifier.clone(),
                 },
             ],
+            catalog_metadata: CatalogMetadata::default(),
+            provenance: None,
         };
 
         let _guard = lock
@@ -351,6 +355,8 @@ mod tests {
                 role: PipelineRole::Detector,
                 model: "d".to_string(),
             }],
+            catalog_metadata: CatalogMetadata::default(),
+            provenance: None,
         };
         let b = PipelineManifest {
             id: "p".to_string(),
@@ -358,6 +364,8 @@ mod tests {
                 role: PipelineRole::Detector,
                 model: "d".to_string(),
             }],
+            catalog_metadata: CatalogMetadata::default(),
+            provenance: None,
         };
         assert!(same_definition(&a, &b));
     }
@@ -389,6 +397,8 @@ mod tests {
                     model: "classifier-a".to_string(),
                 },
             ],
+            catalog_metadata: CatalogMetadata::default(),
+            provenance: None,
         };
 
         let response = request(
@@ -546,6 +556,8 @@ mod tests {
                         model: "classifier-a".to_string(),
                     },
                 ],
+                catalog_metadata: CatalogMetadata::default(),
+                provenance: None,
             },
         );
 
@@ -603,6 +615,8 @@ mod tests {
                         model: "classifier-a".to_string(),
                     },
                 ],
+                catalog_metadata: CatalogMetadata::default(),
+                provenance: None,
             },
         );
 
@@ -656,6 +670,8 @@ mod tests {
                         model: "ghost-classifier".to_string(),
                     },
                 ],
+                catalog_metadata: CatalogMetadata::default(),
+                provenance: None,
             },
         );
 
@@ -796,6 +812,8 @@ mod tests {
                 role: PipelineRole::Detector,
                 model: "detector\"with\nquote".to_string(),
             }],
+            catalog_metadata: CatalogMetadata::default(),
+            provenance: None,
         };
         let toml = pipeline_toml(&manifest);
         assert!(
