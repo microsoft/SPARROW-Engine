@@ -25,15 +25,16 @@ sparrow-engine-gpu = { path = "../sparrow-engine-gpu", optional = true }
 # rebuilds. Wheel filename gets the `cp311-abi3` tag; no `libpython` DT_NEEDED
 # on Linux. Floor matches `pyproject.toml`'s `requires-python = ">=3.11"`
 # (which is itself anchored by ORT 1.24.4+ dropping Python 3.10, MT-4.1-1).
-pyo3 = { version = "0.25", features = ["abi3-py311"] }
-numpy = "0.25"
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+numpy = "0.29"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # S6: tracing events are emitted to the `log` crate (via the `log` feature) and
 # bridged into Python's `logging` module by `pyo3-log` at module init. This
 # replaces `eprintln!` — which is invisible under PyO3/Jupyter (PyO3 #2247).
-# `pyo3-log` 0.12 is the last line that supports PyO3 0.25 (0.13+ requires 0.26).
+# `pyo3-log` 0.13 tracks PyO3 0.26+ (bumped with pyo3 0.25 -> 0.29 for
+# RUSTSEC-2026-0176/-0177).
 tracing = { version = "0.1", features = ["log"] }
-pyo3-log = "0.12"
+pyo3-log = "0.13"
 
 [features]
 extension-module = ["pyo3/extension-module"]

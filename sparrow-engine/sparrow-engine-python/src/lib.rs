@@ -45,6 +45,11 @@ use numpy::PyArray1;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+// PyO3 0.29 removed the crate-root `PyObject` alias (dropped from the prelude
+// in 0.26, deleted outright by 0.29; part of the RUSTSEC-2026-0176/-0177 bump
+// 0.25 -> 0.29). It was always exactly `Py<PyAny>`, so re-declare it locally to
+// keep every existing usage unchanged. `Py` and `PyAny` come from the prelude.
+type PyObject = Py<PyAny>;
 
 // Phase 3.8 Phase C Wave 4a: route Engine + opts types through the
 // per-flavor dispatch shim. The `sparrow_engine` alias is set up at line 38 above
@@ -790,9 +795,9 @@ fn visualization_relative_path(input_path: &Path, common_prefix: &Path) -> PathB
 // Python stdlib convention for progress hooks (e.g. `urlretrieve`) and lets
 // users surface KeyboardInterrupt to halt long batches.
 //
-// GIL dance: the inference loop runs inside `py.allow_threads` so the GIL is
+// GIL dance: the inference loop runs inside `py.detach` so the GIL is
 // released during ORT work. `invoke_progress` re-acquires it via
-// `Python::with_gil`, calls the Python callable, and the outer `?` propagates
+// `Python::attach`, calls the Python callable, and the outer `?` propagates
 // any resulting PyErr back through the closure's `PyResult<Vec<_>>` return.
 fn invoke_progress(
     cb: Option<&PyObject>,
@@ -801,7 +806,7 @@ fn invoke_progress(
     filename: &str,
 ) -> PyResult<()> {
     if let Some(cb) = cb {
-        Python::with_gil(|py| -> PyResult<()> {
+        Python::attach(|py| -> PyResult<()> {
             cb.call1(py, (index, total, filename))?;
             Ok(())
         })?;
@@ -854,7 +859,7 @@ impl PyEngine {
     /// Load a model by ID, optionally blocking until its TensorRT engine is built.
     #[pyo3(signature = (id, trt_warmup=false))]
     fn load_model(&self, py: Python<'_>, id: &str, trt_warmup: bool) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.engine.load_model_by_id(id).map_err(to_pyerr)?;
             if trt_warmup {
                 self.engine.trt_warmup_blocking(id).map_err(to_pyerr)?;
@@ -868,10 +873,10 @@ impl PyEngine {
     fn trt_warmup(&self, py: Python<'_>, id: &str, wait: bool) -> PyResult<PyObject> {
         if wait {
             let view =
-                py.allow_threads(|| self.engine.trt_warmup_blocking(id).map_err(to_pyerr))?;
+                py.detach(|| self.engine.trt_warmup_blocking(id).map_err(to_pyerr))?;
             trt_state_view_to_dict(py, view)
         } else {
-            let outcome = py.allow_threads(|| self.engine.trt_warmup(id).map_err(to_pyerr))?;
+            let outcome = py.detach(|| self.engine.trt_warmup(id).map_err(to_pyerr))?;
             warmup_outcome_to_dict(py, outcome)
         }
     }
@@ -902,7 +907,7 @@ impl PyEngine {
         };
         let total = paths.len();
 
-        py.allow_threads(move || {
+        py.detach(move || {
             let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
             let model_type = handle.model_type();
             let mut results = Vec::with_capacity(paths.len());
@@ -951,7 +956,7 @@ impl PyEngine {
         let opts = ClassifyOpts { top_k };
         let total = paths.len();
 
-        py.allow_threads(move || {
+        py.detach(move || {
             let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
             let mut results = Vec::with_capacity(paths.len());
             let mut errors = 0usize;
@@ -1000,7 +1005,7 @@ impl PyEngine {
         let model_id = model.to_owned();
         let total = paths.len();
 
-        let native_results = py.allow_threads(move || {
+        let native_results = py.detach(move || {
             let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
             let mut results = Vec::with_capacity(paths.len());
             let mut errors = 0usize;
@@ -1076,7 +1081,7 @@ impl PyEngine {
         };
         let total = paths.len();
 
-        py.allow_threads(move || {
+        py.detach(move || {
             let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
             let (window_s, effective_stride_s) = resolve_audio_window_stride(
                 handle.audio_window_stride(),
@@ -1147,7 +1152,7 @@ impl PyEngine {
         let c_opts = ClassifyOpts { top_k };
         let total = paths.len();
 
-        py.allow_threads(move || {
+        py.detach(move || {
             let detector_handle = engine.get_or_load_model(&det_id).map_err(to_pyerr)?;
             let detector_model_type = detector_handle.model_type();
             let _classifier_handle = engine.get_or_load_model(&cls_id).map_err(to_pyerr)?;
@@ -1485,7 +1490,7 @@ fn visualize(
         // Load image and render (release GIL for I/O + render).
         // Output format: JPEG in → JPEG out, PNG in → PNG out, unknown → PNG (lossless fallback).
         let path = path_str.clone();
-        let render_result = py.allow_threads(
+        let render_result = py.detach(
             move || -> std::result::Result<(Vec<u8>, image::ImageFormat), String> {
                 let img = image::open(&path).map_err(|e| format!("{e}"))?;
                 let opts = visualize_render_opts(model_type, show_labels);
@@ -1658,7 +1663,7 @@ fn visualize_audio(
         let native = pyaudio_to_native(result);
         let audio_path = PathBuf::from(path_str);
 
-        let render_result = py.allow_threads(
+        let render_result = py.detach(
             move || -> std::result::Result<Vec<(&'static str, Vec<u8>)>, String> {
                 let handle = engine_ref
                     .get_or_load_model(&model_id)
@@ -1865,7 +1870,7 @@ fn _emit_test_warn(msg: &str) {
 
 /// Invoke the progress-callback helper `n` times with synthetic
 /// `(index, total, filename)` arguments. Exercises the same
-/// `Python::with_gil` path as the real inference loops, without needing
+/// `Python::attach` path as the real inference loops, without needing
 /// ORT. If `cb` raises on any index, the exception propagates — matching
 /// real-batch behavior.
 #[pyfunction]
