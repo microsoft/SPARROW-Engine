@@ -12,6 +12,15 @@ pub struct Catalog {
     pub model_formats: BTreeMap<String, String>,
     pub trt_modes: BTreeMap<String, TrtMode>,
     pub pipelines: BTreeMap<String, CatalogPipeline>,
+    /// Per-model catalog metadata captured at boot from `ModelManifest.catalog_metadata`
+    /// (display name, family tags, detector gate behavior, geography). Keyed by model id;
+    /// an id is absent when its manifest omits the section. Storing it here lets
+    /// `/v1/catalog` project metadata without rereading manifest files per request.
+    pub catalog_metadata: BTreeMap<String, manifest::CatalogMetadata>,
+    /// Per-model provenance captured at boot from `ModelManifest.provenance`
+    /// (developer, owner, AI4G relationship + training pointers). Keyed by model id;
+    /// absent when the manifest omits `[provenance]`.
+    pub provenance: BTreeMap<String, manifest::ProvenanceRecord>,
 }
 
 impl Catalog {
@@ -107,6 +116,20 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
                 let trt_mode = resolve_trt_mode(m.trt.as_ref(), &m.format);
                 catalog.model_formats.insert(id.clone(), m.format.clone());
                 catalog.trt_modes.insert(id.clone(), trt_mode);
+                // Preserve manifest catalog metadata + provenance so `/v1/catalog`
+                // can surface them without rereading manifests per request.
+                // `catalog_metadata` is a non-optional `CatalogMetadata` that
+                // defaults to all-empty; skip inserting an all-default value so a
+                // plain manifest stays absent from the map (no synthetic entries,
+                // backward compatible). `provenance` is genuinely optional.
+                if m.catalog_metadata != manifest::CatalogMetadata::default() {
+                    catalog
+                        .catalog_metadata
+                        .insert(id.clone(), m.catalog_metadata.clone());
+                }
+                if let Some(pv) = m.provenance.clone() {
+                    catalog.provenance.insert(id.clone(), pv);
+                }
                 catalog.models.insert(
                     id.clone(),
                     ModelInfo {
@@ -672,6 +695,90 @@ model = "{classifier2}"
         .unwrap();
     }
 
+    // Detector manifest carrying the new catalog metadata (flat keys inside
+    // `[model]`) + optional `[provenance]` section (model-zoo metadata update).
+    // Key layout matches the schema branch's `CatalogMetadata` / extended
+    // `ProvenanceRecord` field names one-for-one; if the schema branch lands a
+    // different TOML spelling, only this fixture needs to change, not the
+    // carry-through code.
+    fn write_detector_manifest_with_metadata(dir: &Path, entry: &str, id: &str) {
+        let model_dir = dir.join(entry);
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(
+            model_dir.join("manifest.toml"),
+            format!(
+                r#"[model]
+id = "{id}"
+format = "onnx"
+file = "model.onnx"
+display_name = "MD European Mammals"
+family = ["MegaDetector"]
+species_direct = true
+geo_scope = "regional"
+geo_regions = ["europe"]
+geo_locality = "Western Europe"
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+
+[provenance]
+developer = "Microsoft AI for Good Lab (AI4G)"
+ai4g_relationship = "first_party"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_pipeline_with_metadata(
+        dir: &Path,
+        entry: &str,
+        id: &str,
+        detector: &str,
+        classifier: &str,
+    ) {
+        let pipeline_dir = dir.join(entry);
+        fs::create_dir_all(&pipeline_dir).unwrap();
+        fs::write(
+            pipeline_dir.join("pipeline.toml"),
+            format!(
+                r#"[pipeline]
+id = "{id}"
+display_name = "Orca Cascade"
+family = ["Orca"]
+geo_scope = "regional"
+geo_regions = ["pacific_northwest"]
+
+[[pipeline.steps]]
+role = "detector"
+model = "{detector}"
+
+[[pipeline.steps]]
+role = "classifier"
+model = "{classifier}"
+
+[provenance]
+developer = "Microsoft AI for Good Lab (AI4G)"
+ai4g_relationship = "first_party"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn discover_catalog_excludes_manifest_id_that_does_not_match_directory() {
         let dir = unique_dir("mismatched_model_id");
@@ -742,6 +849,93 @@ model = "{classifier2}"
         let catalog = discover_catalog(&dir);
         assert!(catalog.models.is_empty());
         assert!(catalog.pipelines.is_empty());
+    }
+
+    #[test]
+    fn discover_catalog_preserves_model_catalog_metadata_and_provenance() {
+        let dir = unique_dir("model_metadata_carry");
+        write_detector_manifest_with_metadata(&dir, "meta-model", "meta-model");
+        let catalog = discover_catalog(&dir);
+        assert!(catalog.models.contains_key("meta-model"));
+
+        let cm = catalog
+            .catalog_metadata
+            .get("meta-model")
+            .expect("catalog metadata must be preserved through discovery");
+        assert_eq!(cm.display_name.as_deref(), Some("MD European Mammals"));
+        assert_eq!(cm.family, vec!["MegaDetector".to_string()]);
+        assert_eq!(cm.species_direct, Some(true));
+        assert!(matches!(cm.geo_scope, Some(manifest::GeoScope::Regional)));
+        assert_eq!(cm.geo_regions, vec!["europe".to_string()]);
+        assert_eq!(cm.geo_locality.as_deref(), Some("Western Europe"));
+
+        let pv = catalog
+            .provenance
+            .get("meta-model")
+            .expect("provenance must be preserved through discovery");
+        assert_eq!(
+            pv.developer.as_deref(),
+            Some("Microsoft AI for Good Lab (AI4G)")
+        );
+        assert!(matches!(
+            pv.ai4g_relationship,
+            Some(manifest::Ai4gRelationship::FirstParty)
+        ));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn discover_catalog_omits_metadata_for_plain_manifest() {
+        let dir = unique_dir("model_metadata_absent");
+        write_detector_manifest(&dir, "plain", "plain", None);
+        let catalog = discover_catalog(&dir);
+        assert!(catalog.models.contains_key("plain"));
+        assert!(
+            !catalog.catalog_metadata.contains_key("plain"),
+            "a manifest without catalog metadata keys must not synthesize a metadata entry"
+        );
+        assert!(
+            !catalog.provenance.contains_key("plain"),
+            "a manifest without [provenance] must not synthesize a provenance entry"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn discover_catalog_preserves_pipeline_metadata() {
+        let dir = unique_dir("pipeline_metadata_carry");
+        write_detector_manifest(&dir, "detector", "detector", None);
+        write_classifier_manifest(&dir, "classifier", "classifier");
+        write_pipeline_with_metadata(
+            &dir,
+            "orca-cascade",
+            "orca-cascade",
+            "detector",
+            "classifier",
+        );
+        let catalog = discover_catalog(&dir);
+
+        let pipeline = catalog
+            .pipelines
+            .get("orca-cascade")
+            .expect("pipeline must be discovered");
+        let cm = &pipeline.manifest.catalog_metadata;
+        assert_eq!(cm.display_name.as_deref(), Some("Orca Cascade"));
+        assert_eq!(cm.family, vec!["Orca".to_string()]);
+        assert!(matches!(cm.geo_scope, Some(manifest::GeoScope::Regional)));
+
+        let pv = pipeline
+            .manifest
+            .provenance
+            .as_ref()
+            .expect("pipeline provenance must be preserved");
+        assert!(matches!(
+            pv.ai4g_relationship,
+            Some(manifest::Ai4gRelationship::FirstParty)
+        ));
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Mirror of `pipelines_mgmt::pipeline_management_endpoints_*` scenario 2b
