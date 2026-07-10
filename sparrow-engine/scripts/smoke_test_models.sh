@@ -61,14 +61,25 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[1] catalog integrity"
 INTEGRITY="$(python3 - "$CATALOG" <<'PY'
-import sys, tomllib
+import sys, tomllib, re
 DOMAINS = {"camera_trap", "acoustics", "overhead", "general"}
 TASKS = {"detector", "classifier", "encoder", "cascade"}
 FORMATS = {"onnx", "tflite", "cascade"}
 REQ = ("id", "domain", "task", "format", "status", "license", "zip")
+CANON_AI4G = "Microsoft AI for Good Lab (AI4G)"
+GEO_SCOPES = {"global", "regional", "foundational"}
+AI4G_RELS = {"first_party", "third_party", "unverified"}
+META_REQ = ("geo_scope", "geo_regions", "developer", "ai4g_relationship")
+SLUG = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+
+def _nonempty_str(v):
+    return isinstance(v, str) and v.strip() != ""
+
 with open(sys.argv[1], "rb") as f:
     c = tomllib.load(f)
 errs = []
+if c.get("schema_version") != "1.1":
+    errs.append(f"schema_version {c.get('schema_version')!r} != '1.1'")
 models = c.get("model", [])
 if not models:
     errs.append("no [[model]] entries")
@@ -91,6 +102,70 @@ for m in models:
         errs.append(f"{mid}: zip {m.get('zip')!r} != {exp!r}")
     ids.append(mid)
     aliases += m.get("alias", [])
+# --- schema 1.1 metadata validation (per-record) ---
+for m in models:
+    mid = m.get("id", "<?>")
+    for k in META_REQ:
+        if k not in m:
+            errs.append(f"{mid}: missing metadata '{k}'")
+    scope = m.get("geo_scope")
+    if scope is not None and scope not in GEO_SCOPES:
+        errs.append(f"{mid}: bad geo_scope {scope!r}")
+    rel = m.get("ai4g_relationship")
+    if rel is not None and rel not in AI4G_RELS:
+        errs.append(f"{mid}: bad ai4g_relationship {rel!r}")
+    # geography semantics + slug format + uniqueness
+    regions = m.get("geo_regions")
+    if regions is not None:
+        if not isinstance(regions, list):
+            errs.append(f"{mid}: geo_regions not a list")
+        else:
+            for r in regions:
+                if not _nonempty_str(r) or not SLUG.match(r):
+                    errs.append(f"{mid}: bad region slug {r!r}")
+            if len(set(regions)) != len(regions):
+                errs.append(f"{mid}: duplicate region slugs")
+            if scope in ("global", "foundational") and regions:
+                errs.append(f"{mid}: {scope} must have empty geo_regions")
+            if scope == "regional" and not regions:
+                errs.append(f"{mid}: regional must list >=1 geo_region")
+    # family: optional; empty list allowed; entries non-empty strings & unique
+    fam = m.get("family")
+    if fam is not None:
+        if not isinstance(fam, list):
+            errs.append(f"{mid}: family not a list")
+        else:
+            for x in fam:
+                if not _nonempty_str(x):
+                    errs.append(f"{mid}: empty family entry")
+            if len(set(fam)) != len(fam):
+                errs.append(f"{mid}: duplicate family entries")
+    # developer (required) + optional strings non-empty when present
+    if "developer" in m and not _nonempty_str(m["developer"]):
+        errs.append(f"{mid}: empty developer")
+    for opt in ("display_name", "owner", "geo_locality"):
+        if opt in m and not _nonempty_str(m[opt]):
+            errs.append(f"{mid}: empty {opt}")
+    # canonical AI4G developer <-> relationship
+    if rel == "first_party" and m.get("developer") != CANON_AI4G:
+        errs.append(f"{mid}: first_party developer must be canonical AI4G")
+    if rel == "third_party" and m.get("developer") == CANON_AI4G:
+        errs.append(f"{mid}: third_party must not use canonical AI4G developer")
+    # detector-only behavior keys; absent on non-detectors
+    task = m.get("task")
+    if task == "detector":
+        sd = m.get("species_direct")
+        if not isinstance(sd, bool):
+            errs.append(f"{mid}: detector missing bool species_direct")
+        elif sd is True:
+            if "detector_gate_class" in m:
+                errs.append(f"{mid}: species-direct detector must omit detector_gate_class")
+        else:
+            if not _nonempty_str(m.get("detector_gate_class")):
+                errs.append(f"{mid}: gated detector missing detector_gate_class")
+    else:
+        if "species_direct" in m or "detector_gate_class" in m:
+            errs.append(f"{mid}: non-detector must omit detector-only keys")
 dupes = {x for x in ids if ids.count(x) > 1}
 if dupes:
     errs.append(f"duplicate ids: {sorted(dupes)}")
