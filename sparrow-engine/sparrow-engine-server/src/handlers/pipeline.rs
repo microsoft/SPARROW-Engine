@@ -32,7 +32,7 @@ pub struct PipelineParams {
 enum PipelineSelection {
     Named {
         pipeline_id: String,
-        manifest: PipelineManifest,
+        manifest: Box<PipelineManifest>,
     },
     Adhoc {
         detector_id: String,
@@ -183,7 +183,7 @@ fn classify_pipeline_request(
             let manifest = state.engine.get_pipeline(&pipeline_id)?;
             Ok(PipelineSelection::Named {
                 pipeline_id,
-                manifest,
+                manifest: Box::new(manifest),
             })
         }
         PipelineQueryShape::Adhoc {

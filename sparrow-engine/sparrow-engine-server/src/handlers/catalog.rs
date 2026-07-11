@@ -200,14 +200,14 @@ fn project_catalog_metadata(
             .unwrap_or_default(),
         species_direct: catalog_metadata.and_then(|c| c.species_direct),
         detector_gate_class: catalog_metadata.and_then(|c| c.detector_gate_class.clone()),
-        geo_scope: catalog_metadata.and_then(|c| c.geo_scope.clone()),
+        geo_scope: catalog_metadata.and_then(|c| c.geo_scope),
         geo_regions: catalog_metadata
             .map(|c| c.geo_regions.clone())
             .unwrap_or_default(),
         geo_locality: catalog_metadata.and_then(|c| c.geo_locality.clone()),
         developer: provenance.and_then(|p| p.developer.clone()),
         owner: provenance.and_then(|p| p.owner.clone()),
-        ai4g_relationship: provenance.and_then(|p| p.ai4g_relationship.clone()),
+        ai4g_relationship: provenance.and_then(|p| p.ai4g_relationship),
     }
 }
 
@@ -340,7 +340,6 @@ mod tests {
             geo_scope: Some(GeoScope::Regional),
             geo_regions: vec!["europe".to_string()],
             geo_locality: Some("Western Europe".to_string()),
-            ..Default::default()
         };
         let pv = ProvenanceRecord {
             developer: Some("Microsoft AI for Good Lab (AI4G)".to_string()),
@@ -462,7 +461,6 @@ mod tests {
                 geo_scope: Some(GeoScope::Regional),
                 geo_regions: vec!["europe".to_string(), "north_africa".to_string()],
                 geo_locality: Some("Western Europe".to_string()),
-                ..Default::default()
             },
         );
         catalog.provenance.insert(
