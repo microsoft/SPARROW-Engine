@@ -195,6 +195,127 @@ mapfile -t CATALOG_IDS < <(python3 -c 'import sys,tomllib;[print(m["id"]) for m 
 mapfile -t CATALOG_ALIASES < <(python3 -c 'import sys,tomllib;[print(a) for m in tomllib.load(open(sys.argv[1],"rb"))["model"] for a in m.get("alias",[])]' "$CATALOG")
 is_catalog_id() { local x="$1" i; for i in "${CATALOG_IDS[@]}"; do [[ "$i" == "$x" ]] && return 0; done; return 1; }
 
+# Drop grep hits (stdin, "path:line:content" format from `grep -n`) whose ONLY
+# match on that line is inside a comment: Rust `//`/`///`/`//!` line comments
+# or `/* ... */` block comments (nested, and possibly spanning multiple
+# lines); Python/TOML `#` line comments. String literals are tracked so a
+# comment-like marker inside a string (e.g. an "http://" URL) never swallows
+# real code that follows on the same line. A comment-only historical mention
+# of a renamed id is not an active loading-path reference; an active
+# reference (even quoted inside a string) still fails. Reads each file once,
+# blanks comment characters to spaces (newlines untouched, so line numbers
+# stay aligned with the original file) and re-checks the word-boundary match
+# on the stripped text before printing the hit back through.
+filter_comment_only_hits() {
+  # Script source is read from fd 3 (not stdin) so stdin (fd 0) stays free
+  # for the piped grep hits that the python code below reads via sys.stdin.
+  python3 /dev/fd/3 "$1" 3<<'PY'
+import re, sys
+
+def strip_rust(text):
+    out = []
+    i, n = 0, len(text)
+    NORMAL, LINE_COMMENT, BLOCK_COMMENT, STRING = range(4)
+    state = NORMAL
+    depth = 0
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if state == NORMAL:
+            if c == "/" and nxt == "/":
+                state = LINE_COMMENT; out.append("  "); i += 2; continue
+            if c == "/" and nxt == "*":
+                state = BLOCK_COMMENT; depth = 1; out.append("  "); i += 2; continue
+            if c == '"':
+                state = STRING; out.append(c); i += 1; continue
+            out.append(c); i += 1
+        elif state == LINE_COMMENT:
+            if c == "\n":
+                state = NORMAL; out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+        elif state == BLOCK_COMMENT:
+            if c == "/" and nxt == "*":
+                depth += 1; out.append("  "); i += 2; continue
+            if c == "*" and nxt == "/":
+                depth -= 1; out.append("  "); i += 2
+                if depth == 0:
+                    state = NORMAL
+                continue
+            out.append("\n" if c == "\n" else " ")
+            i += 1
+        else:  # STRING
+            if c == "\\" and i + 1 < n:
+                out.append(c); out.append(nxt); i += 2; continue
+            if c == '"':
+                state = NORMAL; out.append(c); i += 1; continue
+            out.append(c); i += 1
+    return "".join(out)
+
+def strip_hash(text):
+    out = []
+    i, n = 0, len(text)
+    NORMAL, STRING, COMMENT = range(3)
+    state = NORMAL
+    quote = ""
+    while i < n:
+        c = text[i]
+        if state == NORMAL:
+            if c == "#":
+                state = COMMENT; out.append(" "); i += 1; continue
+            if c in ('"', "'"):
+                state = STRING; quote = c; out.append(c); i += 1; continue
+            out.append(c); i += 1
+        elif state == STRING:
+            if c == "\\" and i + 1 < n:
+                out.append(c); out.append(text[i + 1]); i += 2; continue
+            if c == quote:
+                state = NORMAL; out.append(c); i += 1; continue
+            out.append(c); i += 1
+        else:  # COMMENT
+            if c == "\n":
+                state = NORMAL; out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+    return "".join(out)
+
+alias = sys.argv[1]
+pattern = re.compile(r"\b" + re.escape(alias) + r"\b")
+cache = {}
+
+def stripped_lines(path):
+    if path in cache:
+        return cache[path]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        cache[path] = None
+        return None
+    stripper = strip_rust if path.endswith(".rs") else strip_hash
+    lines = stripper(text).split("\n")
+    cache[path] = lines
+    return lines
+
+for raw in sys.stdin:
+    raw = raw.rstrip("\n")
+    if not raw:
+        continue
+    path, lineno_s, _content = raw.split(":", 2)
+    lineno = int(lineno_s)
+    lines = stripped_lines(path)
+    # Fail safe: if the file can't be read or the line index is out of
+    # range, keep treating the hit as active rather than silently dropping it.
+    active = True
+    if lines is not None and 1 <= lineno <= len(lines):
+        active = bool(pattern.search(lines[lineno - 1]))
+    if active:
+        print(raw)
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Check 2 — no stale old-id loading references in source
 # ---------------------------------------------------------------------------
@@ -206,12 +327,15 @@ else
   for old in "${CATALOG_ALIASES[@]}"; do
     # Search code/config only; exclude the catalog itself (alias lives there),
     # build output, and the downloader (its help text explains the alias).
+    # Comment-only mentions (Rust //, doc comments, /* */ blocks; Python/TOML
+    # #) are then filtered out — they are not active loading-path references.
     hits="$(grep -rEn --include='*.rs' --include='*.py' --include='*.toml' \
               "\b${old}\b" "$REPO_DIR" 2>/dev/null \
             | grep -v '/target/' \
             | grep -v 'scripts/catalog.toml' \
             | grep -v 'scripts/download_models.sh' \
-            | grep -v 'scripts/smoke_test_models.sh' || true)"
+            | grep -v 'scripts/smoke_test_models.sh' \
+            | filter_comment_only_hits "$old" || true)"
     if [[ -n "$hits" ]]; then
       fail "old id '${old}' referenced in code:"
       echo "$hits" | sed 's/^/        /' >&2
