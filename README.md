@@ -24,7 +24,7 @@ cd -
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 59 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 60 models in the Zenodo bundle (image classifiers, audio detectors, overhead-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **60-model** catalog (incl. the AddaxAI regional classifiers, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **61-model** catalog (incl. the regional camera-trap classifiers distributed via AddaxAI, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
@@ -289,7 +289,7 @@ The tables below highlight the most-used models across four families (detectors,
 - MegaDetector v6 (`MDV6-yolov10-c` / `-e`) is the recommended default detector — `-c` for speed, `-e` for accuracy.
 - `MDV5a` (formerly `Species_Net_MDV5a`) is the legacy v5a detector; kept for projects validated against v5a outputs.
 - `deepfaune-yolo8s` is the DeepFaune detector stage, designed to pair with `Deepfaune-Europe` / `Deepfaune-New-England` classifiers.
-- `european_mammals` / `north_american_mammals` / `sub_saharan` are the AI for Good Lab regional YOLO detectors (multi-species per region).
+- `european_mammals` / `north_american_mammals` / `sub_saharan` are the Microsoft AI for Good Lab (AI4G) regional YOLO detectors (multi-species per region).
 
 #### Heatmap-based detectors
 
@@ -313,7 +313,7 @@ The tables below highlight the most-used models across four families (detectors,
 
 - `Deepfaune-Europe` / `Deepfaune-New-England` are the DeepFaune classifier stage for European and New England (NA) mammals.
 - `SpeciesNet-Crop` is Google's SpeciesNet classifier; pairs downstream of a detector (e.g. MDv6).
-- `AI4G-Amazon-V2` and `AI4G-Serengeti` are AI for Good Lab regional classifiers for Amazon-basin and Serengeti / East African species.
+- `AI4G-Amazon-V2` and `AI4G-Serengeti` are Microsoft AI for Good Lab (AI4G) regional classifiers for Amazon-basin and Serengeti / East African species.
 
 #### Audio detectors / classifiers
 
@@ -330,14 +330,14 @@ The tables below highlight the most-used models across four families (detectors,
 
 #### License summary
 
-This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 60 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
+This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 61 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
 
 - **Ultralytics AGPL-3.0**: MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-SA 4.0).
 - **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.
 - **CC0 1.0**: `Deepfaune-New-England` (USGS public-domain release).
 - **Apache 2.0**: `SpeciesNet-Crop`, `perch-v2`.
 - **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v3`, `orca-ecotype-dclde2026-v1`.
-- **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the AddaxAI regional classifiers flagged `commercial_use = false` in the catalogue.
+- **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the regional classifiers flagged `commercial_use = false` in the catalogue (non-commercial CC-BY-NC-* licenses).
 
 **Commercial users**: YOLO-based detectors need an [Ultralytics Enterprise License](https://www.ultralytics.com/license), and every model with `commercial_use = false` (non-commercial licenses like CC-BY-NC-*) must not be used commercially. `tropicam-ai` is additionally no-derivatives (CC-BY-NC-ND-4.0).
 

@@ -1,8 +1,20 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **60 models**, Zenodo record [`21211015`](https://zenodo.org/records/21211015) (v0.16.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **61 models**, Zenodo record [`21273206`](https://zenodo.org/records/21273206) (v0.19.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
+
+## Reading this catalogue
+
+Models are grouped by **domain** (camera trap, acoustics, overhead, general) and **task** (detector, classifier, encoder, cascade). Each row carries:
+
+- **Display name / ID** — human-readable label and the stable `id` the engine and `download_models.sh` resolve models by.
+- **Family** — model lineage (e.g. MegaDetector, SpeciesNet, DeepFaune, AddaxAI, DCLDE-orca).
+- **Format / version** — artifact type (`onnx` desktop, `tflite` mobile, `cascade` descriptor) with version / flavor.
+- **Behavior** — what the model emits: a detector that gates on a class (e.g. animal) versus one that outputs species directly, a classifier, an encoder, or a cascade pipeline.
+- **Geography / locality** — global, foundational, or the regions / locality a regional model targets.
+- **Developer / owner** — the party that built the model and, where different, the data owner.
+- **AI4G relationship** — first-party (built by Microsoft AI for Good Lab) versus third-party (external model onboarded into the zoo).
 
 ## Licensing at a glance
 
@@ -13,98 +25,99 @@ This is a **multi-license bundle**: every model keeps its own upstream license. 
 
 ## Camera Trap — Detector
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `MDV5a` | v5a | onnx | AGPL-3.0 | ✅ |
-| `MDV6-yolov10-c` | v6 | onnx | AGPL-3.0 | ✅ |
-| `MDV6-yolov10-c-tflite` | v6 | tflite | AGPL-3.0 | ✅ |
-| `MDV6-yolov10-e` | v6 | onnx | AGPL-3.0 | ✅ |
-| `deepfaune-yolo8s` | — | onnx | AGPL-3.0 AND CC-BY-SA-4.0 | ✅ |
-| `european_mammals` | — | onnx | AGPL-3.0 | ✅ |
-| `north_american_mammals` | — | onnx | AGPL-3.0 | ✅ |
-| `sub_saharan` | — | onnx | AGPL-3.0 | ✅ |
-| `MDV5b` | v5b | onnx | AGPL-3.0 | ✅ |
-| `MD1000-redwood` | v1000-redwood | onnx | AGPL-3.0 | ✅ |
-| `MD1000-spruce` | v1000-spruce | onnx | AGPL-3.0 | ✅ |
-| `MD1000-larch` | v1000-larch | onnx | AGPL-3.0 | ✅ |
-| `MD1000-cedar` | v1000-cedar | onnx | GPL-3.0 | ✅ |
-| `MD1000-sorrel` | v1000-sorrel | onnx | AGPL-3.0 | ✅ |
-| `MDV6-yolov9-c` | v6 | onnx | AGPL-3.0 | ✅ |
-| `MDV6-yolov9-e` | v6 | onnx | AGPL-3.0 | ✅ |
-| `MDV6-rtdetr-c` | v6 | onnx | AGPL-3.0 | ✅ |
-| `MDV6-mit-yolov9-c` | v6 | onnx | MIT | ✅ |
-| `MDV6-mit-yolov9-e` | v6 | onnx | MIT | ✅ |
-| `MDV6-apa-rtdetr-c` | v6 | onnx | Apache-2.0 | ✅ |
-| `MDV6-apa-rtdetr-e` | v6 | onnx | Apache-2.0 | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| MDV5a | `MDV5a` | MegaDetector | onnx · v5a | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 yolov10 C | `MDV6-yolov10-c` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 yolov10 C Tflite | `MDV6-yolov10-c-tflite` | MegaDetector | tflite-fp16 · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 yolov10 E | `MDV6-yolov10-e` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| Deepfaune yolo8s | `deepfaune-yolo8s` | DeepFaune | onnx | Detector · gates on animal | Global | DeepFaune consortium (CNRS and OFB) | Third-party | AGPL-3.0 AND CC-BY-SA-4.0 | ✅ |
+| MD European Mammals | `european_mammals` | MegaDetector | onnx | Detector · direct species output | Europe | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MD North American Mammals | `north_american_mammals` | MegaDetector | onnx | Detector · direct species output | North America | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MD Sub-Saharan Mammals | `sub_saharan` | MegaDetector | onnx | Detector · direct species output | Sub-Saharan Africa | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV5b | `MDV5b` | MegaDetector | onnx · v5b | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MD1000 Redwood | `MD1000-redwood` | MegaDetector | onnx · v1000-redwood | Detector · gates on animal | Global | Dan Morris / MegaDetector project | Third-party | AGPL-3.0 | ✅ |
+| MD1000 Spruce | `MD1000-spruce` | MegaDetector | onnx · v1000-spruce | Detector · gates on animal | Global | Dan Morris / MegaDetector project | Third-party | AGPL-3.0 | ✅ |
+| MD1000 Larch | `MD1000-larch` | MegaDetector | onnx · v1000-larch | Detector · gates on animal | Global | Dan Morris / MegaDetector project | Third-party | AGPL-3.0 | ✅ |
+| MD1000 Cedar | `MD1000-cedar` | MegaDetector | onnx · v1000-cedar | Detector · gates on animal | Global | Dan Morris / MegaDetector project | Third-party | GPL-3.0 | ✅ |
+| MD1000 Sorrel | `MD1000-sorrel` | MegaDetector | onnx · v1000-sorrel | Detector · gates on animal | Global | Dan Morris / MegaDetector project | Third-party | AGPL-3.0 | ✅ |
+| MDV6 yolov9 C | `MDV6-yolov9-c` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 yolov9 E | `MDV6-yolov9-e` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 Rtdetr C | `MDV6-rtdetr-c` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | AGPL-3.0 | ✅ |
+| MDV6 Mit yolov9 C | `MDV6-mit-yolov9-c` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| MDV6 Mit yolov9 E | `MDV6-mit-yolov9-e` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| MDV6 Apa Rtdetr C | `MDV6-apa-rtdetr-c` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | Apache-2.0 | ✅ |
+| MDV6 Apa Rtdetr E | `MDV6-apa-rtdetr-e` | MegaDetector | onnx · v6 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | Apache-2.0 | ✅ |
 
 ## Camera Trap — Classifier
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `AI4G-Amazon-V2` | — | onnx | MIT | ✅ |
-| `AI4G-Serengeti` | — | onnx | MIT | ✅ |
-| `Deepfaune-Europe` | — | onnx | CC-BY-SA-4.0 | ✅ |
-| `Deepfaune-New-England` | — | onnx | CC0-1.0 | ✅ |
-| `SpeciesNet-Crop` | — | onnx | Apache-2.0 | ✅ |
-| `southwest-usa-v3` | — | onnx | MIT | ✅ |
-| `peruvian-andes` | — | onnx | MIT | ✅ |
-| `sub-saharan-drylands` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `manas-panthera` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `gifu-japan` | — | onnx | MIT | ✅ |
-| `hawaii-puaa` | — | onnx | CC-BY-NC-4.0 | ❌ |
-| `central-india` | — | onnx | CC-BY-NC-4.0 | ❌ |
-| `top-end-savanna` | — | onnx | CC-BY-NC-4.0 | ❌ |
-| `parks-victoria` | — | onnx | Apache-2.0 | ✅ |
-| `sw-borderlands` | — | onnx | Apache-2.0 | ✅ |
-| `ahdrift` | — | onnx | Apache-2.0 | ✅ |
-| `deep-forest-vision` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `awc135` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `namibian` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `iran` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `nz-invasives` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `queensland` | — | onnx | CC-BY-4.0 | ✅ |
-| `nz-species` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `tropicam-ai` | — | onnx | CC-BY-NC-ND-4.0 | ❌ |
-| `terai-nepal` | — | onnx | MIT | ✅ |
-| `tasmanian-vertebrates` | — | onnx | CC-BY-4.0 | ✅ |
-| `peruvian-amazon-sdzwa` | — | onnx | MIT | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| AI4G Amazon V2 | `AI4G-Amazon-V2` | AI4G | onnx | Classifier | South America — Amazon basin | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| AI4G Serengeti | `AI4G-Serengeti` | AI4G | onnx | Classifier | East Africa — Serengeti, Tanzania | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Deepfaune Europe | `Deepfaune-Europe` | DeepFaune | onnx | Classifier | Europe | DeepFaune consortium (CNRS and OFB) | Third-party | CC-BY-SA-4.0 | ✅ |
+| Deepfaune New England | `Deepfaune-New-England` | DeepFaune | onnx | Classifier | North America — New England, USA | Clarfeld et al. / USGS | Third-party | CC0-1.0 | ✅ |
+| SpeciesNet Crop | `SpeciesNet-Crop` | SpeciesNet | onnx | Classifier | Global | Google Research / SpeciesNet | Third-party | Apache-2.0 | ✅ |
+| southwest-usa-v3-SDZWA | `southwest-usa-v3` | AddaxAI | onnx | Classifier | North America — Southwest USA | Kyra Swanson / San Diego Zoo Wildlife Alliance | Third-party | MIT | ✅ |
+| peruvian-andes-SDZWA | `peruvian-andes` | AddaxAI | onnx | Classifier | South America — Peruvian Andes | Kyra Swanson / San Diego Zoo Wildlife Alliance | Third-party | MIT | ✅ |
+| sub-saharan-drylands-Addax | `sub-saharan-drylands` | AddaxAI | onnx | Classifier | Sub-Saharan Africa — eastern and southern drylands | Addax Data Science | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| Manas Panthera | `manas-panthera` | AddaxAI | onnx | Classifier | Central Asia — Kyrgyzstan, Tian Shan | Hex Data<br>owner: OSI-Panthera | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| gifu-japan-GifuUniversity | `gifu-japan` | AddaxAI | onnx | Classifier | East Asia — Gifu Prefecture, Japan | Gifu University<br>owner: Masaki Ando | Third-party | MIT | ✅ |
+| hawaii-puaa-Addax | `hawaii-puaa` | AddaxAI, SpeciesNet | onnx | Classifier | North America — Hawaii, USA | Addax Data Science<br>owner: USDA Forest Service Institute of Pacific Islands Forestry and The Nature Conservancy | Third-party | CC-BY-NC-4.0 | ❌ |
+| central-india-Addax | `central-india` | AddaxAI, SpeciesNet | onnx | Classifier | South Asia — Central India | Addax Data Science<br>owner: Wildlife Conservation Trust, India | Third-party | CC-BY-NC-4.0 | ❌ |
+| top-end-savanna-Addax | `top-end-savanna` | AddaxAI, SpeciesNet | onnx | Classifier | Australia — Top End, Northern Territory | Addax Data Science<br>owner: Charles Darwin University, Territory Natural Resource Management, and Warddeken Land Management | Third-party | CC-BY-NC-4.0 | ❌ |
+| parks-victoria-Addax | `parks-victoria` | AddaxAI, SpeciesNet | onnx | Classifier | Australia — Victoria | Addax Data Science<br>owner: Parks Victoria | Third-party | Apache-2.0 | ✅ |
+| sw-borderlands-Addax | `sw-borderlands` | AddaxAI, SpeciesNet | onnx | Classifier | North America — USA-Mexico borderlands | Addax Data Science<br>owner: Tohono O'odham Nation and University of Arizona | Third-party | Apache-2.0 | ✅ |
+| ahdrift-OSU-ColumbusZoo-Addax | `ahdrift` | AddaxAI, SpeciesNet | onnx | Classifier | North America — Midwest USA | Ohio State University, Columbus Zoo and Aquarium, and Addax Data Science | Third-party | Apache-2.0 | ✅ |
+| deep-forest-vision-MNHN-OFVI | `deep-forest-vision` | AddaxAI | onnx | Classifier | Central Africa — African tropical forests | Hugo Magaldi / One Forest Vision initiative<br>owner: MNHN and One Forest Vision partners | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| awc135-AWC | `awc135` | AddaxAI | onnx | Classifier | Australia | Australian Wildlife Conservancy | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| namibian-Addax | `namibian` | AddaxAI | onnx | Classifier | Southern Africa — Namib Desert, Namibia | Addax Data Science<br>owner: Desert Lion Conservation and Smart Parks | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| iran-Addax | `iran` | AddaxAI | onnx | Classifier | West Asia — Iran | Addax Data Science<br>owner: Iranian Cheetah Society | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| nz-invasives-Addax | `nz-invasives` | AddaxAI | onnx | Classifier | New Zealand | Addax Data Science<br>owner: New Zealand Department of Conservation | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| queensland-WildObs | `queensland` | AddaxAI, SpeciesNet | onnx | Classifier | Australia — Queensland Wet Tropics | Prakash Palanivelu Rajmohan and Renuka Sharma / WildObs | Third-party | CC-BY-4.0 | ✅ |
+| nz-species-wekaResearch | `nz-species` | AddaxAI | onnx | Classifier | New Zealand | wekaResearch / Olly Powell<br>owner: New Zealand Department of Conservation | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| tropicam-ai-MNCN-CSIC | `tropicam-ai` | AddaxAI | onnx | Classifier | Neotropics — Brazil, Peru, French Guiana, and Costa Rica | Andrea Zampetti / MNCN-CSIC | Third-party | CC-BY-NC-ND-4.0 | ❌ |
+| Terai Nepal | `terai-nepal` | AddaxAI, MEWC | onnx | Classifier | South Asia — Terai lowlands, Nepal | Alexander Merdian-Tarko / TeraiNet | Third-party | MIT | ✅ |
+| tasmanian-vertebrates-MEWC | `tasmanian-vertebrates` | AddaxAI, MEWC | onnx | Classifier | Australia — Tasmania | Barry Brook / MEWC / University of Tasmania | Third-party | CC-BY-4.0 | ✅ |
+| peruvian-amazon-SDZWA | `peruvian-amazon-sdzwa` | AddaxAI | onnx | Classifier | South America — Peruvian Amazon | Mathias Tobler / San Diego Zoo Wildlife Alliance | Third-party | MIT | ✅ |
 
 ## Acoustics — Detector
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `md-audiobirds-v1` | — | onnx | MIT | ✅ |
-| `orca-detector-dclde2026-v3` | v3 | onnx | MIT | ✅ |
-| `orca-detector-v3-fp16-tflite` | v3 | tflite | MIT | ✅ |
-| `orca-detector-v3-int8-tflite` | v3 | tflite | MIT | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| Md Audiobirds v1 | `md-audiobirds-v1` | — | onnx | Detector · gates on bird | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Orca Detector dclde2026 v3 | `orca-detector-dclde2026-v3` | DCLDE-orca | onnx · v3 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Orca Detector v3 fp16 Tflite | `orca-detector-v3-fp16-tflite` | DCLDE-orca | tflite-fp16 · v3 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Orca Detector v3 int8 Tflite | `orca-detector-v3-int8-tflite` | DCLDE-orca | tflite-int8 · v3 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 
 ## Acoustics — Classifier
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `orca-ecotype-dclde2026-v1` | v1 | onnx | MIT | ✅ |
-| `orca-ecotype-melinput-fp16-tflite` | — | tflite | MIT | ✅ |
-| `orca-ecotype-melinput-int8-tflite` | — | tflite | MIT | ✅ |
-| `perch-v2` | — | onnx | Apache-2.0 | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| Orca Ecotype dclde2026 v1 | `orca-ecotype-dclde2026-v1` | DCLDE-orca | onnx · v1 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Orca Ecotype Melinput fp16 Tflite | `orca-ecotype-melinput-fp16-tflite` | DCLDE-orca | tflite-fp16 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Orca Ecotype Melinput int8 Tflite | `orca-ecotype-melinput-int8-tflite` | DCLDE-orca | tflite-int8 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Perch v2 | `perch-v2` | — | onnx | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | ✅ |
 
 ## Acoustics — Cascade
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `orca-cascade` | — | cascade | MIT | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| Orca Cascade | `orca-cascade` | DCLDE-orca | cascade | Cascade · pipeline descriptor | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 
 ## Overhead — Detector
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `HerdNet_General_Dataset_2022` | — | onnx | CC-BY-NC-SA-4.0 | ❌ |
-| `OWL` | — | onnx | MIT | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| HerdNet General Dataset 2022 | `HerdNet_General_Dataset_2022` | — | onnx | Detector · direct species output | Sub-Saharan Africa — aerial savanna | University of Liege, Gembloux Agro-Bio Tech (Delplanque et al.) | Third-party | CC-BY-NC-SA-4.0 | ❌ |
+| OWL | `OWL` | — | onnx | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 
 ## General — Encoder
 
-| Model ID | Version | Format | License | Commercial use |
-|---|---|---|---|---|
-| `bioclip-2` | v2 | onnx | MIT | ✅ |
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|
+| Bioclip 2 | `bioclip-2` | BioCLIP | onnx · v2 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
+| dinov3 vitl16 | `dinov3-vitl16` | DINOv3 | onnx · vitl16-lvd1689m | Encoder · embeddings | Foundational (global) | Meta AI | Third-party | DINOv3 License | ✅ |
 
 ## References & citations
 
@@ -170,4 +183,4 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`HerdNet_General_Dataset_2022`** — Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet.
 - **`OWL`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab).
 - **`bioclip-2`** — Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2.
-
+- **`dinov3-vitl16`** — Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., et al. DINOv3. Meta AI, 2025. https://arxiv.org/abs/2508.10104. Model: facebook/dinov3-vitl16-pretrain-lvd1689m (LVD-1689M pretrain, ViT-L/16, 1024-d), Hugging Face, https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m. License: DINOv3 License (custom Meta license).
