@@ -72,7 +72,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-yolov10-c-tflite"
@@ -111,7 +111,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "deepfaune-yolo8s"
@@ -147,7 +147,7 @@ geo_regions = ["europe"]
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab regional YOLO detector (European mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
+reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (European mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
 id = "north_american_mammals"
@@ -165,7 +165,7 @@ geo_regions = ["north_america"]
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab regional YOLO detector (North American mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
+reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (North American mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
 id = "sub_saharan"
@@ -185,7 +185,7 @@ ai4g_relationship = "first_party"
 
 # --- MegaDetector variants added v0.12.0 (ONB-2) ---
 commercial_use = true
-reference = "Microsoft AI for Good Lab regional YOLO detector (Sub-Saharan mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
+reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (Sub-Saharan mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 [[model]]
 id = "MDV5b"
 domain = "camera_trap"
@@ -317,7 +317,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-yolov9-e"
@@ -336,7 +336,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-rtdetr-c"
@@ -357,7 +357,7 @@ ai4g_relationship = "first_party"
 
 # --- MegaDetector MIT variants added v0.13.0 (ONB-2; WongKinYiu/YOLO framework) ---
 commercial_use = true
-reference = "MegaDetector V6 model zoo, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-mit-yolov9-c"
 domain = "camera_trap"
@@ -375,7 +375,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-mit-yolov9-e"
@@ -396,7 +396,7 @@ ai4g_relationship = "first_party"
 
 # --- MegaDetector Apache-2.0 RT-DETRv2 variants added v0.14.0 (ONB-2-APA; lyuwenyu/RT-DETR framework) ---
 commercial_use = true
-reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-apa-rtdetr-c"
 domain = "camera_trap"
@@ -414,7 +414,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "MDV6-apa-rtdetr-e"
@@ -435,7 +435,7 @@ ai4g_relationship = "first_party"
 
 # ============================ Camera Trap — Classifier ==========================
 commercial_use = true
-reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
 id = "AI4G-Amazon-V2"
@@ -452,7 +452,7 @@ geo_locality = "Amazon basin"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab, Biodiversity model-zoo classifier table (AI4G-Amazon-V2 v2): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+reference = "Microsoft AI for Good Lab (AI4G), Biodiversity model-zoo classifier table (AI4G-Amazon-V2 v2): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
 id = "AI4G-Serengeti"
@@ -469,7 +469,7 @@ geo_locality = "Serengeti, Tanzania"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab, Biodiversity model-zoo classifier table (AI4G-Serengeti): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+reference = "Microsoft AI for Good Lab (AI4G), Biodiversity model-zoo classifier table (AI4G-Serengeti): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
 id = "Deepfaune-Europe"
@@ -538,7 +538,7 @@ geo_locality = "Southwest USA"
 developer = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
 commercial_use = true
-reference = "Addax Data Science / San Diego Zoo Wildlife Alliance, Southwest USA v3 model card: https://huggingface.co/Addax-Data-Science/Southwest_USA_v3"
+reference = "San Diego Zoo Wildlife Alliance, Southwest USA v3 model card: https://huggingface.co/Addax-Data-Science/Southwest_USA_v3"
 
 [[model]]
 id = "peruvian-andes"
@@ -556,7 +556,7 @@ geo_locality = "Peruvian Andes"
 developer = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
 commercial_use = true
-reference = "Addax Data Science / San Diego Zoo Wildlife Alliance, Peruvian Andes model card: https://huggingface.co/Addax-Data-Science/Peruvian_Andes"
+reference = "San Diego Zoo Wildlife Alliance, Peruvian Andes model card: https://huggingface.co/Addax-Data-Science/Peruvian_Andes"
 
 [[model]]
 id = "sub-saharan-drylands"
@@ -611,7 +611,7 @@ developer = "Gifu University"
 owner = "Masaki Ando"
 ai4g_relationship = "third_party"
 commercial_use = true
-reference = "Addax Data Science / Gifu University, Japan Gifu v0.2 model card: https://huggingface.co/Addax-Data-Science/Japan_Gifu_v0.2"
+reference = "Gifu University, Japan Gifu v0.2 model card: https://huggingface.co/Addax-Data-Science/Japan_Gifu_v0.2"
 
 [[model]]
 id = "hawaii-puaa"
@@ -743,7 +743,7 @@ developer = "Hugo Magaldi / One Forest Vision initiative"
 owner = "MNHN and One Forest Vision partners"
 ai4g_relationship = "third_party"
 commercial_use = false
-reference = "MNHN-OFVI / Addax Data Science. AFR-DFV-v1 / DeepForestVision classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v1; original project: https://github.com/MNHN-OFVI/DeepForestVision"
+reference = "MNHN-OFVI. AFR-DFV-v1 / DeepForestVision classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v1; original project: https://github.com/MNHN-OFVI/DeepForestVision"
 
 [[model]]
 id = "awc135"
@@ -760,7 +760,7 @@ geo_regions = ["australia"]
 developer = "Australian Wildlife Conservancy"
 ai4g_relationship = "third_party"
 commercial_use = false
-reference = "Australian Wildlife Conservancy / Addax Data Science. AWC135-AWC-v1 / Australian Wildlife Classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AWC135-AWC-v1; source license: https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
+reference = "Australian Wildlife Conservancy. AWC135-AWC-v1 / Australian Wildlife Classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AWC135-AWC-v1; source license: https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
 
 [[model]]
 id = "namibian"
@@ -834,9 +834,9 @@ geo_locality = "Queensland Wet Tropics"
 developer = "Prakash Palanivelu Rajmohan and Renuka Sharma / WildObs"
 ai4g_relationship = "third_party"
 
-# multi-label (per-class sigmoid) classifier — engine multi-label image-classifier support
+# single-label (softmax) classifier — engine softmax image-classifier support
 commercial_use = true
-reference = "WildObs / Addax Data Science. WetTropics_WildObs (Queensland Wet Tropics classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
+reference = "WildObs. WetTropics_WildObs (Queensland Wet Tropics classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
 [[model]]
 id = "nz-species"
 domain = "camera_trap"
@@ -855,7 +855,7 @@ ai4g_relationship = "third_party"
 
 # ONB-3: AddaxAI TF/Keras classifiers (tf2onnx from .h5/.keras; softmax stripped -> engine softmax)
 commercial_use = false
-reference = "New Zealand Department of Conservation / wekaResearch / Addax Data Science. NZS-WEK-v3-03 (New Zealand Species v3.03 classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
+reference = "New Zealand Department of Conservation / wekaResearch. NZS-WEK-v3-03 (New Zealand Species v3.03 classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
 [[model]]
 id = "tropicam-ai"
 domain = "camera_trap"
@@ -872,7 +872,7 @@ geo_locality = "Brazil, Peru, French Guiana, and Costa Rica"
 developer = "Andrea Zampetti / MNCN-CSIC"
 ai4g_relationship = "third_party"
 commercial_use = false
-reference = "Andrea Zampetti / MNCN-CSIC / Addax Data Science. NEO-MNCN-v1-0 / TropiCam-AI v1.0 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NEO-MNCN-v1-0; original project: https://github.com/andrewzamp/TropiCam-AI"
+reference = "Andrea Zampetti / MNCN-CSIC. NEO-MNCN-v1-0 / TropiCam-AI v1.0 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NEO-MNCN-v1-0; original project: https://github.com/andrewzamp/TropiCam-AI"
 
 [[model]]
 id = "terai-nepal"
@@ -907,7 +907,7 @@ geo_locality = "Tasmania"
 developer = "Barry Brook / MEWC / University of Tasmania"
 ai4g_relationship = "third_party"
 commercial_use = true
-reference = "MEWC / Addax Data Science. Tasmanian_vertebrates classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Tasmanian_vertebrates; MEWC source: https://github.com/zaandahl/mewc"
+reference = "MEWC. Tasmanian_vertebrates classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Tasmanian_vertebrates; MEWC source: https://github.com/zaandahl/mewc"
 
 [[model]]
 id = "peruvian-amazon-sdzwa"
@@ -927,7 +927,7 @@ ai4g_relationship = "third_party"
 
 # ============================ Acoustics — Detector ==============================
 commercial_use = true
-reference = "San Diego Zoo Wildlife Alliance / Addax Data Science. Peruvian_Amazon classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Peruvian_Amazon"
+reference = "San Diego Zoo Wildlife Alliance. Peruvian_Amazon classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Peruvian_Amazon"
 
 [[model]]
 id = "md-audiobirds-v1"
@@ -945,7 +945,7 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab. MegaDetector-Acoustic / MD_AudioBirds_V1. Source: https://github.com/microsoft/MegaDetector-Acoustic; model-zoo page: https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/. Cite: Hernandez et al. 2024, Pytorch-Wildlife: A Collaborative Deep Learning Framework for Conservation, arXiv:2405.12930."
+reference = "Microsoft AI for Good Lab (AI4G). MegaDetector-Acoustic / MD_AudioBirds_V1. Source: https://github.com/microsoft/MegaDetector-Acoustic; model-zoo page: https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/. Cite: Hernandez et al. 2024, Pytorch-Wildlife: A Collaborative Deep Learning Framework for Conservation, arXiv:2405.12930."
 
 [[model]]
 id = "orca-detector-dclde2026-v3"
@@ -965,7 +965,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.9.0: orca-detector-dclde2026-v3. Zenodo. https://doi.org/10.5281/zenodo.20864372. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
+reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.9.0: orca-detector-dclde2026-v3. Zenodo. https://doi.org/10.5281/zenodo.20864372. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
 id = "orca-detector-v3-fp16-tflite"
@@ -986,7 +986,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
+reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
 
 [[model]]
 id = "orca-detector-v3-int8-tflite"
@@ -1009,7 +1009,7 @@ ai4g_relationship = "first_party"
 
 # ============================ Acoustics — Classifier ============================
 commercial_use = true
-reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
+reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
 
 [[model]]
 id = "orca-ecotype-dclde2026-v1"
@@ -1027,7 +1027,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.5.0: orca-ecotype-dclde2026-v1. Zenodo. https://doi.org/10.5281/zenodo.20563673. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
+reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.5.0: orca-ecotype-dclde2026-v1. Zenodo. https://doi.org/10.5281/zenodo.20563673. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
 id = "orca-ecotype-melinput-fp16-tflite"
@@ -1045,7 +1045,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
+reference = "Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
 id = "orca-ecotype-melinput-int8-tflite"
@@ -1063,7 +1063,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
+reference = "Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
 id = "perch-v2"
@@ -1081,7 +1081,7 @@ ai4g_relationship = "third_party"
 
 # ============================ Acoustics — Cascade ===============================
 commercial_use = true
-reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: Ghani, Denton, Kahl et al., Global birdsong embeddings enable superior transfer learning for bioacoustic classification, Scientific Reports / arXiv:2307.06292, https://arxiv.org/abs/2307.06292."
+reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
 
 [[model]]
 id = "orca-cascade"
@@ -1100,7 +1100,7 @@ ai4g_relationship = "first_party"
 
 # ============================ Overhead — Detector ===============================
 commercial_use = true
-reference = "Pipeline descriptor combining orca-detector-dclde2026-v3 and orca-ecotype-dclde2026-v1. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
+reference = "Pipeline descriptor combining orca-detector-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
 
 [[model]]
 id = "HerdNet_General_Dataset_2022"
@@ -1138,7 +1138,7 @@ ai4g_relationship = "first_party"
 
 # ============================ General — Encoder ============================
 commercial_use = true
-reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab)."
+reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
 
 [[model]]
 id = "bioclip-2"

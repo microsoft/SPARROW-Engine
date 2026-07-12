@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **61-model** catalog (incl. the regional camera-trap classifiers distributed via AddaxAI, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four families (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **61-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
