@@ -630,7 +630,7 @@ developer = "Addax Data Science"
 owner = "USDA Forest Service Institute of Pacific Islands Forestry and The Nature Conservancy"
 ai4g_relationship = "third_party"
 commercial_use = false
-reference = "Addax Data Science, Hawaiʻi AI Puaʻa v1.0 model card: https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
+reference = "Addax Data Science, Hawaii AI Puaa v1.0 model card: https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
 
 [[model]]
 id = "central-india"
@@ -1100,7 +1100,7 @@ ai4g_relationship = "first_party"
 
 # ============================ Overhead — Detector ===============================
 commercial_use = true
-reference = "Pipeline descriptor combining orca-detector-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
+reference = "Pipeline descriptor combining orca-detector-v3-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
 
 [[model]]
 id = "HerdNet_General_Dataset_2022"
