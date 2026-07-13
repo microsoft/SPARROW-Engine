@@ -1,7 +1,7 @@
 //! Generic C FFI boundary for the mobile (LiteRT) flavor — RP-25-FU-1.
 //!
-//! Replaces the focused 5-export orca cascade API with a documented ~18-symbol
-//! subset of the cpu/gpu 35-symbol surface: engine lifecycle, model management,
+//! Replaces the focused 5-export orca cascade API with a documented 18-symbol
+//! subset of the cpu/gpu 37-symbol surface: engine lifecycle, model management,
 //! image inference (`detect` implemented in RP-42; `classify` still deferred),
 //! single-model audio detection, and the audio-cascade pipeline family (the orca
 //! cascade is now a `pipeline.toml`, not C code).
@@ -78,8 +78,8 @@ pub struct SparrowEngineDetection {
     pub confidence: f32,
 }
 
-/// Image detection output (image inference is deferred to RP-42; see
-/// `sparrow_engine_detect`).
+/// Image detection output. `yolo_e2e` image detection is available as of
+/// RP-42; see `sparrow_engine_detect`.
 #[repr(C)]
 pub struct SparrowEngineDetections {
     pub data: *const SparrowEngineDetection,
@@ -96,7 +96,9 @@ pub struct SparrowEngineClassification {
     pub confidence: f32,
 }
 
-/// Image classification output (deferred to RP-42; see `sparrow_engine_classify`).
+/// Image classification output. Classification remains unavailable until a
+/// mobile TFLite classifier is onboarded (RP-42-FU-1); see
+/// `sparrow_engine_classify`.
 #[repr(C)]
 pub struct SparrowEngineClassifyResult {
     pub data: *const SparrowEngineClassification,

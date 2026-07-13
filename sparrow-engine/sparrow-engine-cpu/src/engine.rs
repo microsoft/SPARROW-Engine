@@ -1681,11 +1681,13 @@ mod tests {
 
         assert!(!engine.trt_hw_capable());
 
-        let err = engine.trt_warmup("mel-classifier-tiny").unwrap_err();
+        // Catalog lookup uses the resolvable directory name, not the manifest's
+        // self-declared id.
+        let err = engine.trt_warmup("mel_classifier_tiny").unwrap_err();
         assert_cpu_build_rejection(err);
 
         let err = engine
-            .trt_warmup_blocking("mel-classifier-tiny")
+            .trt_warmup_blocking("mel_classifier_tiny")
             .unwrap_err();
         assert_cpu_build_rejection(err);
 

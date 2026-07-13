@@ -778,7 +778,7 @@ fn dirs_default_model_dir() -> PathBuf {
 const BOOTSTRAP_HINT: &str = "First run? Populate the model directory:\n  \
     bash -c \"$(curl -fsSL https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/sparrow-engine-dev/sparrow-engine/scripts/download_models.sh)\"\n\n\
     Or set SPARROW_ENGINE_MODEL_DIR to an existing model directory.\n\
-    (Zenodo v0.4.0 bundle: https://doi.org/10.5281/zenodo.20360316)";
+    (Latest Zenodo model bundle: https://doi.org/10.5281/zenodo.20348978)";
 
 /// Surface an actionable error when the resolved model directory is missing or
 /// contains no per-model `manifest.toml`. Intercepts BEFORE `Engine::new`, so the
@@ -2790,6 +2790,14 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn bootstrap_hint_uses_evergreen_model_zoo_doi() {
+        assert!(BOOTSTRAP_HINT.contains("Latest Zenodo model bundle"));
+        assert!(BOOTSTRAP_HINT.contains("10.5281/zenodo.20348978"));
+        assert!(!BOOTSTRAP_HINT.contains("10.5281/zenodo.20360316"));
+        assert!(!BOOTSTRAP_HINT.contains("Zenodo v"));
+    }
 
     fn model_info(id: &str, model_type: ModelType) -> ModelInfo {
         ModelInfo {

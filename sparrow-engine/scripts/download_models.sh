@@ -13,8 +13,8 @@
 # checksums published by the Zenodo record API.
 #
 # Usage:
-#   bash scripts/download_models.sh                     # 54 desktop ONNX models -> ~/.sparrow-engine/models/
-#   bash scripts/download_models.sh --all               # all 60 (incl. mobile .tflite + cascade)
+#   bash scripts/download_models.sh                     # 55 desktop ONNX models -> ~/.sparrow-engine/models/
+#   bash scripts/download_models.sh --all               # all 61 (incl. mobile .tflite + cascade)
 #   bash scripts/download_models.sh --dest /path        # custom destination dir
 #   bash scripts/download_models.sh MDV6-yolov10-e ...  # specific model(s) only
 #   bash scripts/download_models.sh --list              # show available models (from catalog)
@@ -60,13 +60,13 @@ if [[ ! -f "$CATALOG" ]]; then
 fi
 
 # ---- Read record + version from the catalog (env override wins) ----
-read -r CATALOG_RECORD ZENODO_VERSION ZENODO_CONCEPT_DOI < <(
+read -r CATALOG_RECORD ZENODO_VERSION < <(
   python3 - "$CATALOG" <<'PY'
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     c = tomllib.load(f)
 z = c.get("zenodo", {})
-print(z.get("record", ""), z.get("version", "?"), z.get("concept_doi", ""))
+print(z.get("record", ""), z.get("version", "?"))
 PY
 )
 ZENODO_RECORD="${ZENODO_RECORD:-$CATALOG_RECORD}"
@@ -207,12 +207,16 @@ echo ""
 
 # ---- Fetch per-file MD5 checksums once (from the Zenodo record API) ----
 declare -A MD5
+CHECKSUM_COUNT=0
 if [[ $VERIFY -eq 1 ]]; then
   echo "Fetching checksums from ${ZENODO_API} ..."
   API_TMP="$(mktemp)"
   if curl -fsSL "$ZENODO_API" -o "$API_TMP"; then
     while IFS=$'\t' read -r fkey fmd5; do
-      [[ -n "$fkey" ]] && MD5["$fkey"]="$fmd5"
+      if [[ -n "$fkey" && -n "$fmd5" ]]; then
+        MD5["$fkey"]="$fmd5"
+        CHECKSUM_COUNT=$((CHECKSUM_COUNT + 1))
+      fi
     done < <(python3 - "$API_TMP" <<'PY'
 import sys, json
 with open(sys.argv[1]) as fh:
@@ -224,14 +228,16 @@ for f in d.get("files", []):
 PY
 )
     rm -f "$API_TMP"
-    if [[ ${#MD5[@]} -eq 0 ]]; then
-      echo "WARN: record API returned no file checksums; proceeding without MD5 verification" >&2
-      VERIFY=0
+    if [[ $CHECKSUM_COUNT -eq 0 ]]; then
+      echo "WARN: record API returned no file checksums." >&2
+      echo "      Existing models may be reused, but new downloads will be refused." >&2
+      echo "      Re-run with --no-verify to explicitly bypass integrity checks." >&2
     fi
   else
     rm -f "$API_TMP"
-    echo "WARN: failed to fetch record API JSON; proceeding without MD5 verification" >&2
-    VERIFY=0
+    echo "WARN: failed to fetch record API JSON." >&2
+    echo "      Existing models may be reused, but new downloads will be refused." >&2
+    echo "      Re-run with --no-verify to explicitly bypass integrity checks." >&2
   fi
 fi
 
@@ -278,20 +284,18 @@ for i in "${!IDS[@]}"; do
   ZIP_URL="$ZENODO_BASE/${zipname}"
   ZIP_PATH="$DEST/${zipname}"
 
+  if [[ $VERIFY -eq 1 && -z "$expected_md5" ]]; then
+    echo "  [FAIL] no MD5 available for ${zipname}; refusing to download unverified bytes." >&2
+    echo "         re-run with --no-verify to explicitly skip integrity checks." >&2
+    exit 1
+  fi
+
   echo "  downloading ${zipname} ..."
   curl -fL --progress-bar -o "$ZIP_PATH" "$ZIP_URL"
 
   # MD5 verification against the Zenodo record API (v0.10.0 records ship no
   # checksums.sha256 file; the per-file API md5 is the source of truth).
   if [[ $VERIFY -eq 1 ]]; then
-    if [[ -z "$expected_md5" ]]; then
-      # The API returned checksums for other files but none for this one — a
-      # genuine integrity gap. Fail closed (use --no-verify to override).
-      echo "  [FAIL] no MD5 published for ${zipname}; refusing to install unverified." >&2
-      echo "         re-run with --no-verify to skip integrity checks." >&2
-      rm -f "$ZIP_PATH"
-      exit 1
-    fi
     actual="$(md5sum "$ZIP_PATH" | awk '{print $1}')"
     if [[ "$actual" == "$expected_md5" ]]; then
       echo "  [OK] MD5 verified"

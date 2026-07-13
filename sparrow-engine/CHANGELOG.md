@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- fix: the model downloader now keeps already-installed models usable when the
+  Zenodo checksum API is unavailable, while refusing any new unverified download
+  unless the operator explicitly passes `--no-verify`; the CLI bootstrap hint
+  now uses the evergreen model-zoo concept DOI.
+- chore: remove the unused six-model placeholder Python downloader; the
+  catalog-driven downloader is the single supported path and its checksum,
+  stamp, stale-install, force, and cleanup branches now run in `scripts/test.sh`.
+- docs: document the five distributed TFLite model artifacts, the validated
+  Orca-cascade and MDV6 image-detection paths, and deferred mobile classification.
+- fix: align the mobile MSVC export definition with the current generic
+  18-symbol ABI instead of the removed Orca-specific API, with symbol-drift tests.
+- test: isolate CPU, GPU, and mobile test targets, enforce the built mobile
+  export gate in the canonical suite, and validate each flavor against its own
+  `exports.def`.
+- docs: update the public C ABI inventory from 32 to the current 37 desktop
+  exports and correct generated mobile header support notes.
+
 ## v0.1.21
 
 - fix: GPU audio-detector models now return the class label (was `null` on the GPU flavor; CPU was correct).

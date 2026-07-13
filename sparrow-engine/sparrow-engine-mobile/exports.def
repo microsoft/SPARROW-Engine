@@ -1,7 +1,20 @@
 LIBRARY sparrow_engine
 EXPORTS
-    sparrow_engine_orca_cascade_new
-    sparrow_engine_orca_cascade_run
-    sparrow_engine_orca_result_init
-    sparrow_engine_orca_cascade_free
-    sparrow_engine_orca_last_error
+    sparrow_engine_engine_new
+    sparrow_engine_engine_free
+    sparrow_engine_last_error
+    sparrow_engine_free_string
+    sparrow_engine_version
+    sparrow_engine_load_model_by_id
+    sparrow_engine_unload_model
+    sparrow_engine_list_models
+    sparrow_engine_detect
+    sparrow_engine_classify
+    sparrow_engine_detections_free
+    sparrow_engine_classify_result_free
+    sparrow_engine_detect_audio
+    sparrow_engine_audio_result_free
+    sparrow_engine_load_pipeline_by_id
+    sparrow_engine_run_pipeline
+    sparrow_engine_unload_pipeline
+    sparrow_engine_pipeline_result_free

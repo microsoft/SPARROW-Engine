@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21273206"
+record = "21330750"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.19.0"
+version = "0.20.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -432,10 +432,10 @@ geo_scope = "global"
 geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-
-# ============================ Camera Trap — Classifier ==========================
 commercial_use = true
 reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
+
+# ============================ Camera Trap — Classifier ==========================
 
 [[model]]
 id = "AI4G-Amazon-V2"
@@ -924,10 +924,10 @@ geo_regions = ["south_america"]
 geo_locality = "Peruvian Amazon"
 developer = "Mathias Tobler / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
-
-# ============================ Acoustics — Detector ==============================
 commercial_use = true
 reference = "San Diego Zoo Wildlife Alliance. Peruvian_Amazon classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Peruvian_Amazon"
+
+# ============================ Acoustics — Detector ==============================
 
 [[model]]
 id = "md-audiobirds-v1"
@@ -1006,10 +1006,10 @@ geo_regions = ["north_pacific"]
 geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-
-# ============================ Acoustics — Classifier ============================
 commercial_use = true
 reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
+
+# ============================ Acoustics — Classifier ============================
 
 [[model]]
 id = "orca-ecotype-dclde2026-v1"
@@ -1078,10 +1078,10 @@ geo_scope = "global"
 geo_regions = []
 developer = "Google Research (Hamer et al.)"
 ai4g_relationship = "third_party"
-
-# ============================ Acoustics — Cascade ===============================
 commercial_use = true
 reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
+
+# ============================ Acoustics — Cascade ===============================
 
 [[model]]
 id = "orca-cascade"
@@ -1097,10 +1097,10 @@ geo_regions = ["north_pacific"]
 geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-
-# ============================ Overhead — Detector ===============================
 commercial_use = true
 reference = "Pipeline descriptor combining orca-detector-v3-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
+
+# ============================ Overhead — Detector ===============================
 
 [[model]]
 id = "HerdNet_General_Dataset_2022"
@@ -1135,10 +1135,10 @@ geo_scope = "global"
 geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-
-# ============================ General — Encoder ============================
 commercial_use = true
 reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
+
+# ============================ General — Encoder ============================
 
 [[model]]
 id = "bioclip-2"

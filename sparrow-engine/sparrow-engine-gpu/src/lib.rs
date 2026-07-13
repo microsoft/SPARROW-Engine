@@ -38,7 +38,7 @@ pub(crate) mod trt;
 // Phase 3.8 Phase C Wave 4b: C FFI surface mirrors sparrow-engine-cpu's
 // `pub mod ffi;` declaration. Gated on `--features ffi` so default
 // workspace builds do not pull in cbindgen + csbindgen build-deps. See
-// `src/ffi.rs` for the 32 `sparrow_engine_*` exports and `exports.{map,def}` for
+// `src/ffi.rs` for the 37 `sparrow_engine_*` exports and `exports.{map,def}` for
 // the linker symbol filter applied to the cdylib.
 #[cfg(feature = "ffi")]
 pub mod ffi;

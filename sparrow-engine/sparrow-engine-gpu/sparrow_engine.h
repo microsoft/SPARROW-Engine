@@ -596,7 +596,7 @@ const char *sparrow_engine_last_error(void);
  * Phase D B-12: useful for installer / Studio Local / brew `test do` smoke
  * tests — a zero-arg, zero-allocation entry point that proves DLL load +
  * symbol resolution without spinning up an engine. Mirrors the CPU FFI
- * surface (32-symbol invariant enforced by G5 acceptance gate).
+ * surface (37-symbol invariant enforced by G5 acceptance gate).
  *
  * # Safety
  * Thread-safe. Returned pointer is valid for the lifetime of the process.

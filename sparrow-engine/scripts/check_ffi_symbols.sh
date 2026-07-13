@@ -8,21 +8,23 @@ usage() {
     cat <<'EOF'
 Usage: scripts/check_ffi_symbols.sh [--build] [--require-flavor <flavor>|--require-flavor all]
 
-Checks that every built sparrow-engine flavor cdylib exports the same number of
-sparrow_engine_* FFI symbols as the CPU baseline. Counts are parsed at runtime;
-there is no hardcoded symbol count.
+Checks each built sparrow-engine flavor cdylib against its own exports.def.
+CPU and GPU must declare the same ABI. Mobile intentionally exposes a smaller,
+generic ABI and is validated against its separate definition.
 
 Options:
   --build                  Build CPU and GPU cdylibs first in isolated target dirs:
                            target/cpu/ and target/gpu/. Mobile is not built here
                            because it needs the LiteRT/TFLite native toolchain.
-  --require-flavor FLAVOR  Require a non-CPU flavor cdylib to be present and equal
-                           to the CPU baseline. Repeatable. Valid: gpu, mobile, all.
+  --require-flavor FLAVOR  Require a non-CPU flavor cdylib to be present and match
+                           its declared export set. Repeatable. Valid: gpu, mobile, all.
                            The SPARROW_ENGINE_REQUIRED_FFI_FLAVORS env var accepts
                            the same values as a comma-separated list.
   -h, --help               Show this help.
 EOF
 }
+
+TARGET_ROOT="${SPARROW_ENGINE_FFI_TARGET_ROOT:-$SPARROW_ENGINE_DIR/target}"
 
 build_requested=0
 required_flavors=()
@@ -81,7 +83,7 @@ done
 
 target_dir_for() {
     local flavor="$1"
-    printf '%s/target/%s' "$SPARROW_ENGINE_DIR" "$flavor"
+    printf '%s/%s' "$TARGET_ROOT" "$flavor"
 }
 
 cdylib_for() {
@@ -93,7 +95,7 @@ build_flavor() {
     local flavor="$1"
     local package="$2"
 
-    echo "[check_ffi_symbols] building $flavor cdylib in target/$flavor/"
+    echo "[check_ffi_symbols] building $flavor cdylib in $(target_dir_for "$flavor")"
     (
         cd "$SPARROW_ENGINE_DIR"
         CARGO_TARGET_DIR="$(target_dir_for "$flavor")" \
@@ -101,7 +103,23 @@ build_flavor() {
     )
 }
 
-symbol_count() {
+exports_def_for() {
+    local flavor="$1"
+    printf '%s/sparrow-engine-%s/exports.def' "$SPARROW_ENGINE_DIR" "$flavor"
+}
+
+declared_symbol_set() {
+    local flavor="$1"
+    local def
+    def="$(exports_def_for "$flavor")"
+    [[ -f "$def" ]] || {
+        echo "error: exports definition not found: $def" >&2
+        return 1
+    }
+    awk '/^[[:space:]]+sparrow_engine_/ { print $1 }' "$def" | sort -u
+}
+
+built_symbol_set() {
     local cdylib="$1"
     local nm_output
     if ! command -v nm >/dev/null 2>&1; then
@@ -112,7 +130,41 @@ symbol_count() {
         echo "error: nm failed while reading exports from $cdylib" >&2
         return 1
     fi
-    printf '%s\n' "$nm_output" | grep -c ' T sparrow_engine_' || true
+    printf '%s\n' "$nm_output" \
+        | awk '$2 == "T" && $3 ~ /^sparrow_engine_/ { print $3 }' \
+        | sort -u
+}
+
+set_count() {
+    local symbols="$1"
+    if [[ -z "$symbols" ]]; then
+        printf '0\n'
+    else
+        grep -c . <<< "$symbols"
+    fi
+}
+
+verify_flavor_exports() {
+    local flavor="$1"
+    local cdylib="$2"
+    local declared
+    local built
+    local declared_n
+    local built_n
+
+    declared="$(declared_symbol_set "$flavor")" || return 1
+    built="$(built_symbol_set "$cdylib")" || return 1
+    declared_n="$(set_count "$declared")"
+    built_n="$(set_count "$built")"
+    echo "[check_ffi_symbols] $flavor declared=$declared_n built=$built_n ($cdylib)"
+
+    if [[ "$built" != "$declared" ]]; then
+        echo "[check_ffi_symbols] mismatch: $flavor cdylib differs from $(exports_def_for "$flavor")" >&2
+        diff -u \
+            <(printf '%s\n' "$declared") \
+            <(printf '%s\n' "$built") >&2 || true
+        return 1
+    fi
 }
 
 flavor_is_required() {
@@ -132,7 +184,7 @@ print_build_command() {
     cat <<EOF
 [check_ffi_symbols] $flavor cdylib not found: $(cdylib_for "$flavor")
 [check_ffi_symbols] build it with:
-  cd "$SPARROW_ENGINE_DIR" && CARGO_TARGET_DIR=target/$flavor cargo build -p $package --release --features ffi
+  cd "$SPARROW_ENGINE_DIR" && CARGO_TARGET_DIR="$(target_dir_for "$flavor")" cargo build -p $package --release --features ffi
 EOF
 }
 
@@ -148,12 +200,25 @@ if [[ ! -f "$cpu_cdylib" ]]; then
     exit 2
 fi
 
-baseline_n="$(symbol_count "$cpu_cdylib")"
-if [[ "$baseline_n" -eq 0 ]]; then
-    echo "[check_ffi_symbols] CPU baseline N=0; refusing to pass an empty FFI export set." >&2
+cpu_declared="$(declared_symbol_set cpu)"
+gpu_declared="$(declared_symbol_set gpu)"
+if [[ "$cpu_declared" != "$gpu_declared" ]]; then
+    echo "[check_ffi_symbols] CPU/GPU exports.def files differ." >&2
+    diff -u \
+        <(printf '%s\n' "$cpu_declared") \
+        <(printf '%s\n' "$gpu_declared") >&2 || true
     exit 1
 fi
-echo "[check_ffi_symbols] CPU baseline N=$baseline_n ($cpu_cdylib)"
+
+baseline_n="$(set_count "$cpu_declared")"
+if [[ "$baseline_n" -eq 0 ]]; then
+    echo "[check_ffi_symbols] CPU exports.def is empty; refusing to pass." >&2
+    exit 1
+fi
+if ! verify_flavor_exports cpu "$cpu_cdylib"; then
+    exit 1
+fi
+echo "[check_ffi_symbols] CPU/GPU declared ABI count=$baseline_n"
 
 mismatch=0
 missing_required=0
@@ -164,7 +229,6 @@ check_flavor() {
     local flavor="$1"
     local package="$2"
     local cdylib
-    local count
 
     cdylib="$(cdylib_for "$flavor")"
     if [[ ! -f "$cdylib" ]]; then
@@ -180,10 +244,7 @@ check_flavor() {
     fi
 
     found_flavors+=("$flavor")
-    count="$(symbol_count "$cdylib")"
-    echo "[check_ffi_symbols] $flavor count=$count ($cdylib)"
-    if [[ "$count" != "$baseline_n" ]]; then
-        echo "[check_ffi_symbols] mismatch: $flavor count $count != CPU baseline $baseline_n" >&2
+    if ! verify_flavor_exports "$flavor" "$cdylib"; then
         mismatch=1
     fi
 }
@@ -206,8 +267,8 @@ if [[ "$missing_required" -ne 0 ]]; then
 fi
 
 if [[ "$mismatch" -ne 0 ]]; then
-    echo "[check_ffi_symbols] FAIL: FFI symbol counts differ." >&2
+    echo "[check_ffi_symbols] FAIL: one or more built FFI symbol sets differ from exports.def." >&2
     exit 1
 fi
 
-echo "[check_ffi_symbols] PASS: checked flavor counts equal N=$baseline_n. Use --require-flavor all for full CPU/GPU/mobile verification."
+echo "[check_ffi_symbols] PASS: every checked flavor matches exports.def; CPU/GPU declarations are identical. Use --require-flavor all for full CPU/GPU/mobile verification."

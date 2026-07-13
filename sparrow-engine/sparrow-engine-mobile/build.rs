@@ -123,8 +123,9 @@ fn main() {
         // Linux note: rustc already passes a generated version script for cdylib
         // builds. Passing a second script causes GNU ld in the aarch64 cross
         // image to fail with "anonymous version tag cannot be combined with
-        // other version tags". The focused mobile API exports only `#[no_mangle]
-        // sparrow_engine_orca_*` symbols, verified by `nm -D`.
+        // other version tags". The focused mobile API exports a generic
+        // 18-symbol `sparrow_engine_*` profile, verified against `exports.def`
+        // by `tests/integration_ffi_symbols.rs`.
         let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         if target_os == "windows" {
             let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();

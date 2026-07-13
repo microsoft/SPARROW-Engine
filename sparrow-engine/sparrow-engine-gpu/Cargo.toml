@@ -26,7 +26,7 @@ crate-type = ["rlib", "cdylib"]
 # Phase 3.8 Phase C Wave 4b: mirrors sparrow-engine-cpu's `ffi` feature. Activates
 # cbindgen + csbindgen invocations in build.rs and applies the
 # `exports.map` / `exports.def` symbol filter to the cdylib so only the
-# 32 `sparrow_engine_*` exports (Acceptance Gate G5) are visible.
+# 37 `sparrow_engine_*` exports (Acceptance Gate G5) are visible.
 ffi = ["dep:cbindgen", "dep:csbindgen"]
 
 [dependencies]

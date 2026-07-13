@@ -17,6 +17,11 @@ set -euo pipefail
 
 # Shared ORT discovery: sets ORT_CAPI, ORT_LIB_LOCATION, ORT_PREFER_DYNAMIC_LINK, LD_LIBRARY_PATH.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+"$SCRIPT_DIR/tests/test_download_models.sh"
+"$SCRIPT_DIR/tests/test_check_ffi_symbols.sh"
+# Keep this before ort-env.sh: the catalogue smoke test invokes python3, which
+# must not inherit ORT/CUDA loader paths. /dev/null skips on-disk model loading.
+SPARROW_CATALOG='' "$SCRIPT_DIR/smoke_test_models.sh" --model-dir /dev/null
 source "$SCRIPT_DIR/ort-env.sh"
 
 # sparrow-engine-python tests (--no-default-features) link to libpython.
@@ -44,21 +49,64 @@ for arg in "$@"; do
     fi
 done
 
-# If no non-flag args given, run workspace-wide but handle sparrow-engine-python specially:
+# If no non-flag args are given, run the full suite. CPU, GPU, and mobile all
+# publish a library named `sparrow_engine`, so GPU and mobile use isolated
+# target dirs instead of sharing the workspace target and racing on the same
+# rlib/cdylib filenames.
+#
+# Handle sparrow-engine-python specially:
 # it has `default = ["extension-module"]`, which asks pyo3 NOT to link libpython
 # (symbols come from the host Python at runtime). `cargo test` builds a standalone
 # lib-test binary that then cannot link — rust-lld errors on Py_* symbols.
-# Workaround: exclude sparrow-engine-python from --workspace, then run it separately with
-# --lib --no-default-features so pyo3 links libpython statically.
+# Workaround: run it separately without `extension-module`, while explicitly
+# retaining the CPU engine feature, so pyo3 links libpython for the test binary.
 # --test-threads=1 because the ORT engine is a process-global singleton.
 if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
-    echo "Running: cargo test --workspace --exclude sparrow-engine-python ${CARGO_FLAGS[*]:-} -- --test-threads=1"
+    LITERT_DIR="${LITERT_LIB_DIR:-$SCRIPT_DIR/../artifacts}"
+    if [[ ! -f "$LITERT_DIR/libLiteRt.so" ]]; then
+        echo "ERROR: full tests require libLiteRt.so; set LITERT_LIB_DIR to its directory." >&2
+        exit 1
+    fi
+    MOBILE_FFI_TARGET_DIR="${SPARROW_ENGINE_MOBILE_FFI_TARGET_DIR:-$SCRIPT_DIR/../target/mobile-ffi}"
+    echo "Running: mobile FFI built-export gate"
     echo "---"
-    cargo test --workspace --exclude sparrow-engine-python ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
+    LITERT_LIB_DIR="$LITERT_DIR" CARGO_TARGET_DIR="$MOBILE_FFI_TARGET_DIR" \
+        cargo build -p sparrow-engine-mobile --release --features ffi
+    LITERT_LIB_DIR="$LITERT_DIR" CARGO_TARGET_DIR="$MOBILE_FFI_TARGET_DIR" \
+        cargo test -p sparrow-engine-mobile --release --features ffi \
+        --test integration_ffi_symbols
     echo "---"
-    echo "Running: cargo test -p sparrow-engine-python --lib --no-default-features ${CARGO_FLAGS[*]:-} -- --test-threads=1"
+
+    MOBILE_TEST_TARGET_DIR="${SPARROW_ENGINE_MOBILE_TEST_TARGET_DIR:-$SCRIPT_DIR/../target/test-mobile}"
+    echo "Running: isolated sparrow-engine-mobile tests ${CARGO_FLAGS[*]:-}"
     echo "---"
-    exec cargo test -p sparrow-engine-python --lib --no-default-features ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
+    LITERT_LIB_DIR="$LITERT_DIR" \
+        LD_LIBRARY_PATH="$LITERT_DIR:${LD_LIBRARY_PATH:-}" \
+        CARGO_TARGET_DIR="$MOBILE_TEST_TARGET_DIR" \
+        cargo test -p sparrow-engine-mobile \
+        ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
+    echo "---"
+
+    GPU_TEST_TARGET_DIR="${SPARROW_ENGINE_GPU_TEST_TARGET_DIR:-$SCRIPT_DIR/../target/test-gpu}"
+    echo "Running: isolated sparrow-engine-gpu tests ${CARGO_FLAGS[*]:-}"
+    echo "---"
+    CARGO_TARGET_DIR="$GPU_TEST_TARGET_DIR" \
+        cargo test -p sparrow-engine-gpu \
+        ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
+    echo "---"
+
+    echo "Running: cargo test --workspace --exclude sparrow-engine-python --exclude sparrow-engine-gpu --exclude sparrow-engine-mobile ${CARGO_FLAGS[*]:-} -- --test-threads=1"
+    echo "---"
+    cargo test --workspace \
+        --exclude sparrow-engine-python \
+        --exclude sparrow-engine-gpu \
+        --exclude sparrow-engine-mobile \
+        ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
+    echo "---"
+    echo "Running: cargo test -p sparrow-engine-python --lib --no-default-features --features cpu ${CARGO_FLAGS[*]:-} -- --test-threads=1"
+    echo "---"
+    exec cargo test -p sparrow-engine-python --lib --no-default-features --features cpu \
+        ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
 else
     echo "Running: cargo test ${CARGO_FLAGS[*]:-} ${CARGO_ARGS[*]}"
     echo "---"

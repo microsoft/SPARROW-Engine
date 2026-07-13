@@ -1,6 +1,6 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **61 models**, Zenodo record [`21273206`](https://zenodo.org/records/21273206) (v0.19.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **61 models**, Zenodo record [`21330750`](https://zenodo.org/records/21330750) (v0.20.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
 

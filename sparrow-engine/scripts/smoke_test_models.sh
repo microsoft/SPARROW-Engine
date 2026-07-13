@@ -60,8 +60,11 @@ echo ""
 # Check 1 — catalog internal integrity
 # ---------------------------------------------------------------------------
 echo "[1] catalog integrity"
-INTEGRITY="$(python3 - "$CATALOG" <<'PY'
-import sys, tomllib, re
+INTEGRITY="$(python3 - "$CATALOG" "$REPO_DIR" <<'PY'
+import re
+import sys
+import tomllib
+from pathlib import Path
 DOMAINS = {"camera_trap", "acoustics", "overhead", "general"}
 TASKS = {"detector", "classifier", "encoder", "cascade"}
 FORMATS = {"onnx", "tflite", "cascade"}
@@ -175,6 +178,53 @@ if clash:
 z = c.get("zenodo", {})
 if not z.get("record"):
     errs.append("zenodo.record missing")
+
+# The public catalogue generator lives in the paired dev-companion repo, so
+# keep a lightweight parity gate beside the shipping catalog as well. Fixture
+# catalogs supplied through SPARROW_CATALOG intentionally skip this check.
+catalog_path = Path(sys.argv[1]).resolve()
+repo_dir = Path(sys.argv[2]).resolve()
+canonical_catalog = (repo_dir / "scripts" / "catalog.toml").resolve()
+if catalog_path == canonical_catalog:
+    public_root = repo_dir.parent
+    total = len(models)
+    onnx_count = sum(m.get("format") == "onnx" for m in models)
+    tflite_count = sum(m.get("format") == "tflite" for m in models)
+    cascade_count = sum(m.get("format") == "cascade" for m in models)
+    mobile_count = tflite_count + cascade_count
+    record = str(z.get("record", ""))
+    version = str(z.get("version", ""))
+    concept_doi = str(z.get("concept_doi", ""))
+
+    def read_asset(path):
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errs.append(f"public asset unreadable: {path}: {exc}")
+            return ""
+
+    def require(asset, needle, label):
+        if needle not in asset:
+            errs.append(f"{label} missing catalog-derived value {needle!r}")
+
+    readme = read_asset(public_root / "README.md")
+    catalogue = read_asset(public_root / "docs" / "model-zoo-catalogue.md")
+    downloader = read_asset(repo_dir / "scripts" / "download_models.sh")
+
+    require(readme, f"Download the {onnx_count} desktop ONNX models", "README")
+    require(readme, f"zoo also holds {mobile_count} mobile", "README")
+    require(readme, f"complete **{total}-model** catalog", "README")
+    require(readme, f"10.5281/zenodo.{record}", "README")
+    require(readme, f"(v{version})", "README")
+    require(readme, concept_doi, "README")
+
+    require(catalogue, f"**{total} models**", "generated catalogue")
+    require(catalogue, f"records/{record}", "generated catalogue")
+    require(catalogue, f"(v{version},", "generated catalogue")
+    require(catalogue, concept_doi, "generated catalogue")
+
+    require(downloader, f"# {onnx_count} desktop ONNX models", "downloader help")
+    require(downloader, f"# all {total} (incl.", "downloader help")
 if errs:
     print("FAIL")
     for e in errs:

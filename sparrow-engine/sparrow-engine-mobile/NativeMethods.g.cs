@@ -226,8 +226,8 @@ namespace SparrowEngine.Native
     }
 
     /// <summary>
-    ///  Image detection output (image inference is deferred to RP-42; see
-    ///  `sparrow_engine_detect`).
+    ///  Image detection output. `yolo_e2e` image detection is available as of
+    ///  RP-42; see `sparrow_engine_detect`.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct SparrowEngineDetections
@@ -250,7 +250,9 @@ namespace SparrowEngine.Native
     }
 
     /// <summary>
-    ///  Image classification output (deferred to RP-42; see `sparrow_engine_classify`).
+    ///  Image classification output. Classification remains unavailable until a
+    ///  mobile TFLite classifier is onboarded (RP-42-FU-1); see
+    ///  `sparrow_engine_classify`.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct SparrowEngineClassifyResult

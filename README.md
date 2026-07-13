@@ -17,7 +17,7 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21211015/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21330750/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
@@ -225,7 +225,7 @@ cross build -p sparrow-engine-mobile --features cli --release --target aarch64-u
 spe-mobile detect-audio --model-dir /path/to/model_catalog --pipeline orca-cascade --threads 4 recording.wav
 ```
 
-Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 orca `.tflite` resident at ~297 MB peak, ≤ 2 s/segment (4-thread XNNPACK). The only mobile model onboarded so far is the orca cascade; image models (MegaDetector etc.) await the ONNX→`.tflite` conversion pipeline (tracked as RP-42). Full details + flag reference: §5.7 of the [user manual](docs/user-manual.md).
+Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use ~282 MB resident memory (~297 MB observed peak), ≤ 2 s/segment (4-thread XNNPACK). The mobile catalog includes five TFLite model artifacts — `MDV6-yolov10-c-tflite`, two Orca detector variants, and two Orca ecotype variants — plus the `orca-cascade` pipeline descriptor. The validated mobile inference paths today are the Orca cascade and `MDV6-yolov10-c-tflite` image detection. Mobile image classification remains unavailable until a TFLite classifier is onboarded (tracked as RP-42-FU-1). Full details + flag reference: §5.7 of the [user manual](docs/user-manual.md).
 
 ---
 
@@ -239,9 +239,9 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 orca `.tflite` resident at
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21211015](https://doi.org/10.5281/zenodo.21211015) (v0.16.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21330750](https://doi.org/10.5281/zenodo.21330750) (v0.20.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 54 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched only with `--all`):
+Download the 55 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched on demand, either by name or with `--all`):
 
 ```bash
 bash scripts/download_models.sh

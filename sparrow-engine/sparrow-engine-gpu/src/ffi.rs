@@ -2,7 +2,7 @@
 //!
 //! Phase 3.8 Phase C Wave 4b: structurally identical to
 //! `sparrow-engine-cpu/src/ffi.rs` — both crates set `[lib] name = "sparrow_engine"` and
-//! produce a `libsparrow_engine.so` cdylib with the same 34 `sparrow_engine_*` exported
+//! produce a `libsparrow_engine.so` cdylib with the same 37 `sparrow_engine_*` exported
 //! symbols. The two cdylibs ship in distinct release artifacts (Docker
 //! images, Python wheels, CLI bundles) and are NEVER linked into the same
 //! process, so the `pub type SparrowEngine = c_void;` alias and the FFI
@@ -1831,7 +1831,7 @@ pub unsafe extern "C" fn sparrow_engine_last_error() -> *const c_char {
 /// Phase D B-12: useful for installer / Studio Local / brew `test do` smoke
 /// tests — a zero-arg, zero-allocation entry point that proves DLL load +
 /// symbol resolution without spinning up an engine. Mirrors the CPU FFI
-/// surface (32-symbol invariant enforced by G5 acceptance gate).
+/// surface (37-symbol invariant enforced by G5 acceptance gate).
 ///
 /// # Safety
 /// Thread-safe. Returned pointer is valid for the lifetime of the process.

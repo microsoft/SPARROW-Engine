@@ -2,6 +2,7 @@
 mod common;
 
 #[test]
+#[ignore = "requires generated test_outputs/golden fixtures"]
 fn golden_dir_exists() {
     let dir = common::golden_dir();
     assert!(dir.exists(), "Golden dir not found: {:?}", dir);
@@ -14,6 +15,7 @@ fn test_cameratrap_dir_exists() {
 }
 
 #[test]
+#[ignore = "requires generated test_outputs/golden fixtures"]
 fn can_load_golden_detection() {
     let paths = common::image_paths_from(&common::test_cameratrap_dir(), 1);
     assert!(!paths.is_empty(), "No test images found");
@@ -23,6 +25,7 @@ fn can_load_golden_detection() {
 }
 
 #[test]
+#[ignore = "requires generated test_outputs/golden fixtures"]
 fn can_load_golden_classification() {
     let paths = common::image_paths_from(&common::test_cameratrap_dir(), 1);
     assert!(!paths.is_empty(), "No test images found");
