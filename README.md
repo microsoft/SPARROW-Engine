@@ -17,7 +17,7 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21330750/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21346269/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
@@ -239,7 +239,7 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21330750](https://doi.org/10.5281/zenodo.21330750) (v0.20.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21346269](https://doi.org/10.5281/zenodo.21346269) (v0.21.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
 Download the 55 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched on demand, either by name or with `--all`):
 
@@ -321,12 +321,12 @@ The tables below highlight the most-used models across four families (detectors,
 |---|---|---|---|---|
 | `md-audiobirds-v1` | 1 s @ 48 kHz, mel spectrogram (0.3 s stride) | 1 (bird vs no-bird) | 81 MB | MIT |
 | `perch-v2` | 5 s @ 32 kHz raw audio | 14795 | 391 MB | Apache 2.0 |
-| `orca-detector-dclde2026-v3` | 3 s @ 24 kHz, mel spectrogram (1.5 s stride) | 1 (Orca vs rest) | 43 MB | MIT |
+| `orca-detector-dclde2026-v5` | 3 s @ 24 kHz, mel spectrogram (1.5 s stride) | 1 (Orca vs rest) | 43 MB | MIT |
 | `orca-ecotype-dclde2026-v1` | 3 s @ 24 kHz raw audio (in-graph mel) | 5 (SRKW / TKW / SAR / NRKW / OKW) | 48 MB | MIT |
 
 - `md-audiobirds-v1` (published ONNX file `MD_AudioBirds_V1.onnx`) is the sparrow-engine default audio detector — a lightweight binary bird-vs-no-bird model used in benchmarks and Phase 4.x manual tests. Sliding-window mel-spectrogram front-end (Slaney mel scale + Slaney filter norm). Ships in the v0.5.0 Zenodo bundle (DOI [10.5281/zenodo.20563673](https://doi.org/10.5281/zenodo.20563673)) as FP32; the FP16 conversion path is in `sparrow-engine/tools/convert_fp16.py` and is parity-verified against the FP32 reference (Phase 3.8 Step 2 post-STRETCH audit, 2026-05-05).
 - `perch-v2` is Google Perch 2, a global bird-vocalisation classifier (Conformer encoder) with an in-graph mel front-end. Takes 160000-sample windows of raw audio; emits softmax over 14795 classes (birds + non-bird FSD50K labels).
-- `orca-detector-dclde2026-v3` + `orca-ecotype-dclde2026-v1` are a two-stage killer-whale cascade from the [DCLDE 2026 challenge](https://github.com/microsoft/orcas_dclde2026). Stage 1 screens 3-s windows for orcas (3-class NonBio/Bio/Orca classifier exposed as a binary Orca-vs-rest sigmoid at the engine boundary). Stage 2 classifies the Orca-positive windows into 5 Pacific Northwest ecotypes (Southern Resident / Transient / Southern Alaska Residents / Northern Resident / Offshore), with temperature scaling (T=5.4254) baked into the ONNX so the engine's softmax output is calibrated. Both stages **require sparrow-engine ≥ v0.1.16** because they use the RP-27 `fill_highfreq` engine opt-in to match the upstream training pipeline on under-sampled hydrophone audio (most field hydrophones cap at 16 kHz). Cascade usage and the Stage 2 abstention threshold (0.94 → `Unassigned_KW`) are documented in each model's `MODEL_CARD.md`.
+- `orca-detector-dclde2026-v5` + `orca-ecotype-dclde2026-v1` are a two-stage killer-whale cascade from the [DCLDE 2026 challenge](https://github.com/microsoft/orcas_dclde2026). Stage 1 screens 3-s windows with a binary Orca-vs-rest model at the operational 0.7 threshold. On the 180-window validation set, v5 produced recall 0.3333 and precision 0.8696, compared with v3 recall 0.30 and precision 0.90: two additional true positives, one additional false positive, and no v3 positive decisions lost. The FP16 and INT8 TFLite conversions had zero threshold flips and zero additional Orca decisions versus the binary ONNX; maximum absolute probability differences were 0.00184 and 0.02775. Stage 2 classifies Orca-positive windows into 5 Pacific Northwest ecotypes (Southern Resident / Transient / Southern Alaska Residents / Northern Resident / Offshore), with temperature scaling (T=5.4254) baked into the ONNX so softmax output is calibrated. Both stages **require sparrow-engine ≥ v0.1.16** because they use the RP-27 `fill_highfreq` engine opt-in to match the upstream training pipeline on under-sampled hydrophone audio (most field hydrophones cap at 16 kHz). Cascade usage and the Stage 2 abstention threshold (0.94 → `Unassigned_KW`) are documented in the model cards.
 
 #### License summary
 
@@ -336,7 +336,7 @@ This summary covers the highlighted models above. For the **complete per-model l
 - **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.
 - **CC0 1.0**: `Deepfaune-New-England` (USGS public-domain release).
 - **Apache 2.0**: `SpeciesNet-Crop`, `perch-v2`.
-- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v3`, `orca-ecotype-dclde2026-v1`.
+- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v5`, `orca-ecotype-dclde2026-v1`.
 - **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the regional classifiers flagged `commercial_use = false` in the catalogue (non-commercial CC-BY-NC-* licenses).
 
 **Commercial users**: YOLO-based detectors need an [Ultralytics Enterprise License](https://www.ultralytics.com/license), and every model with `commercial_use = false` (non-commercial licenses like CC-BY-NC-*) must not be used commercially. `tropicam-ai` is additionally no-derivatives (CC-BY-NC-ND-4.0).
