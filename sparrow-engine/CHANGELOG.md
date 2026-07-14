@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- security: update `crossbeam-epoch` 0.9.18→0.9.20 and `quinn-proto`
+  0.11.14→0.11.16 to resolve their RustSec advisories.
+- security: update PyO3 0.25→0.29 with matching `numpy` and `pyo3-log`
+  versions to resolve two PyO3 RustSec advisories.
 - fix: the model downloader now keeps already-installed models usable when the
   Zenodo checksum API is unavailable, while refusing any new unverified download
   unless the operator explicitly passes `--no-verify`; the CLI bootstrap hint
@@ -24,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exports.def`.
 - docs: update the public C ABI inventory from 32 to the current 37 desktop
   exports and correct generated mobile header support notes.
+
+## v0.1.22
+
+- release: rebuild and publish the complete release artifact set at version
+  0.1.22.
+- fix: default section-less ONNX manifests to on-demand TensorRT through one
+  shared resolver used by the catalog and GPU warm-up path.
+- fix: refresh stale local model installations when the current catalogue MD5
+  differs from the verified installation stamp.
+- chore: update the Homebrew formula templates for the SPARROW-Engine release
+  repository and version 0.1.21 assets.
 
 ## v0.1.21
 
