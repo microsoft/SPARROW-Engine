@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21330750"
+record = "21346269"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.20.0"
+version = "0.21.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -948,15 +948,16 @@ commercial_use = true
 reference = "Microsoft AI for Good Lab (AI4G). MegaDetector-Acoustic / MD_AudioBirds_V1. Source: https://github.com/microsoft/MegaDetector-Acoustic; model-zoo page: https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/. Cite: Hernandez et al. 2024, Pytorch-Wildlife: A Collaborative Deep Learning Framework for Conservation, arXiv:2405.12930."
 
 [[model]]
-id = "orca-detector-dclde2026-v3"
+id = "orca-detector-dclde2026-v5"
 domain = "acoustics"
 task = "detector"
 format = "onnx"
 family = ["DCLDE-orca"]
-version = "v3"
+version = "v5"
 status = "active"
+alias = ["orca-detector-dclde2026-v3"]
 license = "MIT"
-zip = "acoustics__detector__orca-detector-dclde2026-v3.zip"
+zip = "acoustics__detector__orca-detector-dclde2026-v5.zip"
 species_direct = false
 detector_gate_class = "Orca"
 geo_scope = "regional"
@@ -965,19 +966,21 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.9.0: orca-detector-dclde2026-v3. Zenodo. https://doi.org/10.5281/zenodo.20864372. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
+reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.21.0: orca-detector-dclde2026-v5. Zenodo. https://doi.org/10.5281/zenodo.21346269. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
-id = "orca-detector-v3-fp16-tflite"
+id = "orca-detector-v5-fp16-tflite"
 domain = "acoustics"
 task = "detector"
 format = "tflite"
 family = ["DCLDE-orca"]
-version = "v3"
+version = "v5"
 status = "active"
+alias = ["orca-detector-v3-fp16-tflite"]
 flavor = "tflite-fp16"
 license = "MIT"
-zip = "acoustics__detector__orca-detector-v3-fp16-tflite.zip"
+zip = "acoustics__detector__orca-detector-v5-fp16-tflite.zip"
+description = "DCLDE 2026 orca cascade — Stage 1 detector v5 (3-class screening checkpoint 3class_sparrow_ft_v5), fp16 TFLite/LiteRT build (mobile). Mel-input ResNet18 → binary orca sigmoid."
 species_direct = false
 detector_gate_class = "Orca"
 geo_scope = "regional"
@@ -986,19 +989,21 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
+reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v5. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 [[model]]
-id = "orca-detector-v3-int8-tflite"
+id = "orca-detector-v5-int8-tflite"
 domain = "acoustics"
 task = "detector"
 format = "tflite"
 family = ["DCLDE-orca"]
-version = "v3"
+version = "v5"
 status = "active"
+alias = ["orca-detector-v3-int8-tflite"]
 flavor = "tflite-int8"
 license = "MIT"
-zip = "acoustics__detector__orca-detector-v3-int8-tflite.zip"
+zip = "acoustics__detector__orca-detector-v5-int8-tflite.zip"
+description = "DCLDE 2026 orca cascade — Stage 1 detector v5 (3-class screening checkpoint 3class_sparrow_ft_v5), INT8 dynamic-range TFLite/LiteRT build (mobile). Mel-input ResNet18 → binary orca sigmoid."
 species_direct = false
 detector_gate_class = "Orca"
 geo_scope = "regional"
@@ -1007,7 +1012,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v3. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.9.0, https://doi.org/10.5281/zenodo.20864372."
+reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v5. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 # ============================ Acoustics — Classifier ============================
 
@@ -1098,7 +1103,7 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
-reference = "Pipeline descriptor combining orca-detector-v3-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; cascade artifact first published in Sparrow Engine model zoo v0.7.0, https://doi.org/10.5281/zenodo.20723037."
+reference = "Pipeline descriptor combining orca-detector-v5-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; updated for Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 # ============================ Overhead — Detector ===============================
 
