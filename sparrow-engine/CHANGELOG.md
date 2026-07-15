@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.23
+
 - security: update `crossbeam-epoch` 0.9.18→0.9.20 and `quinn-proto`
   0.11.14→0.11.16 to resolve their RustSec advisories.
 - security: update PyO3 0.25→0.29 with matching `numpy` and `pyo3-log`
   versions to resolve two PyO3 RustSec advisories.
+- security: update `anyhow` 1.0.102→1.0.103 and `serial_test` 3.4.0→3.5.0
+  to clear two newer RustSec unsoundness advisories before publication.
 - fix: the model downloader now keeps already-installed models usable when the
   Zenodo checksum API is unavailable, while refusing any new unverified download
   unless the operator explicitly passes `--no-verify`; the CLI bootstrap hint
