@@ -45,9 +45,9 @@ pub struct PreprocessMeta {
     pub original_height: u32,
     /// Resize scale factor applied to the original image.
     pub scale: f32,
-    /// Horizontal padding in model-input pixel space (letterbox only).
+    /// Left padding actually applied in model-input pixel space (letterbox only).
     pub pad_x: f32,
-    /// Vertical padding in model-input pixel space (letterbox only).
+    /// Top padding actually applied in model-input pixel space (letterbox only).
     pub pad_y: f32,
 }
 

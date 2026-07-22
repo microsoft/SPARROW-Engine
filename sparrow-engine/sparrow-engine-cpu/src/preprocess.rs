@@ -154,8 +154,9 @@ pub(crate) fn decode_to_rgb(input: &ImageInput) -> Result<RgbImage> {
 
 /// Resize preserving aspect ratio, center on a padded canvas.
 ///
-/// Returns `(canvas, scale, pad_x, pad_y)` where canvas pixels are already
+/// Returns `(canvas, scale, pad_left, pad_top)` where canvas pixels are already
 /// normalized according to `norm` (so padding uses the post-normalization pad_value).
+/// Odd padding is placed on the bottom/right, matching Ultralytics letterbox.
 fn letterbox(
     img: &RgbImage,
     target_w: u32,
@@ -177,7 +178,7 @@ fn letterbox(
     let pad_y = (target_h as f32 - new_h as f32) / 2.0;
 
     let pad_x_left = pad_x.floor() as u32;
-    let pad_y_top = pad_y.ceil() as u32; // PW compatibility: extra pixel on TOP, not bottom
+    let pad_y_top = pad_y.floor() as u32;
 
     // Build flat [H * W * 3] canvas filled with pad_value
     let total = checked_tensor_len_3hw(target_h, target_w)?;
@@ -199,7 +200,7 @@ fn letterbox(
         }
     }
 
-    Ok((canvas, scale, pad_x, pad_y))
+    Ok((canvas, scale, pad_x_left as f32, pad_y_top as f32))
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +366,9 @@ fn resize_crop(
     // 2. resize
     let (rw, rh) = match rc.resize_mode {
         ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
-        ResizeMode::ShorterSide => shorter_side_dims(base.width(), base.height(), rc.resize_size[0]),
+        ResizeMode::ShorterSide => {
+            shorter_side_dims(base.width(), base.height(), rc.resize_size[0])
+        }
     };
     let resized = resize_image(&base, rw, rh, interp)?;
 
@@ -738,6 +741,29 @@ mod tests {
         // pad_x = (640-640)/2 = 0, pad_y = (640-320)/2 = 160
         assert!(pad_x.abs() < 1e-4);
         assert!((pad_y - 160.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_letterbox_odd_padding_matches_ultralytics() {
+        let img = red_image(4, 1);
+        let (canvas, scale, pad_x, pad_y) = letterbox(
+            &img,
+            4,
+            4,
+            0.0,
+            &Normalization::None,
+            Interpolation::Cv2Bilinear,
+        )
+        .unwrap();
+
+        assert!((scale - 1.0).abs() < f32::EPSILON);
+        assert!(pad_x.abs() < f32::EPSILON);
+        assert!((pad_y - 1.0).abs() < f32::EPSILON);
+
+        let row_stride = 4 * 3;
+        assert!(canvas[..row_stride].iter().all(|value| *value == 0.0));
+        assert_eq!(canvas[row_stride], 255.0);
+        assert!(canvas[2 * row_stride..].iter().all(|value| *value == 0.0));
     }
 
     #[test]

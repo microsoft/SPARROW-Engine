@@ -71,8 +71,7 @@ pub fn letterbox_gpu(
     let pad_x = (tgt_w as f32 - new_w as f32) / 2.0;
     let pad_y = (tgt_h as f32 - new_h as f32) / 2.0;
     let pad_x_left = pad_x.floor() as u32;
-    // PW compatibility: extra pixel on TOP (mirrors sparrow_engine_cpu::preprocess::letterbox).
-    let pad_y_top = pad_y.ceil() as u32;
+    let pad_y_top = pad_y.floor() as u32;
 
     let total = checked_tensor_len_3hw(tgt_h, tgt_w)?;
     // Pre-zeroed: pad regions are filled by the kernel anyway, but a clean
@@ -138,8 +137,8 @@ pub fn letterbox_gpu(
 
     let meta = LetterboxMeta {
         scale,
-        pad_x,
-        pad_y,
+        pad_x: pad_x_left as f32,
+        pad_y: pad_y_top as f32,
         original_width: src.width,
         original_height: src.height,
     };

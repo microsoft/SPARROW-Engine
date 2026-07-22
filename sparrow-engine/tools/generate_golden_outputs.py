@@ -132,7 +132,7 @@ def letterbox_preprocess(
     """Letterbox resize with unit normalization. Matches sparrow-engine-cpu letterbox().
 
     - Bilinear resize preserving aspect ratio
-    - pad_x_left = floor(pad_x), pad_y_top = ceil(pad_y)
+    - pad_x_left = floor(pad_x), pad_y_top = floor(pad_y)
     - Pixel / 255.0 normalization
     - Pad with pad_value (post-normalization scale)
     """
@@ -148,7 +148,7 @@ def letterbox_preprocess(
     pad_y = (target_h - new_h) / 2.0
 
     pad_x_left = math.floor(pad_x)
-    pad_y_top = math.ceil(pad_y)  # sparrow-engine-cpu: ceil for top padding
+    pad_y_top = math.floor(pad_y)
 
     # Build canvas filled with pad_value (already in post-norm scale)
     canvas = np.full((target_h, target_w, 3), pad_value, dtype=np.float32)
@@ -162,8 +162,8 @@ def letterbox_preprocess(
 
     meta = {
         "scale": scale,
-        "pad_x": pad_x,
-        "pad_y": pad_y,
+        "pad_x": float(pad_x_left),
+        "pad_y": float(pad_y_top),
         "original_width": orig_w,
         "original_height": orig_h,
     }

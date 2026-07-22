@@ -33,7 +33,7 @@ def letterbox(img: Image.Image, target_w: int, target_h: int) -> np.ndarray:
     Steps:
     1. Compute scale = min(target_w/img_w, target_h/img_h)
     2. Resize to (new_w, new_h) with bilinear
-    3. Pad symmetrically with 114/255, extra pixel on TOP (PW compat: ceil for top)
+    3. Pad symmetrically with 114/255, with odd padding on bottom/right
     4. Unit normalize to [0,1] float32
     5. NCHW layout: (1, 3, H, W)
     """
@@ -49,7 +49,7 @@ def letterbox(img: Image.Image, target_w: int, target_h: int) -> np.ndarray:
     pad_y = (target_h - new_h) / 2.0
 
     pad_x_left = int(math.floor(pad_x))
-    pad_y_top = int(math.ceil(pad_y))  # PW compat: extra pixel on TOP
+    pad_y_top = int(math.floor(pad_y))
 
     # Build canvas filled with pad_value
     canvas = np.full((target_h, target_w, 3), PAD_VALUE, dtype=np.float32)

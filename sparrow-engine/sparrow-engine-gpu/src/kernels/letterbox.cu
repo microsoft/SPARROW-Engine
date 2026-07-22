@@ -50,8 +50,8 @@
 //   new_w     — resized image width  inside the canvas, = round(src_w * scale).
 //   new_h     — resized image height inside the canvas, = round(src_h * scale).
 //   pad_x     — left padding column index (= floor((tgt_w - new_w)/2)).
-//   pad_y     — top  padding row index    (= ceil ((tgt_h - new_h)/2)).
-//                NOTE: ceil to match PW preprocess (extra pixel on TOP).
+//   pad_y     — top  padding row index    (= floor((tgt_h - new_h)/2)).
+//                Odd padding is placed on bottom/right to match Ultralytics.
 //   scale     — image-space → resized-space scale factor. Unused by the
 //                multi-tap kernel itself (which derives per-axis ratios
 //                from src_w/new_w and src_h/new_h directly), but kept in

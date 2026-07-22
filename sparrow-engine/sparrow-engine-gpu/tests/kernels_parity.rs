@@ -121,7 +121,7 @@ fn cpu_letterbox_2tap(
     let new_w = (img_w * scale).round().max(1.0).min(tgt_w as f32) as u32;
     let new_h = (img_h * scale).round().max(1.0).min(tgt_h as f32) as u32;
     let pad_x_left = ((tgt_w as f32 - new_w as f32) / 2.0).floor() as i32;
-    let pad_y_top = ((tgt_h as f32 - new_h as f32) / 2.0).ceil() as i32;
+    let pad_y_top = ((tgt_h as f32 - new_h as f32) / 2.0).floor() as i32;
     let plane = (tgt_w * tgt_h) as usize;
     let mut nchw = vec![pad_value; 3 * plane];
     for y in 0..tgt_h as i32 {
@@ -349,9 +349,9 @@ fn letterbox_gpu_vs_cpu_2tap_parity() {
 }
 
 #[test]
-fn letterbox_gpu_metadata_uses_fractional_padding() {
+fn letterbox_gpu_odd_padding_matches_ultralytics() {
     if !gpu_tests_enabled() {
-        eprintln!("SPARROW_ENGINE_GPU_TESTS=0 → skipping letterbox metadata parity test");
+        eprintln!("SPARROW_ENGINE_GPU_TESTS=0 → skipping letterbox odd-padding parity test");
         return;
     }
 
@@ -361,7 +361,7 @@ fn letterbox_gpu_metadata_uses_fractional_padding() {
     let cpu_img = image::RgbImage::from_pixel(5, 3, image::Rgb([127, 64, 32]));
     let gpu_img = upload_cpu_image(&stream, &cpu_img);
 
-    let (_gpu_dst, meta) = letterbox_gpu(
+    let (gpu_dst, meta) = letterbox_gpu(
         &stream,
         &kernel,
         &gpu_img,
@@ -374,12 +374,11 @@ fn letterbox_gpu_metadata_uses_fractional_padding() {
     .expect("letterbox_gpu");
 
     // 5x3 -> 8x5 under an 8x8 target, leaving 3 vertical pad pixels.
-    // CUDA placement still uses ceil(top)=2 for PW compatibility, but
-    // postprocess metadata must mirror CPU/shared fractional padding (1.5).
+    // Ultralytics places one row above and two below the resized image.
     assert!((meta.pad_x - 0.0).abs() < f32::EPSILON);
     assert!(
-        (meta.pad_y - 1.5).abs() < f32::EPSILON,
-        "odd vertical padding must be stored fractionally for postprocess parity, got {}",
+        (meta.pad_y - 1.0).abs() < f32::EPSILON,
+        "odd vertical padding must use the applied top row, got {}",
         meta.pad_y
     );
     assert!(
@@ -387,6 +386,14 @@ fn letterbox_gpu_metadata_uses_fractional_padding() {
         "unexpected scale {}",
         meta.scale
     );
+
+    let gpu_buf: Vec<f32> = stream.clone_dtoh(&gpu_dst).expect("clone_dtoh");
+    stream.synchronize().expect("stream synchronize");
+    let pad = 114.0 / 255.0;
+    let red = 127.0 / 255.0;
+    assert!((gpu_buf[0] - pad).abs() < 1e-6);
+    assert!((gpu_buf[8] - red).abs() < 1e-6);
+    assert!((gpu_buf[6 * 8] - pad).abs() < 1e-6);
 }
 
 #[test]

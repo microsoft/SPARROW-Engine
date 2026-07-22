@@ -39,8 +39,8 @@ fn normalize_pixel(r: u8, g: u8, b: u8, norm: Normalization) -> (f32, f32, f32) 
 /// the [`PreprocessMeta`] needed to undo the transform in postprocessing.
 ///
 /// Geometry matches the cpu flavor exactly: `scale` is the min fit ratio; the
-/// resized image is centered with the extra odd pixel placed on **top**
-/// (PW/Ultralytics compatibility); padding cells are filled with `pad_value` in
+/// resized image is centered with the extra odd padding pixel placed on the
+/// bottom/right (Ultralytics compatibility); padding cells are filled with `pad_value` in
 /// post-normalization scale. Channel order honors `channel_order` (RGB default;
 /// BGR swaps channels 0 and 2 — the Ultralytics/YOLO convention).
 pub(crate) fn letterbox_nhwc(
@@ -60,13 +60,12 @@ pub(crate) fn letterbox_nhwc(
     let new_h = (img_h * scale).round().max(1.0).min(target_h as f32) as u32;
 
     // Bilinear resize (Triangle == bilinear in the `image` crate).
-    let resized =
-        image::imageops::resize(rgb, new_w, new_h, image::imageops::FilterType::Triangle);
+    let resized = image::imageops::resize(rgb, new_w, new_h, image::imageops::FilterType::Triangle);
 
     let pad_x = (target_w as f32 - new_w as f32) / 2.0;
     let pad_y = (target_h as f32 - new_h as f32) / 2.0;
     let pad_x_left = pad_x.floor() as usize;
-    let pad_y_top = pad_y.ceil() as usize; // PW compat: extra pixel on TOP
+    let pad_y_top = pad_y.floor() as usize;
 
     let tw = target_w as usize;
     let th = target_h as usize;
@@ -101,8 +100,8 @@ pub(crate) fn letterbox_nhwc(
         original_width: orig_w,
         original_height: orig_h,
         scale,
-        pad_x,
-        pad_y,
+        pad_x: pad_x_left as f32,
+        pad_y: pad_y_top as f32,
     };
     (buf, meta)
 }
@@ -129,7 +128,8 @@ mod tests {
     fn letterbox_square_no_padding() {
         // Square input -> no padding, scale 1.0 at equal target.
         let img = solid(640, 640, [255, 0, 0]);
-        let (buf, meta) = letterbox_nhwc(&img, 640, 640, 0.0, Normalization::Unit, ChannelOrder::Rgb);
+        let (buf, meta) =
+            letterbox_nhwc(&img, 640, 640, 0.0, Normalization::Unit, ChannelOrder::Rgb);
         assert_eq!(buf.len(), 640 * 640 * 3);
         assert!((meta.scale - 1.0).abs() < 1e-6);
         assert!(meta.pad_x.abs() < 1e-6 && meta.pad_y.abs() < 1e-6);
@@ -150,6 +150,21 @@ mod tests {
         assert!(meta.pad_x.abs() < 1e-6);
         // Top row (y=0) is in the padded region -> pad_value 0.5.
         assert!((buf[0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn letterbox_odd_padding_matches_ultralytics() {
+        let img = solid(4, 1, [255, 0, 0]);
+        let (buf, meta) = letterbox_nhwc(&img, 4, 4, 0.0, Normalization::None, ChannelOrder::Rgb);
+
+        assert!((meta.scale - 1.0).abs() < f32::EPSILON);
+        assert!(meta.pad_x.abs() < f32::EPSILON);
+        assert!((meta.pad_y - 1.0).abs() < f32::EPSILON);
+
+        let row_stride = 4 * 3;
+        assert!(buf[..row_stride].iter().all(|value| *value == 0.0));
+        assert_eq!(buf[row_stride], 255.0);
+        assert!(buf[2 * row_stride..].iter().all(|value| *value == 0.0));
     }
 
     #[test]
