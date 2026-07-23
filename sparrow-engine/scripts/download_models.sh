@@ -13,8 +13,8 @@
 # checksums published by the Zenodo record API.
 #
 # Usage:
-#   bash scripts/download_models.sh                     # 55 desktop ONNX models -> ~/.sparrow-engine/models/
-#   bash scripts/download_models.sh --all               # all 61 (incl. mobile .tflite + cascade)
+#   bash scripts/download_models.sh                     # 57 desktop ONNX models -> ~/.sparrow-engine/models/
+#   bash scripts/download_models.sh --all               # all 63 (incl. mobile .tflite + cascade)
 #   bash scripts/download_models.sh --dest /path        # custom destination dir
 #   bash scripts/download_models.sh MDV6-yolov10-e ...  # specific model(s) only
 #   bash scripts/download_models.sh --list              # show available models (from catalog)

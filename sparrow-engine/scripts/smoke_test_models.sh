@@ -65,7 +65,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
-DOMAINS = {"camera_trap", "acoustics", "overhead", "general"}
+DOMAINS = {"camera_trap", "acoustics", "overhead", "marine_imagery", "general"}
 TASKS = {"detector", "classifier", "encoder", "cascade"}
 FORMATS = {"onnx", "tflite", "cascade"}
 REQ = ("id", "domain", "task", "format", "status", "license", "zip")

@@ -5,7 +5,7 @@
 # (sparrow-data, sparrow-ops) all read THIS file rather than hardcoding model
 # lists. Add a model = add one [[model]] block here.
 #
-# Taxonomy: domain (camera_trap | acoustics | overhead | general) x
+# Taxonomy: domain (camera_trap | acoustics | overhead | marine_imagery | general) x
 #           task (detector | classifier | encoder | cascade).
 # `format` distinguishes what the artifact is:
 #   onnx    — desktop model, loadable by spe / server / Python (ONNX Runtime).
@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21346269"
+record = "21500997"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.21.0"
+version = "0.22.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -1142,6 +1142,46 @@ developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
 reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
+
+# ============================ Marine Imagery — Detector ========================
+
+[[model]]
+id = "fathomnet-vme"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "YOLOv8"]
+status = "active"
+license = "CC-BY-4.0"
+zip = "marine_imagery__detector__fathomnet-vme.zip"
+description = "FathomNet vulnerable marine ecosystem detector: YOLOv8x with four high-level benthic indicator classes, converted from the pinned CC-BY-4.0 checkpoint to fixed NCHW ONNX with graph NMS."
+species_direct = true
+geo_scope = "global"
+geo_regions = []
+display_name = "FathomNet VME Detector"
+developer = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "FathomNet vulnerable marine ecosystems model, source revision dffb2d9c6178bab0be813752e06b474b9b6515a0: https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0"
+
+[[model]]
+id = "fathomnet-trash"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "YOLOv8"]
+status = "active"
+license = "CC-BY-4.0"
+zip = "marine_imagery__detector__fathomnet-trash.zip"
+description = "FathomNet marine trash detector: YOLOv8x with 13 debris, fauna, plant, and ROV classes, converted from the pinned CC-BY-4.0 checkpoint to fixed NCHW ONNX with graph NMS."
+species_direct = true
+geo_scope = "global"
+geo_regions = []
+display_name = "FathomNet Trash Detector"
+developer = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762"
 
 # ============================ General — Encoder ============================
 
