@@ -216,6 +216,7 @@ from sparrow_engine._sparrow_engine_core import (
     AudioSegment,
     BBox,
     SparrowEngineError,
+    TrtUnsupportedHardware,
     Classification,
     ClassifyResult,
     EmbedResult,
@@ -272,6 +273,7 @@ __all__ = [
     "PipelineResult",
     "ModelInfo",
     "SparrowEngineError",
+    "TrtUnsupportedHardware",
     # Callback alias
     "ProgressCallback",
 ]
