@@ -25,7 +25,7 @@ name: Release sparrow-engine wheels
 #
 # OIDC trusted-publisher prerequisites (USER action, not automatable):
 #   - prod PyPI: claim `sparrow-engine` + `sparrow-engine-gpu` names; configure
-#     publisher: repo `microsoft/Pytorch-Wildlife`, workflow `release.yml`,
+#     publisher: repo `microsoft/SPARROW-Engine`, workflow `release.yml`,
 #     env `pypi`.
 #   - TestPyPI: same names; env `testpypi`.
 
@@ -96,7 +96,7 @@ jobs:
   # non-release runs.
   # ---------------------------------------------------------------------------
   check-version-consistency:
-    name: Preflight — version consistency (tag ↔ Cargo.toml ↔ pyproject.toml)
+    name: Preflight — release version consistency
     # Runs on every trigger. The internal step short-circuits with a PASS
     # message on non-tag-push triggers so downstream `needs:` are unambiguously
     # satisfied across workflow_dispatch / branch-push / tag-push. (Relying on
@@ -105,15 +105,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compare git tag, sparrow-engine-cli Cargo.toml, sparrow-engine-python pyproject.toml
+      - name: Compare tag, package metadata, and installer defaults
         shell: bash
         run: |
           set -euo pipefail
           # Trigger taxonomy (Phase F R2 F-R2-4):
-          #   tag-push       : enforce tag ↔ cli ↔ py three-way agreement (release-critical).
-          #   workflow_dispatch: enforce cli ↔ py two-way agreement (manual release rehearsal
-          #                     — no tag yet, but Cargo/Python must already agree so a follow-up
-          #                     tag-push doesn't blow up).
+          #   tag-push       : enforce the tag against every release version source.
+          #   workflow_dispatch: enforce package metadata and installer defaults
+          #                     (no tag yet, but all defaults must already agree).
           #   branch-push / PR: skip (most common dev case; pre-tag drift is intentional and
           #                     gets caught at workflow_dispatch / tag-push time).
           mode=""
@@ -158,10 +157,18 @@ jobs:
             echo "::error::could not extract [project].version from sparrow-engine/sparrow-engine-python/pyproject.toml"
             exit 2
           fi
+          sh_installer_version="$(sed -nE 's/^SPARROW_ENGINE_VERSION="\$\{SPARROW_ENGINE_VERSION:-([^}]+)\}"/\1/p' installer/sparrow-engine-install.sh)"
+          ps_installer_version="$(sed -nE "s/.*else \{ '([^']+)' \}.*/\1/p" installer/sparrow-engine-install.ps1 | head -1)"
+          if [ -z "$sh_installer_version" ] || [ -z "$ps_installer_version" ]; then
+            echo "::error::could not extract one or both installer default versions"
+            exit 2
+          fi
 
           echo "Tag version (stripped 'v'):           ${tag_version:-<n/a — workflow_dispatch>}"
           echo "sparrow-engine-cli Cargo.toml:        $cli_version"
           echo "sparrow-engine-python pyproject.toml: $py_version"
+          echo "shell installer default:              $sh_installer_version"
+          echo "PowerShell installer default:         $ps_installer_version"
 
           fail=0
           if [ "$mode" = "tag-push" ]; then
@@ -176,12 +183,16 @@ jobs:
               fail=1
             fi
           fi
-          # cli ↔ py agreement is enforced on BOTH tag-push and workflow_dispatch
+          # Package and installer agreement is enforced on BOTH tag-push and workflow_dispatch
           # (F-R2-4 round-2 fix): a workflow_dispatch release rehearsal must surface
           # version drift before tag-push time, otherwise the manual dispatch path
           # gives false-PASS while the eventual tag still fails.
           if [ "$cli_version" != "$py_version" ]; then
             echo "::error::sparrow-engine-cli Cargo.toml ($cli_version) ≠ sparrow-engine-python pyproject.toml ($py_version)"
+            fail=1
+          fi
+          if [ "$cli_version" != "$sh_installer_version" ] || [ "$cli_version" != "$ps_installer_version" ]; then
+            echo "::error::installer default drift: cli=$cli_version shell=$sh_installer_version PowerShell=$ps_installer_version"
             fail=1
           fi
           if [ "$fail" -ne 0 ]; then
@@ -192,9 +203,9 @@ jobs:
             exit 1
           fi
           if [ "$mode" = "tag-push" ]; then
-            echo "PASS: all three version sources agree on '$tag_version'."
+            echo "PASS: tag, package metadata, and installer defaults agree on '$tag_version'."
           else
-            echo "PASS (workflow_dispatch): cli ↔ py agree on '$cli_version' (tag check skipped — no tag context)."
+            echo "PASS (workflow_dispatch): package metadata and installer defaults agree on '$cli_version' (tag check skipped — no tag context)."
           fi
 
       - name: Compare ORT_VERSION across Dockerfile.cpu and Dockerfile.gpu

@@ -195,10 +195,10 @@ The following constraints are baked into the engine. If you onboard a new model,
 
 ```
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/refs/tags/v0.1.13/installer/sparrow-engine-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.23/installer/sparrow-engine-install.sh | bash
 
 # Windows
-iwr -useb https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/refs/tags/v0.1.13/installer/sparrow-engine-install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.23/installer/sparrow-engine-install.ps1 | iex
 ```
 
 Under the stdin-pipe form the wrapper detects that `$0` is the shell name and skips the on-disk lookup; it fetches `probe.sh` + `probe_gpu_quality.sh` from the matching `refs/tags/v<ver>/installer/` raw URL into `${XDG_CACHE_HOME:-~/.cache}/sparrow-engine/v<ver>/` (Linux/macOS) or `%LOCALAPPDATA%\sparrow-engine\cache\v<ver>\` (Windows) on first invocation. Override the helper URL via `SPARROW_ENGINE_HELPER_BASE` for internal mirrors.
@@ -368,11 +368,11 @@ Simplest path. No build toolchain, no clones, no separate downloader. Published 
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest         # moving tag
-docker pull zhongqimiao/sparrow-engine-server:v0.1.17        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.23        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted; requires NVIDIA Container Toolkit on host)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.17
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.23
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
@@ -408,8 +408,8 @@ The script:
 ~10 min the first time; cached layers on subsequent builds. Always reflects the current source tree at HEAD. Recommended when you need fixes that post-date the latest Zenodo refresh.
 
 ```bash
-git clone --branch sparrow-engine-dev https://github.com/microsoft/Pytorch-Wildlife.git
-cd Pytorch-Wildlife/sparrow-engine
+git clone https://github.com/microsoft/SPARROW-Engine.git
+cd SPARROW-Engine/sparrow-engine
 docker build -f docker/Dockerfile.cpu -t sparrow-engine-server:sparrow-combined .
 docker build -f docker/Dockerfile.gpu -t sparrow-engine-server-gpu:sparrow-combined .  # GPU only
 ```

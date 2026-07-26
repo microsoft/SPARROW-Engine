@@ -7,10 +7,10 @@
     selected mode (-Pip, -Cli, -Docker). Mirrors sparrow-engine-install.sh exit codes
     0..14 per docs/design/phase4.1-install-selector/final_design.md § 2.10.
 
-    Defense-in-depth (truncation safety): the entire body is wrapped in
-    Invoke-Main; the LAST line is `Invoke-Main @PSBoundParameters; exit
-    $LASTEXITCODE`. A truncated download leaves Invoke-Main undefined so
-    PowerShell parse-fails before any partial work runs.
+    Defense-in-depth (truncation safety): every executable statement after the
+    parameter block is enclosed by one outer try/finally. A truncated tail
+    leaves that block incomplete, so PowerShell parse-fails before any partial
+    work runs.
 
 .NOTES
     Targets Windows PowerShell 5.1 and PowerShell 7+. No PS6+ exclusives
@@ -43,9 +43,11 @@ param(
     [switch]$Help
 )
 
+try {
+
 # ----- Constants ---------------------------------------------------------
 
-$Script:SparrowEngineVersion       = if ($Version) { $Version } elseif ($env:SPARROW_ENGINE_VERSION) { $env:SPARROW_ENGINE_VERSION } else { '0.1.21' }
+$Script:SparrowEngineVersion       = if ($Version) { $Version } elseif ($env:SPARROW_ENGINE_VERSION) { $env:SPARROW_ENGINE_VERSION } else { '0.1.23' }
 $Script:InstallRoot        = Join-Path $env:LOCALAPPDATA 'Programs\sparrow-engine'         # %LocalAppData%\Programs\sparrow-engine
 $Script:UserSparrowEngineDir       = Join-Path $env:USERPROFILE '.sparrow-engine'                  # state file + RC sentinel home
 $Script:StateFile          = Join-Path $Script:UserSparrowEngineDir 'installed.json'
@@ -54,11 +56,11 @@ $Script:SentinelEnd        = '# <<< sparrow-engine <<<'
 # Default release base = public GH Releases asset URL (Phase E B-02 fix; was
 # `file:///%TEMP%/sparrow-engine-release/v{ver}/` dev placeholder). Honors
 # `$env:SPARROW_ENGINE_RELEASE_BASE` for staging mirrors / internal proxies.
-$Script:DefaultReleaseBase = "https://github.com/microsoft/Pytorch-Wildlife/releases/download/v$Script:SparrowEngineVersion/"
+$Script:DefaultReleaseBase = "https://github.com/microsoft/SPARROW-Engine/releases/download/v$Script:SparrowEngineVersion/"
 # Helper-script base = immutable raw-tag path. Helper scripts (probe.ps1,
 # probe_gpu_quality.ps1) live in the tagged source tree, NOT as release
 # assets. E-R2-1 fix. Override via `$env:SPARROW_ENGINE_HELPER_BASE`.
-$Script:DefaultHelperBase  = "https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/refs/tags/v$Script:SparrowEngineVersion/installer/"
+$Script:DefaultHelperBase  = "https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v$Script:SparrowEngineVersion/installer/"
 # Helper-script cache dir for piped install (B-01) — used when invoked via
 # `iex (irm <url>)` and no probe.ps1 / probe_gpu_quality.ps1 exists on disk
 # next to the wrapper.
@@ -571,4 +573,8 @@ try {
     # Unhandled errors propagate as exit 1 unless a prior `exit <N>` already fired.
     Write-Err $_.Exception.Message
     exit 1
+}
+} finally {
+    # Intentionally empty. The outer block is a parse guard: a missing tail
+    # cannot leave a valid no-op installer.
 }

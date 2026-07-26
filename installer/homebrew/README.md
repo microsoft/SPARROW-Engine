@@ -77,7 +77,7 @@ Full caveats block (with the 9 location list and the 7-package /
 ## Bootstrapping the tap repo (one-time, operator action — DONE 2026-05-27)
 
 The tap is live at https://github.com/microsoft/homebrew-sparrow-engine
-with both formulas pinned to the latest release (v0.1.21 as of 2026-07-08).
+with both formulas pinned to the latest release (v0.1.23 as of 2026-07-15).
 Procedure if cutting fresh:
 
 1. Cut the release: `git tag vX.Y.Z && git push origin vX.Y.Z` — CI runs

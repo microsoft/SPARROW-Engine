@@ -141,11 +141,11 @@ Three install paths. **Option A** is the simplest; **B** + **C** remain for offl
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest
-docker pull zhongqimiao/sparrow-engine-server:v0.1.21        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.23        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.21
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.23
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
@@ -170,8 +170,8 @@ The script verifies SHA-256 + `docker load`s + retags as `sparrow-engine-server[
 **Option C — build from source** (~10 min the first time; cached layers on subsequent builds; always reflects the current source tree):
 
 ```bash
-git clone --branch sparrow-engine-dev https://github.com/microsoft/Pytorch-Wildlife.git
-cd Pytorch-Wildlife/sparrow-engine
+git clone https://github.com/microsoft/SPARROW-Engine.git
+cd SPARROW-Engine/sparrow-engine
 docker build -f docker/Dockerfile.cpu -t sparrow-engine-server:sparrow-combined .
 docker build -f docker/Dockerfile.gpu -t sparrow-engine-server-gpu:sparrow-combined .  # GPU
 ```

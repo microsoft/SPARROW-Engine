@@ -2,9 +2,10 @@
 # installer/sparrow-engine-install.sh — Sparrow Engine install-time selector wrapper (Linux/macOS)
 #
 # Defense-in-depth wrapping for `curl ... | sh` truncation safety:
-#   1. Wrap entire body in `main() { ... }` and call as last line: `main "$@" || exit 1`.
-#      A truncated download leaves an incomplete `main()` definition → bash parse-fail
-#      → no partial execution.
+#   1. Wrap the entire executable payload in one outer function. Its closing
+#      brace and invocation share the final line, so removing the tail leaves
+#      an incomplete function definition and Bash exits non-zero before doing
+#      any work.
 #   2. `set -euo pipefail` at top of main().
 #      pipefail closes silent-failure paths in `state_read_flavor` (grep|head|sed)
 #      and `verify_sha256` (sha256sum|awk): when an upstream pipe element fails,
@@ -15,6 +16,7 @@
 #
 # Reference: docs/design/phase4.1-install-selector/final_design.md §2.2 (canonical).
 # Probe contract: sources installer/probe.sh; calls probe_cuda; reads SPARROW_ENGINE_DETECTED_FLAVOR.
+_sparrow_engine_installer_payload() {
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
@@ -24,19 +26,19 @@ set -euo pipefail
 # Phase F release-CI step on every published GH Release (`vX.Y.Z`). The
 # `SPARROW_ENGINE_VERSION` env var overrides this for advanced users
 # wanting to install an older or newer release.
-SPARROW_ENGINE_VERSION="${SPARROW_ENGINE_VERSION:-0.1.21}"
+SPARROW_ENGINE_VERSION="${SPARROW_ENGINE_VERSION:-0.1.23}"
 SPARROW_ENGINE_PREFIX="${SPARROW_ENGINE_PREFIX:-$HOME/.sparrow-engine}"
 SPARROW_ENGINE_STATE_FILE="$SPARROW_ENGINE_PREFIX/installed.json"
 # Default release base = public GH Releases asset URL. Phase E B-02 fix
 # (was: file:///tmp/sparrow-engine-release/v${ver}). Operator override via
 # `SPARROW_ENGINE_RELEASE_BASE=<url>` (staging mirror / internal proxy).
-SPARROW_ENGINE_RELEASE_BASE_DEFAULT="https://github.com/microsoft/Pytorch-Wildlife/releases/download/v${SPARROW_ENGINE_VERSION}"
+SPARROW_ENGINE_RELEASE_BASE_DEFAULT="https://github.com/microsoft/SPARROW-Engine/releases/download/v${SPARROW_ENGINE_VERSION}"
 # Helper-script base = immutable raw-tag path. Helper scripts (probe.sh,
 # probe_gpu_quality.sh) are NOT published as release assets — they only
 # live in the tagged source tree. Phase E round-2 fix for E-R2-1 (the
 # release_base()/probe.sh URL returned 404). Operator override via
 # `SPARROW_ENGINE_HELPER_BASE=<url>` for testing against a local mirror.
-SPARROW_ENGINE_HELPER_BASE_DEFAULT="https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/refs/tags/v${SPARROW_ENGINE_VERSION}/installer"
+SPARROW_ENGINE_HELPER_BASE_DEFAULT="https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v${SPARROW_ENGINE_VERSION}/installer"
 # Helper-script cache dir for piped install (B-01). Used when the wrapper
 # is invoked via `curl ... | sh` / `bash <(curl ...)` and no probe.sh /
 # probe_gpu_quality.sh exists on disk next to the wrapper.
@@ -912,3 +914,4 @@ main() {
 }
 
 main "$@" || exit 1
+}; _sparrow_engine_installer_payload "$@"
