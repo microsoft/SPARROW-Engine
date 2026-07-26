@@ -13,6 +13,7 @@ serde      = { workspace = true }
 thiserror  = { workspace = true }
 toml       = { workspace = true }
 serde_json = { workspace = true }   # C6 closure: SparrowEngineError::Json(#[from] serde_json::Error)
+tracing    = { version = "0.1", features = ["log"] }
 
 # Explicitly NO ort, cudarc, nvjpeg-sys, image, ndarray, sha2, etc.
 # Phase A acceptance gate #4 enforces this.

@@ -262,13 +262,6 @@ impl TrtConfig {
     /// Resolve the new `mode` key and legacy `enabled` key into one contract.
     pub fn effective_mode(&self) -> TrtMode {
         if let Some(mode) = self.mode {
-            let contradiction = matches!(
-                (mode, self.enabled),
-                (TrtMode::Off, true) | (TrtMode::OnDemand | TrtMode::Always, false)
-            );
-            if contradiction {
-                warn_trt_mode_enabled_contradiction(mode, self.enabled);
-            }
             return mode;
         }
 
@@ -330,9 +323,28 @@ pub fn warmup_trt_config(trt: Option<&TrtConfig>, format: &str) -> Option<TrtCon
     }
 }
 
+fn explicit_trt_mode_enabled_contradiction(table: &toml::Table) -> Option<(TrtMode, bool)> {
+    let trt = table.get("inference")?.as_table()?.get("trt")?.as_table()?;
+    let mode = match trt.get("mode")?.as_str()? {
+        "off" => TrtMode::Off,
+        "on_demand" => TrtMode::OnDemand,
+        "always" => TrtMode::Always,
+        _ => return None,
+    };
+    let enabled = trt.get("enabled")?.as_bool()?;
+    matches!(
+        (mode, enabled),
+        (TrtMode::Off, true) | (TrtMode::OnDemand | TrtMode::Always, false)
+    )
+    .then_some((mode, enabled))
+}
+
 fn warn_trt_mode_enabled_contradiction(mode: TrtMode, enabled: bool) {
-    eprintln!(
-        "inference.trt.mode={mode:?} contradicts legacy inference.trt.enabled={enabled}; using mode"
+    tracing::warn!(
+        target: "sparrow_engine_types::manifest",
+        ?mode,
+        enabled,
+        "inference.trt.mode contradicts legacy inference.trt.enabled; using mode"
     );
 }
 
@@ -944,13 +956,20 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     // Discrimination: check for [pipeline] section before strict model parse.
     // A pipeline manifest won't parse as RawModelToml (missing [model]), so
     // check via loose Table parse first.
-    if let Ok(table) = content.parse::<toml::Table>() {
+    let loose_table = content.parse::<toml::Table>().ok();
+    if let Some(table) = &loose_table {
         if table.contains_key("pipeline") {
             return Err(SparrowEngineError::WrongManifestType);
         }
     }
 
     let raw: RawModelToml = toml::from_str(&content)?;
+    if let Some((mode, enabled)) = loose_table
+        .as_ref()
+        .and_then(explicit_trt_mode_enabled_contradiction)
+    {
+        warn_trt_mode_enabled_contradiction(mode, enabled);
+    }
 
     // -- Validate format. Both ONNX (cpu/gpu ORT flavors) and TFLite (mobile
     // LiteRT flavor) are accepted at this shared layer; each flavor's engine
@@ -2386,6 +2405,37 @@ audio = [1, 1, 224, 90]
         let bare_section: TrtConfig = toml::from_str("\n").unwrap();
         assert!(bare_section.enabled);
         assert_eq!(bare_section.effective_mode(), TrtMode::OnDemand);
+    }
+
+    #[test]
+    fn trt_contradiction_requires_both_keys_to_be_explicit() {
+        let mode_only: toml::Table = "[inference.trt]\nmode = \"off\"\n".parse().unwrap();
+        assert_eq!(
+            explicit_trt_mode_enabled_contradiction(&mode_only),
+            None,
+            "an omitted legacy key must not be treated as an explicit contradiction"
+        );
+
+        let explicit_conflict: toml::Table = "[inference.trt]\nmode = \"off\"\nenabled = true\n"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            explicit_trt_mode_enabled_contradiction(&explicit_conflict),
+            Some((TrtMode::Off, true))
+        );
+
+        let reverse_conflict: toml::Table = "[inference.trt]\nmode = \"always\"\nenabled = false\n"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            explicit_trt_mode_enabled_contradiction(&reverse_conflict),
+            Some((TrtMode::Always, false))
+        );
+
+        let consistent: toml::Table = "[inference.trt]\nmode = \"on_demand\"\nenabled = true\n"
+            .parse()
+            .unwrap();
+        assert_eq!(explicit_trt_mode_enabled_contradiction(&consistent), None);
     }
 
     #[test]
