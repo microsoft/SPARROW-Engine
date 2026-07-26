@@ -238,7 +238,10 @@ impl<'a> TrtEpBuilder<'a> {
                 );
             }
             TrtPolicyDecision::NotOptedIn => {
-                tracing::info!(model_id = self.model_id, "TRT not opted in by manifest");
+                tracing::info!(
+                    model_id = self.model_id,
+                    "CUDA EP selected for serving load; normal loads do not build TensorRT engines"
+                );
             }
             TrtPolicyDecision::TensorRtEnabled => {
                 let config = effective_trt.expect("TensorRT plan requires config");
@@ -380,13 +383,7 @@ pub(crate) fn trt_disabled_env_is_set(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.trim().is_empty())
 }
 
-fn serving_provider_order(trt: Option<&TrtConfig>, model_id: &str) -> TrtProviderPlan {
-    if trt.is_some_and(|config| config.effective_mode() != TrtMode::Off) {
-        tracing::info!(
-            model_id,
-            "TRT eligible manifest loaded on CUDA EP; explicit warm-up is required to build/register TensorRT"
-        );
-    }
+fn serving_provider_order(_trt: Option<&TrtConfig>, _model_id: &str) -> TrtProviderPlan {
     TrtProviderPlan {
         decision: TrtPolicyDecision::NotOptedIn,
         providers: vec![TrtProviderKind::Cuda, TrtProviderKind::Cpu],
