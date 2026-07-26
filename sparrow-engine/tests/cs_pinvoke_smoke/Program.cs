@@ -17,6 +17,7 @@
 //                   the same schema. Used for the G1 corpus parity sweep.
 //   SPARROW_ENGINE_LIMIT     optional cap on the number of images consumed when
 //                   SPARROW_ENGINE_IMAGE_DIR is set. Default: no cap.
+//   SPARROW_ENGINE_MODEL_ID  model manifest id; default MDV6-yolov10-e.
 //   SPARROW_ENGINE_OUTPUT    JSON path to write the captured detection list (one
 //                   line per detection, sorted canonically). Required.
 //
@@ -171,7 +172,12 @@ internal static class Program
         }
         var imageDirEnv = Environment.GetEnvironmentVariable("SPARROW_ENGINE_IMAGE_DIR");
         var limitEnv = Environment.GetEnvironmentVariable("SPARROW_ENGINE_LIMIT");
-        const string modelId = "megadetector-v6-yolov10e";
+        var modelId = Environment.GetEnvironmentVariable("SPARROW_ENGINE_MODEL_ID")
+            ?? "MDV6-yolov10-e";
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            return SetupFailure("SPARROW_ENGINE_MODEL_ID must not be empty when set.");
+        }
 
         int? limit = null;
         if (!string.IsNullOrEmpty(limitEnv))
@@ -308,7 +314,7 @@ internal static class Program
                 sparrow_engine = new
                 {
                     engine = "libsparrow_engine",
-                    model = "MDV6-yolov10-e",
+                    model = modelId,
                     n_images = imagePaths.Length,
                     total_detections = totalDetections,
                     per_image = perImage,
