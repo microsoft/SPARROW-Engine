@@ -332,7 +332,11 @@ for cudnn_dir in \
     /usr/local/cuda/lib64 \
     /usr/lib/x86_64-linux-gnu; do
     if [[ -n "$cudnn_dir" && ( -f "$cudnn_dir/libcudnn.so" || -f "$cudnn_dir/libcudnn.so.9" ) ]]; then
-        EXTRA_LIB_PATHS="${cudnn_dir}:${EXTRA_LIB_PATHS}"
+        # Default loader directories must not be forced through
+        # LD_LIBRARY_PATH. Homebrew-linked hosts such as dotnet use their own
+        # glibc loader and crash if the system glibc directory is prepended.
+        [[ "$cudnn_dir" != "/usr/lib/x86_64-linux-gnu" ]] &&
+            EXTRA_LIB_PATHS="${cudnn_dir}:${EXTRA_LIB_PATHS}"
         echo "cuDNN: $cudnn_dir"
         break
     fi
@@ -343,7 +347,11 @@ for cuda_dir in \
     /usr/lib/x86_64-linux-gnu \
     /usr/local/cuda/lib64; do
     if [[ -f "$cuda_dir/libcudart.so" ]] || [[ -f "$cuda_dir/libcudart.so.12" ]]; then
-        EXTRA_LIB_PATHS="${cuda_dir}:${EXTRA_LIB_PATHS}"
+        # The system directory is already in the native loader's default
+        # search path. Adding it explicitly can make foreign-loader hosts
+        # resolve an incompatible glibc before their bundled runtime.
+        [[ "$cuda_dir" != "/usr/lib/x86_64-linux-gnu" ]] &&
+            EXTRA_LIB_PATHS="${cuda_dir}:${EXTRA_LIB_PATHS}"
         break
     fi
 done
