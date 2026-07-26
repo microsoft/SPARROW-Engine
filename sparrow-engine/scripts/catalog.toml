@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21500997"
+record = "21610787"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.22.0"
+version = "0.23.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -1144,6 +1144,26 @@ commercial_use = true
 reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
 
 # ============================ Marine Imagery — Detector ========================
+
+[[model]]
+id = "fathomnet-mbari-315k"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "YOLOv8"]
+status = "active"
+license = "CC-BY-4.0"
+zip = "marine_imagery__detector__fathomnet-mbari-315k.zip"
+description = "FathomNet MBARI Monterey Bay 315k detector: YOLOv8x with 499 midwater and benthic taxonomic and morphotaxonomic classes, converted from the pinned CC-BY-4.0 checkpoint to fixed NCHW ONNX with graph NMS."
+species_direct = true
+geo_scope = "regional"
+geo_regions = ["north_america"]
+geo_locality = "Monterey Bay, California, USA"
+display_name = "FathomNet MBARI 315k Detector"
+developer = "CVisionAI / Monterey Bay Aquarium Research Institute (MBARI)"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "FathomNet MBARI Monterey Bay 315k YOLOv8 model, source revision f4a839a78214441e32bee1928839fa7578c2bcd8: https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8"
 
 [[model]]
 id = "fathomnet-vme"
