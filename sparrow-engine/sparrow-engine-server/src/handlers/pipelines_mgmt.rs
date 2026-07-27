@@ -859,6 +859,8 @@ mod tests {
             intra_threads: Some(1),
             idle_unload_seconds: 0,
             idle_unload_keep_last_n: 1,
+            management_token: None,
+            management_auth_mode: crate::config::ManagementAuthMode::Auto,
         }
     }
 

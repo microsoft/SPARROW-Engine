@@ -1,6 +1,23 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use crate::auth::ManagementAuth;
+
+/// Requested policy for the management API, from
+/// `SPARROW_ENGINE_MANAGEMENT_AUTH`. The effective decision also depends on
+/// whether a token is configured and whether the bind address is reachable
+/// off-host — see [`Config::management_auth`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ManagementAuthMode {
+    /// Enforce when a token is set; otherwise enforce only if the bind address
+    /// is non-loopback (fail closed rather than silently serve an open control
+    /// plane). Default.
+    Auto,
+    /// Never enforce. Explicit opt-out for trusted networks or for restoring
+    /// pre-0.1.22 behaviour.
+    Disabled,
+}
+
 /// Server configuration parsed from `SPARROW_ENGINE_*` environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -23,6 +40,11 @@ pub struct Config {
     /// of idle age. Default 1 (protect the hot model). Configurable via
     /// `SPARROW_ENGINE_IDLE_UNLOAD_KEEP_LAST_N`.
     pub idle_unload_keep_last_n: usize,
+    /// Bearer token required on `/v1/models*` and `/v1/pipelines*`, from
+    /// `SPARROW_ENGINE_MANAGEMENT_TOKEN`. An unset or empty value is `None`.
+    pub management_token: Option<String>,
+    /// Requested management-API policy, from `SPARROW_ENGINE_MANAGEMENT_AUTH`.
+    pub management_auth_mode: ManagementAuthMode,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +126,24 @@ impl Config {
             .parse()
             .expect("SPARROW_ENGINE_IDLE_UNLOAD_KEEP_LAST_N must be a non-negative integer");
 
+        // Management-API authorization. An empty token is treated as unset so
+        // that a Compose/Container-App variable declared but never populated
+        // (the common misconfiguration) is indistinguishable from omitting it,
+        // and therefore fails closed on a non-loopback bind rather than
+        // enforcing against the empty string.
+        let management_token = std::env::var("SPARROW_ENGINE_MANAGEMENT_TOKEN")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let management_auth_mode_str = env_or("SPARROW_ENGINE_MANAGEMENT_AUTH", "auto");
+        let management_auth_mode = match management_auth_mode_str.as_str() {
+            "auto" => ManagementAuthMode::Auto,
+            "disabled" => ManagementAuthMode::Disabled,
+            other => panic!(
+                "SPARROW_ENGINE_MANAGEMENT_AUTH must be 'auto' or 'disabled', got '{other}'"
+            ),
+        };
+
         Self {
             bind_addr,
             model_dir,
@@ -119,6 +159,45 @@ impl Config {
             intra_threads,
             idle_unload_seconds,
             idle_unload_keep_last_n,
+            management_token,
+            management_auth_mode,
+        }
+    }
+
+    /// Resolve the effective management-API policy from the requested mode,
+    /// the configured token, and the bind address.
+    ///
+    /// The bind address is the signal for "is this a served deployment". A
+    /// loopback bind can only be reached from the same host, which is the
+    /// local-development case; anything else is reachable from another
+    /// container or another machine. Note that the engine's own default bind
+    /// is `0.0.0.0:8080` and containers must bind non-loopback to be useful,
+    /// so a container with no token configured resolves to
+    /// [`ManagementAuth::DenyAll`] — deliberately, since that is exactly the
+    /// deployment that would otherwise expose an open control plane.
+    pub fn management_auth(&self) -> ManagementAuth {
+        Self::resolve_management_auth(
+            &self.management_auth_mode,
+            self.management_token.as_deref(),
+            &self.bind_addr,
+        )
+    }
+
+    /// Pure resolution used by [`Config::management_auth`]; split out so the
+    /// decision table can be tested without constructing a whole `Config` or
+    /// mutating process environment.
+    fn resolve_management_auth(
+        mode: &ManagementAuthMode,
+        token: Option<&str>,
+        bind_addr: &SocketAddr,
+    ) -> ManagementAuth {
+        match mode {
+            ManagementAuthMode::Disabled => ManagementAuth::Disabled,
+            ManagementAuthMode::Auto => match token {
+                Some(t) => ManagementAuth::Token(t.to_string()),
+                None if bind_addr.ip().is_loopback() => ManagementAuth::Disabled,
+                None => ManagementAuth::DenyAll,
+            },
         }
     }
 }
@@ -140,4 +219,55 @@ fn parse_size(s: &str) -> usize {
         (s.as_str(), 1)
     };
     num_str.trim().parse::<usize>().expect("invalid size") * multiplier
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().expect("test address must parse")
+    }
+
+    #[test]
+    fn auto_with_token_enforces_that_token() {
+        let a = Config::resolve_management_auth(
+            &ManagementAuthMode::Auto,
+            Some("s3cret"),
+            &addr("0.0.0.0:8080"),
+        );
+        assert_eq!(a, ManagementAuth::Token("s3cret".to_string()));
+    }
+
+    #[test]
+    fn auto_without_token_on_loopback_stays_open_for_local_dev() {
+        for bind in ["127.0.0.1:8080", "[::1]:8080"] {
+            let a =
+                Config::resolve_management_auth(&ManagementAuthMode::Auto, None, &addr(bind));
+            assert_eq!(a, ManagementAuth::Disabled, "bind={bind}");
+        }
+    }
+
+    /// The regression this whole change exists to prevent: a deployment that
+    /// never injected the token must not serve an open control plane.
+    #[test]
+    fn auto_without_token_off_host_fails_closed() {
+        for bind in ["0.0.0.0:8080", "10.0.0.4:8080", "[::]:8080"] {
+            let a =
+                Config::resolve_management_auth(&ManagementAuthMode::Auto, None, &addr(bind));
+            assert_eq!(a, ManagementAuth::DenyAll, "bind={bind}");
+        }
+    }
+
+    #[test]
+    fn disabled_never_enforces_regardless_of_token_or_bind() {
+        for token in [None, Some("s3cret")] {
+            let a = Config::resolve_management_auth(
+                &ManagementAuthMode::Disabled,
+                token,
+                &addr("0.0.0.0:8080"),
+            );
+            assert_eq!(a, ManagementAuth::Disabled, "token={token:?}");
+        }
+    }
 }

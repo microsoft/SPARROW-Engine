@@ -93,6 +93,8 @@ fn test_config() -> Config {
         intra_threads: None,
         idle_unload_seconds: 0,
         idle_unload_keep_last_n: 1,
+        management_token: None,
+        management_auth_mode: sparrow_engine_server::config::ManagementAuthMode::Auto,
     }
 }
 

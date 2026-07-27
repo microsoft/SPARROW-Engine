@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use clap::Parser;
+use sparrow_engine_server::auth::ManagementAuth;
 use sparrow_engine_server::cli::{Cli, Command};
 use sparrow_engine_server::config::{Config, LogFormat};
 use sparrow_engine_server::discover::{discover_catalog, parse_preload_ids, Catalog};
@@ -143,6 +144,28 @@ async fn run_server() {
     }
 
     let state = AppState::with_catalog(engine, config.clone(), catalog);
+
+    // Surface the management-API policy at boot. The fail-closed case is an
+    // operator error (a deployment that never injected the token), so it is
+    // logged at WARN with the remedy rather than left to be discovered as a
+    // 401 later.
+    let management_auth = config.management_auth();
+    if management_auth == ManagementAuth::DenyAll {
+        warn!(
+            bind_addr = %config.bind_addr,
+            "management API auth: {} — set SPARROW_ENGINE_MANAGEMENT_TOKEN to \
+             enable the control plane, or SPARROW_ENGINE_MANAGEMENT_AUTH=disabled \
+             to serve it unauthenticated",
+            management_auth.describe()
+        );
+    } else {
+        info!(
+            bind_addr = %config.bind_addr,
+            "management API auth: {}",
+            management_auth.describe()
+        );
+    }
+
     let app = router::build_router(state.clone());
 
     // Use a watch channel to fan out the shutdown signal to both the server

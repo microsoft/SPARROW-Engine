@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::error_handling::HandleErrorLayer;
@@ -12,6 +13,7 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 
+use crate::auth;
 use crate::handlers;
 use crate::state::AppState;
 
@@ -31,10 +33,25 @@ pub fn build_router(state: AppState) -> Router {
         state.config.request_timeout_secs,
     );
 
-    // Management routes — shorter timeout
-    let management = with_timeout(
+    // Management routes — shorter timeout.
+    //
+    // Split in two by authorization, not by timeout: `/v1/catalog` is
+    // read-only and is polled without credentials by the Studio dashboard and
+    // its workers, so it stays open. Everything else here can mutate served
+    // state (load/unload a model, create/delete a pipeline) and is gated by
+    // `auth::require_management_token`.
+    //
+    // Keeping the protected routes in their own Router means a management
+    // route added later is protected by construction — there is no path
+    // pattern to remember to update, which was the failure mode of the
+    // external gateway's `^/v1/(models|pipelines)` regex.
+    let management_open = with_timeout(
+        Router::new().route("/v1/catalog", get(handlers::catalog::list_catalog)),
+        30,
+    );
+
+    let management_protected = with_timeout(
         Router::new()
-            .route("/v1/catalog", get(handlers::catalog::list_catalog))
             .route("/v1/models", get(handlers::models::list_models))
             .route("/v1/models/load", post(handlers::models::load_model))
             .route("/v1/models/{id}", delete(handlers::models::unload_model))
@@ -56,7 +73,14 @@ pub fn build_router(state: AppState) -> Router {
                 delete(handlers::pipelines_mgmt::delete_pipeline),
             ),
         30,
-    );
+    )
+    // `route_layer` (not `layer`): a request whose path matches none of the
+    // routes above must fall through to the other groups rather than be
+    // rejected here with a 401.
+    .route_layer(axum::middleware::from_fn_with_state(
+        Arc::new(state.config.management_auth()),
+        auth::require_management_token,
+    ));
 
     // Health routes — fast timeout
     let health = with_timeout(
@@ -68,7 +92,8 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .merge(inference)
-        .merge(management)
+        .merge(management_open)
+        .merge(management_protected)
         .merge(health)
         // Request ID + tracing: SetRequestId (outer) → Trace → PropagateRequestId (inner).
         // axum applies layers bottom-to-top, so list inner layers first.

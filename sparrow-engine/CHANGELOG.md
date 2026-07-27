@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Control-plane management-token authorization** (`sparrow-engine-server`).
+  The model and pipeline management routes now enforce a bearer credential in
+  the server itself, replacing the external reverse proxy Sparrow Studio used
+  to front the engine with.
+
+  - New `SPARROW_ENGINE_MANAGEMENT_TOKEN`. When set, `/v1/models`,
+    `/v1/models/load`, `/v1/models/{id}`, `/v1/models/{id}/trt-warmup`,
+    `/v1/pipelines`, `/v1/pipelines/load` and `/v1/pipelines/{id}` require
+    `Authorization: Bearer <token>`. The scheme is matched case-insensitively
+    per RFC 7235 and the comparison is constant-time.
+  - `/v1/catalog` and `/v1/health` remain open. Studio and its workers poll
+    both without credentials, so gating them would break catalogue listing.
+    They are separate router groups, so a management route added later is
+    protected by construction rather than by remembering a path pattern.
+  - New `SPARROW_ENGINE_MANAGEMENT_AUTH` (`auto` | `disabled`, default
+    `auto`). With `auto` and no token, the bind address decides: bound to
+    loopback the control plane is served open (frictionless local
+    development); bound to any off-host address, management routes return 401
+    naming both remedies. An unset-but-reachable control plane therefore fails
+    closed instead of silently accepting anonymous model load/unload. An empty
+    or whitespace-only token counts as unset, so a declared-but-unpopulated
+    variable does not authorize against the empty string.
+  - Inference, embedding, and the CLI / Python / FFI consumers are unaffected:
+    they either use non-management routes or link the engine crates directly
+    rather than going over HTTP.
+
+### Changed
+
+- **Breaking (library)**: `Config` gains `management_token` and
+  `management_auth_mode`. Code constructing a `Config` literal must add both
+  fields; `Config::from_env()` is unaffected.
+
 ## v0.1.23
 
 - security: update `crossbeam-epoch` 0.9.18→0.9.20 and `quinn-proto`
