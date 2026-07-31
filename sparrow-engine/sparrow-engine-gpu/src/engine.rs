@@ -200,6 +200,28 @@ unsafe impl Sync for LoadedModel {}
 // EngineInner
 // ---------------------------------------------------------------------------
 
+/// Number of extra nvjpeg decoders created for the batched encoder path.
+///
+/// Decode costs ~2.9x what batched inference costs per image, so a single
+/// decoder leaves the GPU idle waiting for images. Three extra decoders bring
+/// decode throughput above inference throughput, which is the point at which
+/// inference — not decode — sets the pace.
+///
+/// Override with `SPARROW_ENGINE_ENCODER_DECODE_WORKERS`. Zero restores the
+/// previous single-decoder behaviour. Capped at 8: each decoder holds its own
+/// nvjpeg state and the win flattens once decode outpaces inference.
+fn encoder_decode_workers() -> usize {
+    const DEFAULT_WORKERS: usize = 3;
+    const MAX_WORKERS: usize = 8;
+    match std::env::var("SPARROW_ENGINE_ENCODER_DECODE_WORKERS") {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(n) => n.min(MAX_WORKERS),
+            Err(_) => DEFAULT_WORKERS,
+        },
+        Err(_) => DEFAULT_WORKERS,
+    }
+}
+
 /// Engine-wide shared state behind `Arc`. Every [`ModelHandle`] holds a
 /// [`Weak`] back-pointer so it can detect post-`Drop` use without keeping
 /// the engine alive.
@@ -228,6 +250,21 @@ pub(crate) struct EngineInner {
     /// Cached nvjpeg decoder. Used by classifier dispatch (Yolo + Tiled
     /// already carry their own decoder behind a private `Mutex`).
     pub(crate) decoder: Mutex<JpegDecoder>,
+    /// Additional nvjpeg decoders used only by the batched encoder path
+    /// (`crate::embed::embed_batch`) to decode a chunk across several threads.
+    ///
+    /// Decode is the encoder pipeline's bottleneck by measurement — 6.9 ms per
+    /// image against 2.4 ms for batched inference on an RTX 6000 Ada — and it
+    /// is dominated by per-image allocation and stream synchronisation rather
+    /// than by nvjpeg compute, so the GPU sits well under full utilisation
+    /// while a single decoder works through a batch serially. One decoder
+    /// cannot be shared concurrently (`decode_to_gpu` takes `&mut self`, and
+    /// the cached nvjpeg state is reused per call), so parallel decode needs
+    /// distinct decoders.
+    ///
+    /// Kept separate from `decoder` so the classifier, YOLO and tiled paths
+    /// keep their existing single-decoder behaviour unchanged.
+    pub(crate) decoder_pool: Vec<Mutex<JpegDecoder>>,
 }
 
 // SAFETY: every field is itself Send+Sync (CudaContext is Send+Sync;
@@ -416,10 +453,8 @@ fn run_trt_warmup_build(
         // Force the effective TRT config so a section-less ONNX manifest (which
         // resolves to on-demand, matching /v1/catalog) actually lowers to
         // TensorRT here — not just the explicit-section models (OQ-2026-07-07-1).
-        let forced = manifest::warmup_trt_config(
-            expected.manifest.trt.as_ref(),
-            &expected.manifest.format,
-        );
+        let forced =
+            manifest::warmup_trt_config(expected.manifest.trt.as_ref(), &expected.manifest.format);
         crate::trt::ep::with_trt_warmup_build(forced, || {
             build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
         })
@@ -681,6 +716,9 @@ impl Engine {
             let resize = ResizeKernel::new(&ctx)?;
             let resize_crop = ResizeCropKernel::new(&ctx)?;
             let decoder = JpegDecoder::new(&ctx)?;
+            let decoder_pool = (0..encoder_decode_workers())
+                .map(|_| JpegDecoder::new(&ctx).map(Mutex::new))
+                .collect::<Result<Vec<_>>>()?;
             Ok(EngineInner {
                 ctx,
                 resolved_device,
@@ -690,6 +728,7 @@ impl Engine {
                 resize,
                 resize_crop,
                 decoder: Mutex::new(decoder),
+                decoder_pool,
             })
         };
         let inner = init().inspect_err(|_e| {
