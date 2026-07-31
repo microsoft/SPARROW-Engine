@@ -106,7 +106,6 @@ pub fn embed_batch(handle: &ModelHandle, images: &[ImageInput]) -> Result<Vec<Em
         return embed_batch_reject(&inner);
     };
 
-    let start = Instant::now();
     let chunks: Vec<&[ImageInput]> = images.chunks(MAX_INFERENCE_BATCH).collect();
 
     // Decode + preprocess one chunk, spreading the work across the engine's
@@ -215,17 +214,25 @@ pub fn embed_batch(handle: &ModelHandle, images: &[ImageInput]) -> Result<Vec<Em
     // chunk i is inferring. Inference runs on the ORT CUDA execution provider's
     // own stream, so it overlaps the decode workers rather than alternating
     // with them.
+    //
+    // Each chunk carries its own start instant — the moment its decode began —
+    // so `processing_time_ms` measures that chunk's own span rather than time
+    // accumulated since the whole request started. Spans of adjacent chunks
+    // legitimately overlap; that is what pipelining means.
     let mut results = Vec::with_capacity(images.len());
+    let mut pending_started = Instant::now();
     let mut pending = decode_chunk(chunks[0])?;
 
     for i in 0..chunks.len() {
         let prepared = std::mem::take(&mut pending);
+        let prepared_started = pending_started;
         let next = chunks.get(i + 1);
         // `thread::scope` joins the decode thread before returning, including
         // on the early-return path when inference fails.
+        let next_started = Instant::now();
         pending = std::thread::scope(|scope| -> Result<Vec<PreprocessedImage>> {
             let decode_next = next.map(|chunk| scope.spawn(|| decode_chunk(chunk)));
-            let inferred = model.infer_prepared(&engine_inner.ctx, &prepared, start);
+            let inferred = model.infer_prepared(&engine_inner.ctx, &prepared, prepared_started);
             let decoded = match decode_next {
                 Some(join) => join.join().map_err(|_| {
                     SparrowEngineError::Ort("encoder decode thread panicked".into())
@@ -235,6 +242,7 @@ pub fn embed_batch(handle: &ModelHandle, images: &[ImageInput]) -> Result<Vec<Em
             results.extend(inferred?);
             Ok(decoded)
         })?;
+        pending_started = next_started;
     }
     Ok(results)
 }

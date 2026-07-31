@@ -321,6 +321,12 @@ impl EncoderModel {
     ///
     /// `start` is the caller's timer; every result in the batch reports the
     /// same elapsed time because they were produced by one run.
+    /// `start` is the timer for the work that produced `prepared` — decode and
+    /// preprocess included. Each result reports that span divided by the number
+    /// of images in the run, so `processing_time_ms` stays a per-image cost that
+    /// sums to the batch's real cost. Stamping the whole span on every item
+    /// instead would make the field grow with batch position and overstate
+    /// per-image cost by the batch size.
     pub(crate) fn infer_prepared(
         &self,
         ctx: &Arc<CudaContext>,
@@ -372,6 +378,23 @@ impl EncoderModel {
             .synchronize()
             .map_err(|e| SparrowEngineError::Ort(format!("stream.synchronize before run: {e}")))?;
 
+        // ORDERING INVARIANT — do not give the decode workers their own stream
+        // without revisiting this.
+        //
+        // `preprocess` launches its resize kernel and returns without
+        // synchronising. Correctness here relies on `ctx.default_stream()`
+        // being the CUDA null stream shared by every worker: the resizes for
+        // this chunk are all issued (and their threads joined) before the
+        // `memcpy_dtod` above is issued, and null-stream FIFO ordering then
+        // guarantees each resize completes before its bytes are copied. The
+        // single `synchronize` then covers the whole assembled batch for the
+        // ORT run below.
+        //
+        // If a future change moves decode onto `new_stream()` or
+        // `per_thread_stream()` to widen parallelism, that guarantee is lost
+        // silently and inference would read partially-written tensors. Such a
+        // change must add an explicit per-image sync or a cross-stream event.
+
         let shape: Shape = Shape::from([batch as i64, 3, target_h as i64, target_w as i64]);
         let (dev_ptr_u64, _sync) = batch_tensor.device_ptr(&stream);
         let input_tensor = unsafe {
@@ -415,7 +438,7 @@ impl EncoderModel {
             )
         })?;
 
-        let processing_time_ms = start.elapsed().as_secs_f32() * 1000.0;
+        let processing_time_ms = start.elapsed().as_secs_f32() * 1000.0 / batch as f32;
         let mut results = Vec::with_capacity(batch);
         for (i, p) in prepared.iter().enumerate() {
             let mut embedding = std::mem::take(&mut embeddings[i]);
