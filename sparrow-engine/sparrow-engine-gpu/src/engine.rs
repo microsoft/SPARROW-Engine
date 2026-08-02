@@ -202,17 +202,32 @@ unsafe impl Sync for LoadedModel {}
 
 /// Number of extra nvjpeg decoders created for the batched encoder path.
 ///
-/// Decode costs ~2.9x what batched inference costs per image, so a single
-/// decoder leaves the GPU idle waiting for images. Three extra decoders bring
-/// decode throughput above inference throughput, which is the point at which
-/// inference — not decode — sets the pace.
+/// Decode is the encoder pipeline's other half and a single decoder is slow:
+/// measured on an RTX 6000 Ada serving `bioclip-2`, decode-only throughput
+/// scales 224 -> 402 -> 530 -> 686 -> 792 -> 875 -> 887 img/s at 1, 2, 3, 4, 6,
+/// 8 and 12 decoders. It is overhead-bound (a per-image allocation plus a
+/// stream synchronisation), not nvjpeg-compute-bound, which is why adding
+/// decoders helps at all.
+///
+/// 6 is chosen because decode must stay comfortably ahead of inference, and how
+/// far ahead depends on the model's precision:
+///
+/// | precision | inference ceiling | end-to-end at 3 | at 6 |
+/// |---|---|---|---|
+/// | fp32 | 297 img/s | 254.2 | 260.7 (+2.6%) |
+/// | fp16 | 509 img/s | 380.5 | 433.2 (+13.8%) |
+///
+/// At 3 decoders, decode caps at 530 img/s — fine against fp32's 297 ceiling,
+/// but barely above fp16's 509, so it becomes the constraint. 6 costs fp32
+/// nothing and buys fp16 14%. Beyond 8 the curve is flat.
 ///
 /// Override with `SPARROW_ENGINE_ENCODER_DECODE_WORKERS`. Zero restores the
-/// previous single-decoder behaviour. Capped at 8: each decoder holds its own
-/// nvjpeg state and the win flattens once decode outpaces inference.
+/// previous single-shared-decoder behaviour. Capped at 12; raise the cap only
+/// alongside a faster execution provider, since decode stops being the
+/// constraint well before then.
 fn encoder_decode_workers() -> usize {
-    const DEFAULT_WORKERS: usize = 3;
-    const MAX_WORKERS: usize = 8;
+    const DEFAULT_WORKERS: usize = 6;
+    const MAX_WORKERS: usize = 12;
     match std::env::var("SPARROW_ENGINE_ENCODER_DECODE_WORKERS") {
         Ok(raw) => match raw.trim().parse::<usize>() {
             Ok(n) => n.min(MAX_WORKERS),
