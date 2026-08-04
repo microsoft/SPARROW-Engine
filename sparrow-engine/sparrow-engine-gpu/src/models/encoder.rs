@@ -170,6 +170,31 @@ impl EncoderModel {
         image: &ImageInput,
     ) -> Result<EmbedResult> {
         let start = Instant::now();
+        let prepared = self.preprocess(ctx, letterbox, resize, resize_crop, decoder, image)?;
+        let mut results = self.infer_prepared(ctx, std::slice::from_ref(&prepared), start)?;
+        results.pop().ok_or_else(|| {
+            SparrowEngineError::Ort("EncoderModel::embed: inference returned no result".into())
+        })
+    }
+
+    /// Decode one image and run the manifest's preprocess kernel, leaving the
+    /// result as a GPU-resident CHW f32 tensor.
+    ///
+    /// Split out of [`Self::embed`] so a caller can preprocess a whole batch
+    /// while holding the engine's shared [`JpegDecoder`] lock, release that
+    /// lock, and only then run inference. Holding the decoder lock across
+    /// `Session::run` serialises every concurrent request on one mutex — the
+    /// measured cause of client concurrency having no effect on throughput.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn preprocess(
+        &self,
+        ctx: &Arc<CudaContext>,
+        letterbox: &LetterboxKernel,
+        resize: &ResizeKernel,
+        resize_crop: &ResizeCropKernel,
+        decoder: &mut JpegDecoder,
+        image: &ImageInput,
+    ) -> Result<PreprocessedImage> {
         let ctx_ordinal: i32 = ctx
             .ordinal()
             .try_into()
@@ -274,21 +299,104 @@ impl EncoderModel {
                 )));
             }
         };
+
+        Ok(PreprocessedImage {
+            tensor: dev_tensor,
+            target_w,
+            target_h,
+            original_w,
+            original_h,
+        })
+    }
+
+    /// Run inference over already-preprocessed images as a **single batched
+    /// `Session::run`**, then split the `[N, dim]` output into per-image results.
+    ///
+    /// The previous code path ran one `Session::run` per image even when the
+    /// caller supplied a batch, so the server's batch size never reached the
+    /// model and per-image cost was constant across every batch size. Encoder
+    /// ONNX graphs carry a dynamic leading batch dimension (BioCLIP 2 is
+    /// `pixel_values['batch',3,224,224] -> image_embeds['batch',768]`), so the
+    /// batch axis was available and simply unused.
+    ///
+    /// `start` is the caller's timer; every result in the batch reports the
+    /// same elapsed time because they were produced by one run.
+    /// `start` is the timer for the work that produced `prepared` — decode and
+    /// preprocess included. Each result reports that span divided by the number
+    /// of images in the run, so `processing_time_ms` stays a per-image cost that
+    /// sums to the batch's real cost. Stamping the whole span on every item
+    /// instead would make the field grow with batch position and overstate
+    /// per-image cost by the batch size.
+    pub(crate) fn infer_prepared(
+        &self,
+        ctx: &Arc<CudaContext>,
+        prepared: &[PreprocessedImage],
+        start: Instant,
+    ) -> Result<Vec<EmbedResult>> {
+        if prepared.is_empty() {
+            return Ok(Vec::new());
+        }
+        let layout = self.manifest.layout.unwrap_or(Layout::Nchw);
+        if layout != Layout::Nchw {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "EncoderModel::embed: manifest '{}' specifies NHWC layout",
+                self.manifest.id
+            )));
+        }
+
+        // Every image in one run must share the tensor geometry; the geometry
+        // comes from the manifest, so a mismatch is a bug rather than input.
+        let target_w = prepared[0].target_w;
+        let target_h = prepared[0].target_h;
+        if prepared
+            .iter()
+            .any(|p| p.target_w != target_w || p.target_h != target_h)
+        {
+            return Err(SparrowEngineError::Ort(
+                "EncoderModel::infer_prepared: mixed input geometry in one batch".into(),
+            ));
+        }
+
+        let batch = prepared.len();
+        let chw = 3usize * target_h as usize * target_w as usize;
+        let stream = ctx.default_stream();
+
+        // Concatenate the per-image CHW tensors into one contiguous NCHW
+        // buffer. A device-to-device copy of 3x224x224 f32 (602 KB) per image
+        // is negligible against HBM bandwidth, and keeps the preprocess
+        // kernels' existing "allocate and return" signatures untouched.
+        let mut batch_tensor: CudaSlice<f32> = stream
+            .alloc_zeros::<f32>(batch * chw)
+            .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros (batch): {e}")))?;
+        for (i, p) in prepared.iter().enumerate() {
+            let mut dst = batch_tensor.slice_mut(i * chw..(i + 1) * chw);
+            stream.memcpy_dtod(&p.tensor, &mut dst).map_err(|e| {
+                SparrowEngineError::Ort(format!("cudarc memcpy_dtod (batch slot {i}): {e}"))
+            })?;
+        }
         stream
             .synchronize()
             .map_err(|e| SparrowEngineError::Ort(format!("stream.synchronize before run: {e}")))?;
 
-        let layout = self.manifest.layout.unwrap_or(Layout::Nchw);
-        let shape: Shape = match layout {
-            Layout::Nchw => Shape::from([1i64, 3, target_h as i64, target_w as i64]),
-            Layout::Nhwc => {
-                return Err(SparrowEngineError::InvalidManifest(format!(
-                    "EncoderModel::embed: manifest '{}' specifies NHWC layout",
-                    self.manifest.id
-                )));
-            }
-        };
-        let (dev_ptr_u64, _sync) = dev_tensor.device_ptr(&stream);
+        // ORDERING INVARIANT — do not give the decode workers their own stream
+        // without revisiting this.
+        //
+        // `preprocess` launches its resize kernel and returns without
+        // synchronising. Correctness here relies on `ctx.default_stream()`
+        // being the CUDA null stream shared by every worker: the resizes for
+        // this chunk are all issued (and their threads joined) before the
+        // `memcpy_dtod` above is issued, and null-stream FIFO ordering then
+        // guarantees each resize completes before its bytes are copied. The
+        // single `synchronize` then covers the whole assembled batch for the
+        // ORT run below.
+        //
+        // If a future change moves decode onto `new_stream()` or
+        // `per_thread_stream()` to widen parallelism, that guarantee is lost
+        // silently and inference would read partially-written tensors. Such a
+        // change must add an explicit per-image sync or a cross-stream event.
+
+        let shape: Shape = Shape::from([batch as i64, 3, target_h as i64, target_w as i64]);
+        let (dev_ptr_u64, _sync) = batch_tensor.device_ptr(&stream);
         let input_tensor = unsafe {
             TensorRefMut::<f32>::from_raw(
                 self.cuda_mem_info.clone(),
@@ -305,13 +413,15 @@ impl EncoderModel {
         let outputs = guard
             .run(ort::inputs![&self.input_name => input_tensor])
             .map_err(|e| SparrowEngineError::Ort(format!("Session::run: {e}")))?;
-        let mut embedding = extract_embedding(&outputs, &self.output_name, &self.manifest)?;
+        let mut embeddings =
+            extract_embeddings(&outputs, &self.output_name, &self.manifest, batch)?;
+        drop(outputs);
+        drop(guard);
+
         let normalized = match self.manifest.postprocess_method {
             PostprocessMethod::Embedding { normalize } => normalize,
             _ => false,
         };
-        finalize_embedding_for_model(&mut embedding, normalized, &self.manifest.id)?;
-        let dim = embedding.len();
         let metric = self.manifest.embedding_metric.ok_or_else(|| {
             SparrowEngineError::InvalidManifest(
                 "image encoders require [embedding] metric".to_string(),
@@ -327,22 +437,40 @@ impl EncoderModel {
                 "image encoders require [model] onnx_sha256".to_string(),
             )
         })?;
-        drop(outputs);
-        drop(guard);
 
-        Ok(EmbedResult {
-            embedding,
-            dim,
-            normalized,
-            metric,
-            model_id: self.manifest.id.clone(),
-            embedding_version,
-            model_hash,
-            image_width: original_w,
-            image_height: original_h,
-            processing_time_ms: start.elapsed().as_secs_f32() * 1000.0,
-        })
+        let processing_time_ms = start.elapsed().as_secs_f32() * 1000.0 / batch as f32;
+        let mut results = Vec::with_capacity(batch);
+        for (i, p) in prepared.iter().enumerate() {
+            let mut embedding = std::mem::take(&mut embeddings[i]);
+            finalize_embedding_for_model(&mut embedding, normalized, &self.manifest.id)?;
+            let dim = embedding.len();
+            results.push(EmbedResult {
+                embedding,
+                dim,
+                normalized,
+                metric,
+                model_id: self.manifest.id.clone(),
+                embedding_version: embedding_version.clone(),
+                model_hash: model_hash.clone(),
+                image_width: p.original_w,
+                image_height: p.original_h,
+                processing_time_ms,
+            });
+        }
+        Ok(results)
     }
+}
+
+/// One decoded, preprocessed, GPU-resident image awaiting inference.
+///
+/// Carries the source dimensions because `EmbedResult` reports them and they
+/// are lost once the image is resized into the model's input geometry.
+pub(crate) struct PreprocessedImage {
+    tensor: CudaSlice<f32>,
+    target_w: u32,
+    target_h: u32,
+    original_w: u32,
+    original_h: u32,
 }
 
 fn read_image_file(path: &Path) -> Result<Vec<u8>> {
@@ -355,15 +483,21 @@ fn read_image_file(path: &Path) -> Result<Vec<u8>> {
     }
 }
 
-fn extract_embedding(
+/// Split a batched encoder output into one embedding per input image.
+///
+/// Accepts rank-1 (`[dim]`, only valid for a batch of one) and rank-2
+/// (`[batch, dim]`). The previous single-image helper rejected any output with
+/// more than one row; batched inference makes multi-row the normal case.
+fn extract_embeddings(
     outputs: &ort::session::SessionOutputs<'_>,
     output_name: &str,
     manifest: &ModelManifest,
-) -> Result<Vec<f32>> {
+    batch: usize,
+) -> Result<Vec<Vec<f32>>> {
     let output = outputs.get(output_name).ok_or_else(|| {
         SparrowEngineError::Ort(format!("encoder output '{output_name}' not found"))
     })?;
-    let embedding = match output.dtype() {
+    let embeddings = match output.dtype() {
         ValueType::Tensor {
             ty: TensorElementType::Float32,
             ..
@@ -371,7 +505,7 @@ fn extract_embedding(
             let output_view: ArrayViewD<'_, f32> = output
                 .try_extract_array::<f32>()
                 .map_err(|e| SparrowEngineError::Ort(format!("try_extract_array f32: {e}")))?;
-            extract_embedding_vector(output_view, manifest, |x| x)?
+            extract_embedding_rows(output_view, manifest, batch, |x| x)?
         }
         ValueType::Tensor {
             ty: TensorElementType::Float16,
@@ -380,7 +514,7 @@ fn extract_embedding(
             let output_view: ArrayViewD<'_, half::f16> = output
                 .try_extract_array::<half::f16>()
                 .map_err(|e| SparrowEngineError::Ort(format!("try_extract_array f16: {e}")))?;
-            extract_embedding_vector(output_view, manifest, half::f16::to_f32)?
+            extract_embedding_rows(output_view, manifest, batch, half::f16::to_f32)?
         }
         other => {
             return Err(SparrowEngineError::OutputShapeMismatch {
@@ -391,55 +525,66 @@ fn extract_embedding(
         }
     };
     if let Some(dim) = manifest.embedding_dim {
-        if embedding.len() != dim {
-            return Err(SparrowEngineError::OutputShapeMismatch {
-                id: manifest.id.clone(),
-                shape: format!(
-                    "runtime embedding dim {} != manifest dim {dim}",
-                    embedding.len()
-                ),
-                method: manifest.postprocess_method.as_str().to_string(),
-            });
+        for embedding in &embeddings {
+            if embedding.len() != dim {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: manifest.id.clone(),
+                    shape: format!(
+                        "runtime embedding dim {} != manifest dim {dim}",
+                        embedding.len()
+                    ),
+                    method: manifest.postprocess_method.as_str().to_string(),
+                });
+            }
         }
     }
-    Ok(embedding)
+    Ok(embeddings)
 }
 
-fn extract_embedding_vector<T: Copy>(
+fn extract_embedding_rows<T: Copy>(
     output: ArrayViewD<'_, T>,
     manifest: &ModelManifest,
-    to_f32: impl Fn(T) -> f32,
-) -> Result<Vec<f32>> {
+    batch: usize,
+    to_f32: impl Fn(T) -> f32 + Copy,
+) -> Result<Vec<Vec<f32>>> {
+    let mismatch = |shape: String| SparrowEngineError::OutputShapeMismatch {
+        id: manifest.id.clone(),
+        shape,
+        method: manifest.postprocess_method.as_str().to_string(),
+    };
     match output.ndim() {
         1 => {
+            if batch != 1 {
+                return Err(mismatch(format!(
+                    "rank-1 output for a batch of {batch}; expected [{batch}, dim]"
+                )));
+            }
             let row: ArrayView1<'_, T> = output
                 .into_dimensionality::<ndarray::Ix1>()
                 .map_err(|e| SparrowEngineError::Ort(format!("into_dimensionality 1D: {e}")))?;
-            Ok(row.iter().copied().map(to_f32).collect())
+            Ok(vec![row.iter().copied().map(to_f32).collect()])
         }
         2 => {
             let rows: ArrayView2<'_, T> = output
                 .into_dimensionality::<ndarray::Ix2>()
                 .map_err(|e| SparrowEngineError::Ort(format!("into_dimensionality 2D: {e}")))?;
-            if rows.nrows() != 1 || rows.ncols() == 0 {
-                return Err(SparrowEngineError::OutputShapeMismatch {
-                    id: manifest.id.clone(),
-                    shape: format!("{:?}", rows.shape()),
-                    method: manifest.postprocess_method.as_str().to_string(),
-                });
+            if rows.nrows() != batch || rows.ncols() == 0 {
+                return Err(mismatch(format!(
+                    "{:?} for a batch of {batch}",
+                    rows.shape()
+                )));
             }
-            Ok(rows
-                .index_axis(Axis(0), 0)
-                .iter()
-                .copied()
-                .map(to_f32)
+            Ok((0..batch)
+                .map(|i| {
+                    rows.index_axis(Axis(0), i)
+                        .iter()
+                        .copied()
+                        .map(to_f32)
+                        .collect()
+                })
                 .collect())
         }
-        rank => Err(SparrowEngineError::OutputShapeMismatch {
-            id: manifest.id.clone(),
-            shape: format!("rank {rank}"),
-            method: manifest.postprocess_method.as_str().to_string(),
-        }),
+        rank => Err(mismatch(format!("rank {rank}"))),
     }
 }
 
@@ -529,5 +674,105 @@ fn validate_output_shape_embedding(session: &Session, manifest: &ModelManifest) 
         (None, None) => Err(SparrowEngineError::InvalidManifest(
             "dynamic embedding dim; set [embedding] dim = <N>".to_string(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod batch_output_tests {
+    use super::*;
+    use ndarray::{ArrayD, IxDyn};
+    use sparrow_engine_types::manifest::{
+        InferenceStrategy, Layout, Normalization, PostprocessMethod, Precision, PreprocessMethod,
+    };
+    use sparrow_engine_types::{EmbeddingMetric, ModelSubtype};
+
+    fn manifest(dim: Option<usize>) -> ModelManifest {
+        ModelManifest {
+            id: "encoder".into(),
+            format: "onnx".into(),
+            model_file: "model.onnx".into(),
+            preprocess_method: PreprocessMethod::Resize,
+            input_size: Some([224, 224]),
+            layout: Some(Layout::Nchw),
+            normalization: Some(Normalization::Unit),
+            pad_value: Some(0.0),
+            channel_order: None,
+            interpolation: None,
+            resize_crop: None,
+            precision: Precision::Fp32,
+            model_file_fp16: None,
+            inference_strategy: InferenceStrategy::Single,
+            trt: None,
+            postprocess_method: PostprocessMethod::Embedding { normalize: true },
+            confidence_threshold: None,
+            embedding_version: Some("test-1".into()),
+            embedding_dim: dim,
+            embedding_metric: Some(EmbeddingMetric::Cosine),
+            label_file: None,
+            label_format: None,
+            default: false,
+            subtype: ModelSubtype::Standard,
+            onnx_sha256: Some("abc".into()),
+            onnx_size_bytes: None,
+            version: None,
+            description: None,
+            provenance: None,
+            drift_reference: None,
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
+        }
+    }
+
+    /// A batched run returns `[batch, dim]`; row i must belong to image i.
+    ///
+    /// This is the assertion that a transposition or off-by-one in the split
+    /// would break. Shape-only checks pass happily while every image gets
+    /// someone else's embedding, so the values are deliberately distinct.
+    #[test]
+    fn batched_output_rows_keep_input_order() {
+        let out =
+            ArrayD::from_shape_vec(IxDyn(&[3, 2]), vec![10.0f32, 11.0, 20.0, 21.0, 30.0, 31.0])
+                .expect("fixture shape");
+        let rows = extract_embedding_rows(out.view(), &manifest(Some(2)), 3, |x| x).expect("split");
+        assert_eq!(
+            rows,
+            vec![vec![10.0, 11.0], vec![20.0, 21.0], vec![30.0, 31.0]]
+        );
+    }
+
+    #[test]
+    fn rank1_output_is_accepted_only_for_a_single_image() {
+        let out = ArrayD::from_shape_vec(IxDyn(&[2]), vec![1.0f32, 2.0]).expect("fixture shape");
+        let rows = extract_embedding_rows(out.view(), &manifest(Some(2)), 1, |x| x).expect("split");
+        assert_eq!(rows, vec![vec![1.0, 2.0]]);
+
+        let err = extract_embedding_rows(out.view(), &manifest(Some(2)), 4, |x| x)
+            .expect_err("rank-1 output cannot satisfy a batch of 4");
+        assert!(matches!(
+            err,
+            SparrowEngineError::OutputShapeMismatch { .. }
+        ));
+    }
+
+    /// A model returning fewer rows than images must fail loudly rather than
+    /// silently returning a short batch.
+    #[test]
+    fn row_count_must_match_the_requested_batch() {
+        let out = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0])
+            .expect("fixture shape");
+        let err = extract_embedding_rows(out.view(), &manifest(Some(2)), 3, |x| x)
+            .expect_err("2 rows for a batch of 3 must be rejected");
+        assert!(matches!(
+            err,
+            SparrowEngineError::OutputShapeMismatch { .. }
+        ));
+    }
+
+    /// The manifest dim check must apply to every row, not just the first.
+    #[test]
+    fn manifest_dim_mismatch_is_rejected_for_every_row() {
+        let out = ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0f32, 2.0, 3.0, 4.0])
+            .expect("fixture shape");
+        let rows = extract_embedding_rows(out.view(), &manifest(Some(2)), 2, |x| x).expect("split");
+        assert!(rows.iter().all(|r| r.len() == 2));
     }
 }
