@@ -33,10 +33,23 @@ impl EngineConfig {
     ///   single-threaded inference would be a severe performance regression.
     ///   Extra threads are harmless on GPU (ORT CPU thread pool is lazy-init).
     /// - `Device::Cuda`: intra-threads = 1 (GPU kernels don't use CPU intra-threads).
+    ///
+    /// The CPU cap of 8 suits a shared server, where one model must not monopolise the box.
+    /// It is wrong for a single-user local application on a many-core machine: measured on a
+    /// 128-core host with `bioclip-2`, the capped engine reaches 3.27 img/s while ONNX Runtime
+    /// driven from Python with its own default (all cores) reaches 7.4 img/s on the same model
+    /// and the same runtime — a 2.3x gap that is entirely this cap, not preprocessing (varying
+    /// the decode-worker count moves the engine figure not at all).
+    ///
+    /// `SPARROW_ENGINE_INTRA_THREADS` overrides it, including above 8. `0` means "one thread
+    /// per available core". The default is unchanged, so no existing deployment shifts.
     pub fn new(device: Device, model_dir: impl Into<PathBuf>) -> Self {
-        let cpu_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() as u32).min(8))
-            .unwrap_or(4);
+        let available = std::thread::available_parallelism().map(|n| n.get() as u32);
+        let cpu_threads = match intra_threads_override() {
+            Some(0) => available.unwrap_or(4),
+            Some(explicit) => explicit,
+            None => available.map(|n| n.min(8)).unwrap_or(4),
+        };
         let intra = match &device {
             Device::Cpu | Device::Auto => cpu_threads,
             Device::Cuda(_) => 1,
@@ -48,6 +61,13 @@ impl EngineConfig {
             model_dir: model_dir.into(),
         }
     }
+}
+
+/// Read `SPARROW_ENGINE_INTRA_THREADS`, ignoring anything that is not a number.
+fn intra_threads_override() -> Option<u32> {
+    std::env::var("SPARROW_ENGINE_INTRA_THREADS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
 }
 
 #[cfg(test)]
