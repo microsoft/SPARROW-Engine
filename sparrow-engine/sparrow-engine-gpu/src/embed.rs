@@ -75,21 +75,43 @@ pub fn embed(handle: &ModelHandle, image: &ImageInput) -> Result<EmbedResult> {
     }
 }
 
-/// Images fed to the model in one `Session::run`, and the granularity at which
-/// decode is pipelined against inference.
+/// Images fed to the model in one `Session::run`, and the granularity at which decode is
+/// pipelined against inference.
 ///
-/// Bounds device memory for a caller-supplied batch: this is a public library
-/// entry point, so an unbounded batch would allocate `n * 3 * H * W * 4` bytes
-/// of device memory at the caller's discretion.
+/// Bounds device memory for a caller-supplied batch: this is a public library entry point, so
+/// an unbounded batch would allocate `n * 3 * H * W * 4` bytes at the caller's discretion.
 ///
-/// 8 is measured, not assumed. Larger chunks make each `Session::run` more
-/// efficient in isolation but coarsen the decode/inference overlap, and the
-/// overlap dominates: on an RTX 6000 Ada serving `bioclip-2` over HTTP at four
-/// concurrent clients, 8 reached 260 img/s against 223 img/s at 16. Inference
-/// alone is also cheaper per image at 8 (2.4 ms) than at 32 (3.3 ms), matching
-/// the known behaviour that this encoder's CUDA throughput falls as the batch
-/// grows.
-const MAX_INFERENCE_BATCH: usize = 8;
+/// **4 on measurement.** This is a pipelining granularity far more than an inference batch
+/// size: a smaller chunk overlaps decode and inference more finely, and that dominates the
+/// per-run efficiency a larger chunk would buy. Measured end-to-end through the Python wheel on
+/// an RTX 6000 Ada serving `bioclip-2` in FP16, 400 real photos:
+///
+/// | chunk | 1 | 2 | 3 | **4** | 6 | 8 | 16 | 32 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | img/s | 223 | 339 | 393 | **428** | 363 | 388 | 362 | 347 |
+///
+/// 428 img/s is 84% of this model's 509 img/s FP16 inference ceiling, matching the 84-88%
+/// end-to-end-versus-binding-ceiling ratio seen across every configuration measured. With
+/// TensorRT the curve is flatter (562 at 4, 553 at 8) because inference is no longer the
+/// constraint.
+///
+/// The previous value of 8 was measured against a CUDA-FP32 ceiling, before FP16 moved it.
+/// `SPARROW_ENGINE_INFERENCE_CHUNK` overrides it, because the right value moves with the
+/// execution provider and precision.
+const MAX_INFERENCE_BATCH: usize = 4;
+
+/// Resolve the inference chunk size, allowing a deployment to re-tune it.
+///
+/// The constant above was measured against a CUDA-FP32 inference ceiling. FP16 and TensorRT
+/// both move that ceiling substantially, and the right chunk size moves with it, so this is a
+/// knob rather than a constant. `SPARROW_ENGINE_INFERENCE_CHUNK` overrides it.
+fn inference_chunk() -> usize {
+    std::env::var("SPARROW_ENGINE_INFERENCE_CHUNK")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(MAX_INFERENCE_BATCH)
+}
 
 pub fn embed_batch(handle: &ModelHandle, images: &[ImageInput]) -> Result<Vec<EmbedResult>> {
     if images.is_empty() {
@@ -106,7 +128,7 @@ pub fn embed_batch(handle: &ModelHandle, images: &[ImageInput]) -> Result<Vec<Em
         return embed_batch_reject(&inner);
     };
 
-    let chunks: Vec<&[ImageInput]> = images.chunks(MAX_INFERENCE_BATCH).collect();
+    let chunks: Vec<&[ImageInput]> = images.chunks(inference_chunk()).collect();
 
     // Decode + preprocess one chunk, spreading the work across the engine's
     // decoder pool. Two properties matter here:

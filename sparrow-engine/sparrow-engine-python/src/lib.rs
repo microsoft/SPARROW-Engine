@@ -1000,9 +1000,25 @@ impl PyEngine {
         model: &str,
         progress_callback: Option<PyObject>,
     ) -> PyResult<Vec<EmbedResult>> {
-        // Chunk size for the batched fast path. Matches the engine crates' own
-        // MAX_INFERENCE_BATCH so one call maps to one `session.run`.
-        const CHUNK: usize = 8;
+        // Images handed to `embed_batch` per call.
+        //
+        // Deliberately a MULTIPLE of the engine crates' own MAX_INFERENCE_BATCH (8), not equal
+        // to it. `embed_batch` pipelines the decode of chunk i+1 against the inference of chunk
+        // i, which requires it to receive more than one chunk; passing exactly 8 gave it a
+        // single chunk and silently disabled that overlap. Measured on GPU fp16: 313.5 img/s
+        // at a window of 8 against 386.5 at 256, with the internal chunk held at 8.
+        //
+        // 256 on measurement: 313.5 img/s at a window of 8, 363.7 at 32, 375.9 at 64, 386.5 at
+        // 256, flat beyond. It is nearly free in memory -- `embed_batch` decodes per internal
+        // chunk and holds at most two chunks of tensors, so the window only sizes the path list
+        // and the result vector (256 x 768 floats is under 1 MB).
+        //
+        // Override with `SPARROW_ENGINE_EMBED_WINDOW`.
+        let window: usize = std::env::var("SPARROW_ENGINE_EMBED_WINDOW")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(256);
 
         let engine = &self.engine;
         let model_id = model.to_owned();
@@ -1014,7 +1030,7 @@ impl PyEngine {
             let mut errors = 0usize;
             let mut done = 0usize;
 
-            for chunk in paths.chunks(CHUNK) {
+            for chunk in paths.chunks(window) {
                 let inputs: Vec<ImageInput> = chunk
                     .iter()
                     .map(|path| ImageInput::FilePath(PathBuf::from(path)))
@@ -1031,7 +1047,7 @@ impl PyEngine {
                         // camera-trap collections contain broken files, and the previous
                         // per-image loop tolerated them, so retry this chunk one image at a
                         // time to keep the failure isolated to its own slot rather than
-                        // discarding up to CHUNK good images with it.
+                        // discarding up to the whole window of good images with it.
                         for (path, input) in chunk.iter().zip(inputs.iter()) {
                             match sparrow_engine::embed::embed(&handle, input) {
                                 Ok(r) => results.push(r),
