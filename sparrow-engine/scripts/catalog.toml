@@ -1143,6 +1143,26 @@ ai4g_relationship = "first_party"
 commercial_use = true
 reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
 
+[[model]]
+id = "imageomics-mmla"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = ["Imageomics", "YOLO11"]
+status = "active"
+license = "MIT"
+zip = "overhead__detector__imageomics-mmla.zip"
+description = "Imageomics MMLA aerial wildlife detector: YOLO11m with four low-altitude drone classes (Zebra, Giraffe, Onager, Dog), converted from the pinned MIT checkpoint to fixed NCHW ONNX with graph NMS."
+species_direct = true
+geo_scope = "regional"
+geo_regions = ["sub_saharan_africa", "north_america"]
+geo_locality = "Mpala Research Centre and Ol Pejeta Conservancy, Kenya; The Wilds, Ohio, USA"
+display_name = "Imageomics MMLA Aerial Wildlife Detector"
+developer = "Imageomics Institute (Jenna Kline, The Ohio State University)"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Kline, J., et al. MMLA: Multi-Environment, Multi-Species, Low-Altitude Aerial Footage Dataset. arXiv:2504.07744. https://arxiv.org/abs/2504.07744. Source revision 7930ec0d758400bdc04e355fc4565ba67b36cdca: https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca"
+
 # ============================ Marine Imagery — Detector ========================
 
 [[model]]
