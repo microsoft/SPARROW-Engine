@@ -1,6 +1,6 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **65 models**, Zenodo record [`21796876`](https://zenodo.org/records/21796876) (v0.24.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **67 models**, Zenodo record [`21813241`](https://zenodo.org/records/21813241) (v0.25.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
 
@@ -98,6 +98,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | orca-ecotype-melinput-fp16-tflite | `orca-ecotype-melinput-fp16-tflite` | DCLDE-orca | tflite-fp16 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 | orca-ecotype-melinput-int8-tflite | `orca-ecotype-melinput-int8-tflite` | DCLDE-orca | tflite-int8 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 | perch-v2 | `perch-v2` | — | onnx | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | ✅ |
+| perch-v2-fp16 | `perch-v2-fp16` | — | onnx-fp16 | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | ✅ |
 
 ## Acoustics — Cascade
 
@@ -126,6 +127,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Commercial use |
 |---|---|---|---|---|---|---|---|---|---|
 | bioclip-2 | `bioclip-2` | BioCLIP | onnx · v2 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
+| bioclip-2-fp16 | `bioclip-2-fp16` | BioCLIP | onnx-fp16 · v2 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
 | dinov3-vitl16 | `dinov3-vitl16` | DINOv3 | onnx · vitl16-lvd1689m | Encoder · embeddings | Foundational (global) | Meta AI | Third-party | DINOv3 License | ✅ |
 
 ## References & citations
@@ -188,6 +190,7 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`orca-ecotype-melinput-fp16-tflite`** — Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673.
 - **`orca-ecotype-melinput-int8-tflite`** — Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673.
 - **`perch-v2`** — Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665.
+- **`perch-v2-fp16`** — FP16-converted variant of perch-v2. Reference the FP32 sibling: Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665.
 - **`orca-cascade`** — Pipeline descriptor combining orca-detector-v5-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; updated for Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269.
 - **`HerdNet_General_Dataset_2022`** — Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet.
 - **`OWL`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G)).
@@ -196,4 +199,5 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`fathomnet-vme`** — FathomNet vulnerable marine ecosystems model, source revision dffb2d9c6178bab0be813752e06b474b9b6515a0: https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0
 - **`fathomnet-trash`** — FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762
 - **`bioclip-2`** — Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2.
+- **`bioclip-2-fp16`** — FP16-converted variant of bioclip-2. Reference the FP32 sibling: Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2.
 - **`dinov3-vitl16`** — Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., et al. DINOv3. Meta AI, 2025. https://arxiv.org/abs/2508.10104. Model: facebook/dinov3-vitl16-pretrain-lvd1689m (LVD-1689M pretrain, ViT-L/16, 1024-d), Hugging Face, https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m. License: DINOv3 License (custom Meta license).
