@@ -109,13 +109,20 @@ for m in sorted(models, key=lambda m: (m["domain"], m["task"], m["id"])):
         last = grp
     fam = ",".join(m.get("family", []))
     fam = f"  ({fam})" if fam else ""
-    # Mark non-default (mobile) artifacts so users know they need --all / an
-    # explicit name to fetch them.
-    tag = "" if m.get("format") == "onnx" else f"  [{m.get('format')}, mobile — needs --all or explicit name]"
+    # Mark non-default artifacts so users know they need --all / an explicit
+    # name to fetch them: mobile formats, and precision variants of a model
+    # that is already in the default set.
+    if m.get("format") != "onnx":
+        tag = f"  [{m.get('format')}, mobile — needs --all or explicit name]"
+    elif m.get("flavor"):
+        tag = f"  [{m.get('flavor')} variant — needs --all or explicit name]"
+    else:
+        tag = ""
     print(f"  {m['id']:<{w}}  {m['license']}{fam}{tag}")
-n_onnx = sum(1 for m in models if m.get("format") == "onnx")
+n_onnx = sum(1 for m in models if m.get("format") == "onnx" and not m.get("flavor"))
 print(f"\n{len(models)} models total; {n_onnx} desktop ONNX models fetched by default.")
-print("Mobile .tflite / cascade artifacts are fetched only when named explicitly or with --all.")
+print("Mobile .tflite / cascade artifacts and precision variants (e.g. onnx-fp16)")
+print("are fetched only when named explicitly or with --all.")
 PY
       exit 0
       ;;
@@ -136,9 +143,10 @@ done
 
 # ---- Resolve the selection against the catalog (id or alias) ----
 # Emits `id<TAB>zip` per resolved model. Unknown ids abort with a clear error.
-# With no selection: default to desktop ONNX models only (format == "onnx");
+# With no selection: default to desktop ONNX models only (format == "onnx")
+# excluding precision variants (any entry carrying a `flavor`, e.g. onnx-fp16);
 # `--all` (SPARROW_ALL=1) expands to every catalog entry. Explicitly named
-# models are always fetched regardless of format.
+# models are always fetched regardless of format or flavor.
 RESOLVED="$(
   SPARROW_ALL="$ALL" python3 - "$CATALOG" "${SELECTED[@]+"${SELECTED[@]}"}" <<'PY'
 import os, sys, tomllib
@@ -156,7 +164,10 @@ if not selected:
     if os.environ.get("SPARROW_ALL") == "1":
         chosen = list(by_id)
     else:
-        chosen = [m["id"] for m in models if m.get("format") == "onnx"]
+        chosen = [
+            m["id"] for m in models
+            if m.get("format") == "onnx" and not m.get("flavor")
+        ]
 else:
     chosen, unknown = [], []
     for s in selected:
@@ -200,7 +211,7 @@ if [[ ${#SELECTED[@]} -gt 0 ]]; then
 elif [[ $ALL -eq 1 ]]; then
   SEL_NOTE="all"
 else
-  SEL_NOTE="desktop ONNX default; --all for mobile too"
+  SEL_NOTE="desktop ONNX default; --all for mobile and precision variants too"
 fi
 echo "Models:        ${#IDS[@]} of ${TOTAL_CATALOG} (${SEL_NOTE})"
 echo ""

@@ -1086,6 +1086,29 @@ ai4g_relationship = "third_party"
 commercial_use = true
 reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
 
+# FP16 variant of perch-v2. Same labels and same top-1 predictions (76/76 on the
+# conversion corpus; verified through the engine on real recordings), and half
+# the download and GPU memory. NOTE: unlike bioclip-2-fp16 this is NOT faster —
+# measured 0.65x / 0.91x / 0.97x of FP32 at batch 1 / 8 / 32 on an RTX 6000 Ada.
+# Choose it when storage or VRAM is the constraint, not for latency.
+# Flavored entries are NOT part of the default download set.
+[[model]]
+id = "perch-v2-fp16"
+domain = "acoustics"
+task = "classifier"
+format = "onnx"
+family = []
+flavor = "onnx-fp16"
+status = "active"
+license = "Apache-2.0"
+zip = "acoustics__classifier__perch-v2-fp16.zip"
+geo_scope = "global"
+geo_regions = []
+developer = "Google Research (Hamer et al.)"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "FP16-converted variant of perch-v2. Reference the FP32 sibling: Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
+
 # ============================ Acoustics — Cascade ===============================
 
 [[model]]
@@ -1241,6 +1264,29 @@ developer = "Imageomics Institute and Ohio State University"
 ai4g_relationship = "third_party"
 commercial_use = true
 reference = "Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
+
+# FP16 variant of bioclip-2. Same graph and same 768-d cosine embedding space
+# (`[embedding] version` unchanged), stored in half precision: 1.71x faster on a
+# CUDA GPU and half the download. Measured against the FP32 entry on 100 real
+# camera-trap photos: vector cosine min 0.99985, top-1 neighbour 99/100.
+# Flavored entries are NOT part of the default download set.
+[[model]]
+id = "bioclip-2-fp16"
+domain = "general"
+task = "encoder"
+format = "onnx"
+family = ["BioCLIP"]
+version = "v2"
+flavor = "onnx-fp16"
+status = "active"
+license = "MIT"
+zip = "general__encoder__bioclip-2-fp16.zip"
+geo_scope = "foundational"
+geo_regions = []
+developer = "Imageomics Institute and Ohio State University"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "FP16-converted variant of bioclip-2. Reference the FP32 sibling: Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
 
 [[model]]
 id = "dinov3-vitl16"
