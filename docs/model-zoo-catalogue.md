@@ -1,6 +1,6 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **64 models**, Zenodo record [`21610787`](https://zenodo.org/records/21610787) (v0.23.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **65 models**, Zenodo record [`21796876`](https://zenodo.org/records/21796876) (v0.24.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
 
@@ -111,6 +111,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 |---|---|---|---|---|---|---|---|---|---|
 | HerdNet\_General\_Dataset\_2022 | `HerdNet_General_Dataset_2022` | — | onnx | Detector · direct species output | Sub-Saharan Africa — aerial savanna | University of Liege, Gembloux Agro-Bio Tech (Delplanque et al.) | Third-party | CC-BY-NC-SA-4.0 | ❌ |
 | OWL | `OWL` | — | onnx | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
+| Imageomics MMLA Aerial Wildlife Detector | `imageomics-mmla` | Imageomics, YOLO11 | onnx | Detector · direct species output | Sub-Saharan Africa, North America — Mpala Research Centre and Ol Pejeta Conservancy, Kenya; The Wilds, Ohio, USA | Imageomics Institute (Jenna Kline, The Ohio State University) | Third-party | MIT | ✅ |
 
 ## Marine Imagery — Detector
 
@@ -190,6 +191,7 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`orca-cascade`** — Pipeline descriptor combining orca-detector-v5-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; updated for Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269.
 - **`HerdNet_General_Dataset_2022`** — Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet.
 - **`OWL`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G)).
+- **`imageomics-mmla`** — Kline, J., et al. MMLA: Multi-Environment, Multi-Species, Low-Altitude Aerial Footage Dataset. arXiv:2504.07744. https://arxiv.org/abs/2504.07744. Source revision 7930ec0d758400bdc04e355fc4565ba67b36cdca: https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca
 - **`fathomnet-mbari-315k`** — FathomNet MBARI Monterey Bay 315k YOLOv8 model, source revision f4a839a78214441e32bee1928839fa7578c2bcd8: https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8
 - **`fathomnet-vme`** — FathomNet vulnerable marine ecosystems model, source revision dffb2d9c6178bab0be813752e06b474b9b6515a0: https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0
 - **`fathomnet-trash`** — FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762
