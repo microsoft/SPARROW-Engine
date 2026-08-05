@@ -200,6 +200,43 @@ unsafe impl Sync for LoadedModel {}
 // EngineInner
 // ---------------------------------------------------------------------------
 
+/// Number of extra nvjpeg decoders created for the batched encoder path.
+///
+/// Decode is the encoder pipeline's other half and a single decoder is slow:
+/// measured on an RTX 6000 Ada serving `bioclip-2`, decode-only throughput
+/// scales 224 -> 402 -> 530 -> 686 -> 792 -> 875 -> 887 img/s at 1, 2, 3, 4, 6,
+/// 8 and 12 decoders. It is overhead-bound (a per-image allocation plus a
+/// stream synchronisation), not nvjpeg-compute-bound, which is why adding
+/// decoders helps at all.
+///
+/// 6 is chosen because decode must stay comfortably ahead of inference, and how
+/// far ahead depends on the model's precision:
+///
+/// | precision | inference ceiling | end-to-end at 3 | at 6 |
+/// |---|---|---|---|
+/// | fp32 | 297 img/s | 254.2 | 260.7 (+2.6%) |
+/// | fp16 | 509 img/s | 380.5 | 433.2 (+13.8%) |
+///
+/// At 3 decoders, decode caps at 530 img/s — fine against fp32's 297 ceiling,
+/// but barely above fp16's 509, so it becomes the constraint. 6 costs fp32
+/// nothing and buys fp16 14%. Beyond 8 the curve is flat.
+///
+/// Override with `SPARROW_ENGINE_ENCODER_DECODE_WORKERS`. Zero restores the
+/// previous single-shared-decoder behaviour. Capped at 12; raise the cap only
+/// alongside a faster execution provider, since decode stops being the
+/// constraint well before then.
+fn encoder_decode_workers() -> usize {
+    const DEFAULT_WORKERS: usize = 6;
+    const MAX_WORKERS: usize = 12;
+    match std::env::var("SPARROW_ENGINE_ENCODER_DECODE_WORKERS") {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(n) => n.min(MAX_WORKERS),
+            Err(_) => DEFAULT_WORKERS,
+        },
+        Err(_) => DEFAULT_WORKERS,
+    }
+}
+
 /// Engine-wide shared state behind `Arc`. Every [`ModelHandle`] holds a
 /// [`Weak`] back-pointer so it can detect post-`Drop` use without keeping
 /// the engine alive.
@@ -228,6 +265,21 @@ pub(crate) struct EngineInner {
     /// Cached nvjpeg decoder. Used by classifier dispatch (Yolo + Tiled
     /// already carry their own decoder behind a private `Mutex`).
     pub(crate) decoder: Mutex<JpegDecoder>,
+    /// Additional nvjpeg decoders used only by the batched encoder path
+    /// (`crate::embed::embed_batch`) to decode a chunk across several threads.
+    ///
+    /// Decode is the encoder pipeline's bottleneck by measurement — 6.9 ms per
+    /// image against 2.4 ms for batched inference on an RTX 6000 Ada — and it
+    /// is dominated by per-image allocation and stream synchronisation rather
+    /// than by nvjpeg compute, so the GPU sits well under full utilisation
+    /// while a single decoder works through a batch serially. One decoder
+    /// cannot be shared concurrently (`decode_to_gpu` takes `&mut self`, and
+    /// the cached nvjpeg state is reused per call), so parallel decode needs
+    /// distinct decoders.
+    ///
+    /// Kept separate from `decoder` so the classifier, YOLO and tiled paths
+    /// keep their existing single-decoder behaviour unchanged.
+    pub(crate) decoder_pool: Vec<Mutex<JpegDecoder>>,
 }
 
 // SAFETY: every field is itself Send+Sync (CudaContext is Send+Sync;
@@ -416,10 +468,8 @@ fn run_trt_warmup_build(
         // Force the effective TRT config so a section-less ONNX manifest (which
         // resolves to on-demand, matching /v1/catalog) actually lowers to
         // TensorRT here — not just the explicit-section models (OQ-2026-07-07-1).
-        let forced = manifest::warmup_trt_config(
-            expected.manifest.trt.as_ref(),
-            &expected.manifest.format,
-        );
+        let forced =
+            manifest::warmup_trt_config(expected.manifest.trt.as_ref(), &expected.manifest.format);
         crate::trt::ep::with_trt_warmup_build(forced, || {
             build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
         })
@@ -681,6 +731,9 @@ impl Engine {
             let resize = ResizeKernel::new(&ctx)?;
             let resize_crop = ResizeCropKernel::new(&ctx)?;
             let decoder = JpegDecoder::new(&ctx)?;
+            let decoder_pool = (0..encoder_decode_workers())
+                .map(|_| JpegDecoder::new(&ctx).map(Mutex::new))
+                .collect::<Result<Vec<_>>>()?;
             Ok(EngineInner {
                 ctx,
                 resolved_device,
@@ -690,6 +743,7 @@ impl Engine {
                 resize,
                 resize_crop,
                 decoder: Mutex::new(decoder),
+                decoder_pool,
             })
         };
         let inner = init().inspect_err(|_e| {
