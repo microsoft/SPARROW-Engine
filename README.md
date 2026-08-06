@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The tables below highlight the most-used models across four groups (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **64-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, the FathomNet marine-imagery detectors, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). All detectors emit bounding boxes via in-graph NMS; all classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four groups (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **70-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, the FathomNet marine-imagery detectors, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). `yolo_e2e` detectors carry NMS in the ONNX graph; classic YOLOv5 raw-head models use the shared engine-side `megadet_v5a` NMS path. All classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
@@ -288,6 +288,9 @@ The tables below highlight the most-used models across four groups (detectors, h
 | `fathomnet-mbari-315k` | 640 × 640 | 499 marine classes | 275 MB | CC-BY-4.0 |
 | `fathomnet-vme` | 640 × 640 | 4 broad marine groups | 273 MB | CC-BY-4.0 |
 | `fathomnet-trash` | 640 × 640 | 13 debris / fauna / platform classes | 273 MB | CC-BY-4.0 |
+| `fathomnet-megafish-yolov5s-640` | 640 × 640 | 1 (fish) | 28 MB | MIT |
+| `fathomnet-megafish-yolov5m-1280` | 1280 × 1280 | 1 (fish) | 83 MB | MIT |
+| `fathomnet-megafish-yolov5l-640` | 640 × 640 | 1 (fish) | 185 MB | MIT |
 
 - MegaDetector v6 (`MDV6-yolov10-c` / `-e`) is the recommended default detector — `-c` for speed, `-e` for accuracy.
 - `MDV5a` (formerly `Species_Net_MDV5a`) is the legacy v5a detector; kept for projects validated against v5a outputs.
@@ -295,6 +298,7 @@ The tables below highlight the most-used models across four groups (detectors, h
 - `european_mammals` / `north_american_mammals` / `sub_saharan` are the Microsoft AI for Good Lab (AI4G) regional YOLO detectors (multi-species per region).
 - `fathomnet-mbari-315k` detects 499 taxonomic, morphotaxonomic, life-stage, physical-feature, and non-biological classes in Monterey Bay underwater imagery.
 - `fathomnet-vme` detects four vulnerable-marine-ecosystem indicator groups; `fathomnet-trash` detects marine debris together with broad fauna, plant, and remotely operated vehicle classes.
+- The three `fathomnet-megafish-*` entries detect generic fish in underwater imagery. Choose `yolov5s-640` for speed and download size, `yolov5l-640` for the strongest measured recall and small/distant-fish coverage, or `yolov5m-1280` only when the upstream-native 1280px model is specifically required.
 
 #### Heatmap-based detectors
 
@@ -335,14 +339,14 @@ The tables below highlight the most-used models across four groups (detectors, h
 
 #### License summary
 
-This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 64 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
+This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 70 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
 
 - **Ultralytics AGPL-3.0**: MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-SA 4.0).
 - **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.
 - **CC-BY 4.0**: `fathomnet-mbari-315k`, `fathomnet-vme`, `fathomnet-trash`.
 - **CC0 1.0**: `Deepfaune-New-England` (USGS public-domain release).
 - **Apache 2.0**: `SpeciesNet-Crop`, `perch-v2`.
-- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v5`, `orca-ecotype-dclde2026-v1`.
+- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v5`, `orca-ecotype-dclde2026-v1`, and the three `fathomnet-megafish-*` variants.
 - **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the regional classifiers flagged `commercial_use = false` in the catalogue (non-commercial CC-BY-NC-* licenses).
 
 **Commercial users**: YOLO-based detectors need an [Ultralytics Enterprise License](https://www.ultralytics.com/license), and every model with `commercial_use = false` (non-commercial licenses like CC-BY-NC-*) must not be used commercially. `tropicam-ai` is additionally no-derivatives (CC-BY-NC-ND-4.0).
