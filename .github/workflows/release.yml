@@ -429,9 +429,11 @@ jobs:
       # Phase F (2026-05-25): swapped from ubuntu24.04 (glibc 2.39) so the
       # `auditwheel repair --plat manylinux_2_28_x86_64` step in build.sh
       # can succeed — that step hard-fails on glibc > 2.28.
-      # cudarc is compiled with feature cuda-12080. Building in CUDA 12.6
-      # produced the PyPI 0.1.24 wheel whose GPU mel path failed at cuBLAS
-      # sgemm, while a CUDA 12.8 build passed the complete 64-model roster.
+      # cudarc is compiled with feature cuda-12080, so the build toolkit must
+      # be CUDA 12.8. Rust is independently pinned to 1.96.0: a Rocky build
+      # with Rust 1.97.1 reproduced the PyPI 0.1.24 cuBLAS sgemm failure,
+      # while the identical CUDA 12.8 build with Rust 1.96.0 passed the GPU
+      # mel models after auditwheel repair.
       image: nvidia/cuda:12.8.1-cudnn-devel-rockylinux8
     steps:
       - name: Install build prerequisites in container
@@ -462,7 +464,7 @@ jobs:
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
+            | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install uv
@@ -800,7 +802,7 @@ jobs:
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
+            | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Stage ORT runtime (pip onnxruntime, capi/libonnxruntime.so.X.Y.Z)
@@ -883,7 +885,7 @@ jobs:
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
+            | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Stage ORT runtime (pip onnxruntime, capi/libonnxruntime.so.X.Y.Z)
@@ -971,7 +973,7 @@ jobs:
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
+            | sh -s -- -y --default-toolchain 1.96.0 --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Stage ORT GPU runtime (onnxruntime-gpu + CUDA provider sidecars)
