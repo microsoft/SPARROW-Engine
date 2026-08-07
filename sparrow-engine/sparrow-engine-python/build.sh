@@ -131,6 +131,7 @@ build_cpu() {
 
 build_gpu() {
     echo "[build.sh] Building GPU wheel (sparrow-engine-gpu, onnxruntime-gpu)..."
+    bash ../scripts/check_cuda_build_abi.sh
 
     # Single combined cleanup trap (Phase C audit-fix R1 I-6). Bash traps
     # don't stack — a second `trap ... EXIT` REPLACES the first — so the

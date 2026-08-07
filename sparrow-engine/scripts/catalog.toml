@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21813241"
+record = "21832059"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.25.0"
+version = "0.26.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -1245,6 +1245,69 @@ developer = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
 ai4g_relationship = "third_party"
 commercial_use = true
 reference = "FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762"
+
+[[model]]
+id = "fathomnet-megafish-yolov5s-640"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "MegaFishDetector", "YOLOv5"]
+version = "v0"
+status = "active"
+license = "MIT"
+zip = "marine_imagery__detector__fathomnet-megafish-yolov5s-640.zip"
+description = "MegaFishDetector v0 YOLOv5s at 640px: the smallest and fastest generic-fish option (28.1 MB ONNX; 1.54 ms GPU p50 in the onboarding benchmark), with lower measured recall than the large sibling."
+species_direct = false
+detector_gate_class = "fish"
+geo_scope = "global"
+geo_regions = []
+display_name = "FathomNet MegaFishDetector YOLOv5s 640"
+developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+
+[[model]]
+id = "fathomnet-megafish-yolov5m-1280"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "MegaFishDetector", "YOLOv5"]
+version = "v0"
+status = "active"
+license = "MIT"
+zip = "marine_imagery__detector__fathomnet-megafish-yolov5m-1280.zip"
+description = "MegaFishDetector v0 YOLOv5m at its upstream-native 1280px input (83.5 MB ONNX; 6.49 ms GPU p50). It did not lead latency or quality on the onboarding corpus, so use it when the upstream 1280px model is specifically required."
+species_direct = false
+detector_gate_class = "fish"
+geo_scope = "global"
+geo_regions = []
+display_name = "FathomNet MegaFishDetector YOLOv5m 1280"
+developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+
+[[model]]
+id = "fathomnet-megafish-yolov5l-640"
+domain = "marine_imagery"
+task = "detector"
+format = "onnx"
+family = ["FathomNet", "MegaFishDetector", "YOLOv5"]
+version = "v0"
+status = "active"
+license = "MIT"
+zip = "marine_imagery__detector__fathomnet-megafish-yolov5l-640.zip"
+description = "MegaFishDetector v0 YOLOv5l at 640px: the measured quality option (highest partial-GT recall, consensus recall, and small/distant-fish coverage; 184.5 MB ONNX; 3.61 ms GPU p50)."
+species_direct = false
+detector_gate_class = "fish"
+geo_scope = "global"
+geo_regions = []
+display_name = "FathomNet MegaFishDetector YOLOv5l 640"
+developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
 
 # ============================ General — Encoder ============================
 

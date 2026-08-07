@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.25
+
+### Added
+
+- Three MIT-licensed MegaFishDetector v0 catalog entries: YOLOv5s/640 for
+  speed and download size, YOLOv5l/640 for the strongest measured fish recall,
+  and the upstream-native YOLOv5m/1280 alternative. All use the shared
+  `megadet_v5a` engine-side NMS contract.
+
+### Fixed
+
+- Linux GPU release artifacts now build with Rust 1.96.0 and a CUDA 12.8
+  toolkit matching cudarc's `cuda-12080` ABI. The PyPI 0.1.24 GPU wheel built
+  under Rocky with unpinned Rust 1.97.1 failed both GPU mel models at
+  `cuBLAS sgemm` with `CUBLAS_STATUS_INVALID_VALUE`; the reproduced
+  manylinux_2_28 wheel built with Rust 1.96.0 passes MD Audio Birds, the Orca
+  detector, and a vision control. A fail-closed build guard rejects future
+  CUDA toolkit/feature mismatches.
+
 ## v0.1.24
 
 ### Added

@@ -188,7 +188,12 @@ canonical_catalog = (repo_dir / "scripts" / "catalog.toml").resolve()
 if catalog_path == canonical_catalog:
     public_root = repo_dir.parent
     total = len(models)
-    onnx_count = sum(m.get("format") == "onnx" for m in models)
+    default_onnx_count = sum(
+        m.get("format") == "onnx" and not m.get("flavor") for m in models
+    )
+    opt_in_onnx_count = sum(
+        m.get("format") == "onnx" and bool(m.get("flavor")) for m in models
+    )
     tflite_count = sum(m.get("format") == "tflite" for m in models)
     cascade_count = sum(m.get("format") == "cascade" for m in models)
     mobile_count = tflite_count + cascade_count
@@ -211,8 +216,17 @@ if catalog_path == canonical_catalog:
     catalogue = read_asset(public_root / "docs" / "model-zoo-catalogue.md")
     downloader = read_asset(repo_dir / "scripts" / "download_models.sh")
 
-    require(readme, f"Download the {onnx_count} desktop ONNX models", "README")
+    require(
+        readme,
+        f"Download the {default_onnx_count} default desktop ONNX models",
+        "README",
+    )
     require(readme, f"zoo also holds {mobile_count} mobile", "README")
+    require(
+        readme,
+        f"and {opt_in_onnx_count} opt-in ONNX precision variants",
+        "README",
+    )
     require(readme, f"complete **{total}-model** catalog", "README")
     require(readme, f"10.5281/zenodo.{record}", "README")
     require(readme, f"(v{version})", "README")
@@ -223,7 +237,11 @@ if catalog_path == canonical_catalog:
     require(catalogue, f"(v{version},", "generated catalogue")
     require(catalogue, concept_doi, "generated catalogue")
 
-    require(downloader, f"# {onnx_count} desktop ONNX models", "downloader help")
+    require(
+        downloader,
+        f"# {default_onnx_count} desktop ONNX models",
+        "downloader help",
+    )
     require(downloader, f"# all {total} (incl.", "downloader help")
 if errs:
     print("FAIL")
