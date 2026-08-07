@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21813241"
+record = "21832059"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.25.0"
+version = "0.26.0"
 
 # ============================ Camera Trap — Detector ============================
 

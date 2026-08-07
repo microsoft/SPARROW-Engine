@@ -17,7 +17,7 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21813241/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21832059/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
@@ -239,9 +239,9 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21813241](https://doi.org/10.5281/zenodo.21813241) (v0.25.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21832059](https://doi.org/10.5281/zenodo.21832059) (v0.26.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 58 desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts fetched on demand, either by name or with `--all`):
+Download the 62 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 2 opt-in ONNX precision variants, fetched on demand either by name or with `--all`):
 
 ```bash
 bash scripts/download_models.sh
