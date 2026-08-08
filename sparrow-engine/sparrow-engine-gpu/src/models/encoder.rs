@@ -291,6 +291,12 @@ impl EncoderModel {
                 )?;
                 tensor
             }
+            PreprocessMethod::ResizeMinMax => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "EncoderModel::embed: manifest '{}' specifies detector-only preprocess method 'resize_min_max'",
+                    self.manifest.id
+                )));
+            }
             PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
                 return Err(SparrowEngineError::InvalidManifest(format!(
                     "EncoderModel::embed: manifest '{}' has audio preprocess ({})",

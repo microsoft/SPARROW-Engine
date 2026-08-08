@@ -1,6 +1,7 @@
 //! Postprocessing: confidence filter, softmax, heatmap peak finding, bbox normalization.
 //!
-//! NMS is in the ONNX graph, never in sparrow-engine. These functions only handle:
+//! Most NMS is in the ONNX graph. The documented raw-head lanes implement
+//! their manifest-declared suppression here:
 //! - Confidence filtering
 //! - Softmax for classification
 //! - Heatmap peak finding (local maxima)
@@ -315,6 +316,207 @@ pub fn try_rtdetr_topk_with_limit(
         detections.truncate(cap);
     }
     Ok(detections)
+}
+
+#[derive(Debug, Clone)]
+struct RetinaNetCandidate {
+    bbox: [f32; 4],
+    original_score: f32,
+    updated_score: f32,
+    label_id: u32,
+}
+
+/// Postprocess packed RetinaNet candidates with Gaussian Soft-NMS.
+///
+/// `output` shape: `[N, 6]` — columns: x1, y1, x2, y2, score, class_id.
+/// Coordinates are absolute pixels in the aspect-preserving resized input.
+///
+/// The sequence matches DuckNet's pinned `pt_soft_nms` path:
+/// 1. strict candidate score filter;
+/// 2. class-aware Gaussian Soft-NMS with strict updated-score filtering;
+/// 3. restore original scores and sort descending;
+/// 4. class-agnostic hard suppression with strict IoU comparison;
+/// 5. cap by the manifest and request limits.
+#[allow(clippy::too_many_arguments)]
+pub fn try_retinanet_soft_nms(
+    output: &ArrayView2<f32>,
+    labels: &[String],
+    opts: &DetectOpts,
+    input_width: u32,
+    input_height: u32,
+    default_threshold: f32,
+    candidate_threshold: f32,
+    sigma: f32,
+    soft_score_threshold: f32,
+    hard_iou_threshold: f32,
+    manifest_max_detections: usize,
+) -> Result<Vec<Detection>> {
+    let threshold = resolve_confidence_threshold(opts.confidence_threshold, default_threshold)?;
+    if input_width == 0 || input_height == 0 {
+        return Err(SparrowEngineError::Ort(format!(
+            "retinanet_soft_nms requires non-zero input dimensions, got {input_width}x{input_height}"
+        )));
+    }
+    for (name, value) in [
+        ("candidate_threshold", candidate_threshold),
+        ("soft_score_threshold", soft_score_threshold),
+        ("hard_iou_threshold", hard_iou_threshold),
+    ] {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(SparrowEngineError::Ort(format!(
+                "retinanet_soft_nms {name} must be finite and in [0.0, 1.0], got {value}"
+            )));
+        }
+    }
+    if !sigma.is_finite() || sigma <= 0.0 {
+        return Err(SparrowEngineError::Ort(format!(
+            "retinanet_soft_nms sigma must be finite and > 0, got {sigma}"
+        )));
+    }
+    if manifest_max_detections == 0 {
+        return Err(SparrowEngineError::Ort(
+            "retinanet_soft_nms manifest max_detections must be >= 1".to_string(),
+        ));
+    }
+    if output.ncols() != 6 {
+        return Err(SparrowEngineError::Ort(format!(
+            "retinanet_soft_nms expects exactly [N, 6], got {} columns",
+            output.ncols()
+        )));
+    }
+
+    let mut candidates = Vec::new();
+    for row in output.rows() {
+        if !row.iter().all(|value| value.is_finite()) {
+            return Err(SparrowEngineError::Ort(
+                "retinanet_soft_nms output contains non-finite values".to_string(),
+            ));
+        }
+        let score = row[4];
+        if !(0.0..=1.0).contains(&score) {
+            return Err(SparrowEngineError::Ort(
+                "retinanet_soft_nms output contains scores outside [0.0, 1.0]".to_string(),
+            ));
+        }
+        // DuckNet applies the strict candidate threshold before interpreting
+        // class IDs or geometry. Dense low-score RetinaNet anchors can clip to
+        // degenerate edge boxes; rows already discarded by the score gate must
+        // not fail the whole inference.
+        if score <= candidate_threshold {
+            continue;
+        }
+        if row[5] < 0.0 || row[5].fract() != 0.0 {
+            return Err(SparrowEngineError::Ort(format!(
+                "retinanet_soft_nms class_id must be a non-negative integer, got {}",
+                row[5]
+            )));
+        }
+        if row[0] >= row[2] || row[1] >= row[3] {
+            return Err(SparrowEngineError::Ort(
+                "retinanet_soft_nms output contains degenerate boxes".to_string(),
+            ));
+        }
+        candidates.push(RetinaNetCandidate {
+            bbox: [row[0], row[1], row[2], row[3]],
+            original_score: score,
+            updated_score: score,
+            label_id: row[5] as u32,
+        });
+    }
+
+    // Selection-sort by the continuously updated score, decaying later
+    // same-class candidates after each selected candidate.
+    for index in 0..candidates.len().saturating_sub(1) {
+        let mut tail_max = index + 1;
+        for candidate_index in index + 2..candidates.len() {
+            // torch::max returns the first maximum, so replace only on a
+            // strictly larger score.
+            if candidates[candidate_index].updated_score > candidates[tail_max].updated_score {
+                tail_max = candidate_index;
+            }
+        }
+        if candidates[index].updated_score < candidates[tail_max].updated_score {
+            candidates.swap(index, tail_max);
+        }
+
+        let selected_bbox = candidates[index].bbox;
+        let selected_label = candidates[index].label_id;
+        for candidate in &mut candidates[index + 1..] {
+            if candidate.label_id == selected_label {
+                let overlap = raw_bbox_iou(&selected_bbox, &candidate.bbox);
+                candidate.updated_score *= (-(overlap * overlap) / sigma).exp();
+            }
+        }
+    }
+
+    // `pt_soft_nms` returns original indices after a strict updated-score
+    // filter. DuckNet then restores original scores and sorts those scores.
+    candidates.retain(|candidate| candidate.updated_score > soft_score_threshold);
+    candidates.retain(|candidate| candidate.original_score >= threshold);
+    candidates.sort_by(|a, b| {
+        b.original_score
+            .partial_cmp(&a.original_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // DuckNet's second pass is class-agnostic and suppresses only IoU > 0.8.
+    let mut hard_kept: Vec<RetinaNetCandidate> = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if hard_kept
+            .iter()
+            .any(|kept| raw_bbox_iou(&kept.bbox, &candidate.bbox) > hard_iou_threshold)
+        {
+            continue;
+        }
+        hard_kept.push(candidate);
+    }
+
+    let request_cap = opts.max_detections.map(|value| value as usize);
+    let cap = request_cap
+        .map(|value| value.min(manifest_max_detections))
+        .unwrap_or(manifest_max_detections);
+    hard_kept.truncate(cap);
+
+    let width = input_width as f32;
+    let height = input_height as f32;
+    hard_kept
+        .into_iter()
+        .map(|candidate| {
+            let bbox = BBox {
+                x_min: (candidate.bbox[0] / width).clamp(0.0, 1.0),
+                y_min: (candidate.bbox[1] / height).clamp(0.0, 1.0),
+                x_max: (candidate.bbox[2] / width).clamp(0.0, 1.0),
+                y_max: (candidate.bbox[3] / height).clamp(0.0, 1.0),
+            };
+            if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
+                return Err(SparrowEngineError::Ort(
+                    "retinanet_soft_nms output contains degenerate normalized boxes".to_string(),
+                ));
+            }
+            Ok(Detection {
+                bbox,
+                label: label_for_id(labels, candidate.label_id),
+                label_id: candidate.label_id,
+                confidence: candidate.original_score,
+            })
+        })
+        .collect()
+}
+
+fn raw_bbox_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
+    let x1 = a[0].max(b[0]);
+    let y1 = a[1].max(b[1]);
+    let x2 = a[2].min(b[2]);
+    let y2 = a[3].min(b[3]);
+    let intersection = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
+    let area_a = (a[2] - a[0]) * (a[3] - a[1]);
+    let area_b = (b[2] - b[0]) * (b[3] - b[1]);
+    let union = area_a + area_b - intersection;
+    if union <= 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
 }
 
 /// Postprocess MegaDetector v5a output (objectness * class_scores).
@@ -977,6 +1179,20 @@ mod tests {
 
         let md_bad = ndarray::Array2::<f32>::zeros((1, 5));
         assert!(try_megadet_v5a(&md_bad.view(), &test_labels(), &opts, &meta, 0.5, 0.45).is_err());
+        assert!(try_retinanet_soft_nms(
+            &md_bad.view(),
+            &test_labels(),
+            &opts,
+            100,
+            100,
+            0.6,
+            0.5,
+            0.5,
+            0.6,
+            0.8,
+            200,
+        )
+        .is_err());
 
         let cls_opts = ClassifyOpts { top_k: Some(1) };
         let logits_bad = ndarray::Array2::<f32>::zeros((0, 3));
@@ -990,6 +1206,100 @@ mod tests {
             point_to_box_half_size: 2,
         };
         assert!(try_heatmap_peaks(&loc.view(), &cls.view(), &test_labels(), &opts, &cfg).is_err());
+    }
+
+    #[test]
+    fn retinanet_soft_nms_matches_ducknet_two_stage_sequence() {
+        let candidates = array![
+            // Selected first.
+            [0.0, 0.0, 100.0, 100.0, 0.99, 0.0],
+            // Same class, moderate overlap: decayed but remains above 0.6.
+            [20.0, 20.0, 120.0, 120.0, 0.95, 0.0],
+            // Same class, heavy overlap: decayed below 0.6.
+            [10.0, 10.0, 110.0, 110.0, 0.94, 0.0],
+            // Different class, identical box: untouched by Soft-NMS, then
+            // removed by DuckNet's class-agnostic IoU > 0.8 pass.
+            [0.0, 0.0, 100.0, 100.0, 0.93, 1.0],
+            // Strict candidate filter excludes score == 0.5.
+            [130.0, 130.0, 180.0, 180.0, 0.5, 2.0],
+        ];
+        let detections = try_retinanet_soft_nms(
+            &candidates.view(),
+            &test_labels(),
+            &DetectOpts::default(),
+            200,
+            200,
+            0.6,
+            0.5,
+            0.5,
+            0.6,
+            0.8,
+            200,
+        )
+        .unwrap();
+
+        assert_eq!(detections.len(), 2);
+        assert_eq!(detections[0].label_id, 0);
+        assert_eq!(detections[1].label_id, 0);
+        assert!((detections[0].confidence - 0.99).abs() < 1e-6);
+        // DuckNet restores the original 0.95 score after Soft-NMS.
+        assert!((detections[1].confidence - 0.95).abs() < 1e-6);
+        assert!((detections[0].bbox.x_max - 0.5).abs() < 1e-6);
+        assert!((detections[1].bbox.x_min - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn retinanet_soft_nms_honors_request_cap() {
+        let candidates = array![
+            [0.0, 0.0, 10.0, 10.0, 0.9, 0.0],
+            [20.0, 20.0, 30.0, 30.0, 0.8, 1.0],
+        ];
+        let opts = DetectOpts {
+            confidence_threshold: None,
+            max_detections: Some(1),
+        };
+        let detections = try_retinanet_soft_nms(
+            &candidates.view(),
+            &test_labels(),
+            &opts,
+            40,
+            40,
+            0.6,
+            0.5,
+            0.5,
+            0.6,
+            0.8,
+            200,
+        )
+        .unwrap();
+        assert_eq!(detections.len(), 1);
+        assert!((detections[0].confidence - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn retinanet_soft_nms_filters_before_geometry_and_class_validation() {
+        let candidates = array![
+            // Both malformed rows are below the strict candidate threshold.
+            [10.0, 10.0, 10.0, 20.0, 0.5, 0.0],
+            [0.0, 0.0, 10.0, 10.0, 0.4, -1.0],
+            [20.0, 20.0, 30.0, 30.0, 0.9, 1.0],
+        ];
+        let detections = try_retinanet_soft_nms(
+            &candidates.view(),
+            &test_labels(),
+            &DetectOpts::default(),
+            40,
+            40,
+            0.6,
+            0.5,
+            0.5,
+            0.6,
+            0.8,
+            200,
+        )
+        .unwrap();
+        assert_eq!(detections.len(), 1);
+        assert_eq!(detections[0].label_id, 1);
     }
 
     #[test]

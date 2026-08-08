@@ -25,6 +25,9 @@ pub enum PreprocessMethod {
     Letterbox,
     /// Direct resize to target size (distorts aspect ratio).
     Resize,
+    /// Resize preserving aspect ratio with torchvision-style minimum and
+    /// maximum side bounds. `input_size = [min_side, max_side]`.
+    ResizeMinMax,
     /// Resize + center-crop pipeline (ONB-1 center-crop classifiers). Parameters
     /// carried in the manifest `[preprocessing]` fields, resolved to a
     /// `ResizeCropConfig` on the runtime `PreprocessConfig`.
@@ -369,6 +372,15 @@ pub enum PostprocessMethod {
         /// Optional manifest cap for fixed-query outputs after score sorting.
         topk: Option<usize>,
     },
+    /// RetinaNet packed candidates followed by class-aware Gaussian Soft-NMS,
+    /// original-score restoration, and class-agnostic hard suppression.
+    RetinaNetSoftNms {
+        candidate_threshold: f32,
+        sigma: f32,
+        soft_score_threshold: f32,
+        hard_iou_threshold: f32,
+        max_detections: usize,
+    },
     /// Softmax → argmax → label lookup (classifiers).
     Softmax,
     /// Sigmoid activation for binary audio detection.
@@ -394,6 +406,7 @@ impl PreprocessMethod {
         match self {
             PreprocessMethod::Letterbox => "letterbox",
             PreprocessMethod::Resize => "resize",
+            PreprocessMethod::ResizeMinMax => "resize_min_max",
             PreprocessMethod::ResizeCrop => "resize_crop",
             PreprocessMethod::MelSpectrogram { .. } => "mel_spectrogram",
             PreprocessMethod::RawAudio { .. } => "raw_audio",
@@ -419,6 +432,7 @@ impl PostprocessMethod {
             PostprocessMethod::MegadetV5a { .. } => "megadet_v5a",
             PostprocessMethod::HeatmapPeaks { .. } => "heatmap_peaks",
             PostprocessMethod::RtDetrTopk { .. } => "rtdetr_topk",
+            PostprocessMethod::RetinaNetSoftNms { .. } => "retinanet_soft_nms",
             PostprocessMethod::Softmax => "softmax",
             PostprocessMethod::Sigmoid { .. } => "sigmoid",
             PostprocessMethod::Embedding { .. } => "embedding",
@@ -868,6 +882,11 @@ struct RawPostprocessing {
     method: String,
     confidence_threshold: Option<f32>,
     iou_threshold: Option<f32>,
+    candidate_threshold: Option<f32>,
+    sigma: Option<f32>,
+    soft_score_threshold: Option<f32>,
+    hard_iou_threshold: Option<f32>,
+    max_detections: Option<usize>,
     peak_threshold: Option<f32>,
     adaptive: Option<bool>,
     point_to_box_half_size: Option<u32>,
@@ -1003,6 +1022,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     let preprocess_method = match raw.preprocessing.method.as_str() {
         "letterbox" => PreprocessMethod::Letterbox,
         "resize" => PreprocessMethod::Resize,
+        "resize_min_max" => PreprocessMethod::ResizeMinMax,
         "resize_crop" => PreprocessMethod::ResizeCrop,
         "raw_audio" => {
             let raw_err = |name: &str| {
@@ -1226,6 +1246,14 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 input_size
             )));
         }
+        if matches!(preprocess_method, PreprocessMethod::ResizeMinMax)
+            && input_size[0] > input_size[1]
+        {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "resize_min_max requires input_size = [min_side, max_side] with min_side <= max_side, got {:?}",
+                input_size
+            )));
+        }
 
         // Channel order: optional, defaults to RGB (preserves pre-3.8 behaviour
         // for manifests without the field).
@@ -1426,6 +1454,41 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 topk: raw.postprocessing.topk,
             }
         }
+        "retinanet_soft_nms" => {
+            let candidate_threshold = raw.postprocessing.candidate_threshold.unwrap_or(0.5);
+            let sigma = raw.postprocessing.sigma.unwrap_or(0.5);
+            let soft_score_threshold = raw.postprocessing.soft_score_threshold.unwrap_or(0.6);
+            let hard_iou_threshold = raw.postprocessing.hard_iou_threshold.unwrap_or(0.8);
+            let max_detections = raw.postprocessing.max_detections.unwrap_or(200);
+            for (name, value) in [
+                ("candidate_threshold", candidate_threshold),
+                ("soft_score_threshold", soft_score_threshold),
+                ("hard_iou_threshold", hard_iou_threshold),
+            ] {
+                if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "retinanet_soft_nms {name} must be finite and in [0.0, 1.0], got {value}"
+                    )));
+                }
+            }
+            if !sigma.is_finite() || sigma <= 0.0 {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "retinanet_soft_nms sigma must be finite and > 0, got {sigma}"
+                )));
+            }
+            if max_detections == 0 {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "retinanet_soft_nms max_detections must be >= 1".to_string(),
+                ));
+            }
+            PostprocessMethod::RetinaNetSoftNms {
+                candidate_threshold,
+                sigma,
+                soft_score_threshold,
+                hard_iou_threshold,
+                max_detections,
+            }
+        }
         "softmax" => PostprocessMethod::Softmax,
         "sigmoid" => {
             let confidence_threshold =
@@ -1536,6 +1599,28 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             "postprocessing method '{}' requires preprocessing method 'letterbox'",
             raw.postprocessing.method
         )));
+    }
+
+    if matches!(
+        postprocess_method,
+        PostprocessMethod::RetinaNetSoftNms { .. }
+    ) && preprocess_method != PreprocessMethod::ResizeMinMax
+    {
+        return Err(SparrowEngineError::InvalidManifest(
+            "postprocessing method 'retinanet_soft_nms' requires preprocessing method 'resize_min_max'"
+                .to_string(),
+        ));
+    }
+    if preprocess_method == PreprocessMethod::ResizeMinMax
+        && !matches!(
+            postprocess_method,
+            PostprocessMethod::RetinaNetSoftNms { .. }
+        )
+    {
+        return Err(SparrowEngineError::InvalidManifest(
+            "preprocessing method 'resize_min_max' is currently supported only with postprocessing method 'retinanet_soft_nms'"
+                .to_string(),
+        ));
     }
 
     // -- RT-DETR TopK emits normalized direct-resize coordinates --
@@ -2350,6 +2435,112 @@ confidence_threshold = 0.25
                 "unexpected error for {method}: {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_load_valid_retinanet_soft_nms_manifest() {
+        let toml = r#"
+[model]
+id = "ducknet"
+format = "onnx"
+file = "1/model.onnx"
+
+[preprocessing]
+method = "resize_min_max"
+input_size = [810, 1440]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "retinanet_soft_nms"
+confidence_threshold = 0.6
+candidate_threshold = 0.5
+sigma = 0.5
+soft_score_threshold = 0.6
+hard_iou_threshold = 0.8
+max_detections = 200
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(manifest.preprocess_method, PreprocessMethod::ResizeMinMax);
+        assert!(matches!(
+            manifest.postprocess_method,
+            PostprocessMethod::RetinaNetSoftNms {
+                candidate_threshold,
+                sigma,
+                soft_score_threshold,
+                hard_iou_threshold,
+                max_detections: 200,
+            } if (candidate_threshold - 0.5).abs() < 1e-6
+                && (sigma - 0.5).abs() < 1e-6
+                && (soft_score_threshold - 0.6).abs() < 1e-6
+                && (hard_iou_threshold - 0.8).abs() < 1e-6
+        ));
+    }
+
+    #[test]
+    fn test_retinanet_soft_nms_requires_resize_min_max() {
+        let toml = r#"
+[model]
+id = "ducknet"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [810, 1440]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "retinanet_soft_nms"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml"))
+            .expect_err("retinanet_soft_nms must require resize_min_max");
+        assert!(matches!(err, SparrowEngineError::InvalidManifest(ref msg)
+                if msg.contains("requires preprocessing method 'resize_min_max'")));
+    }
+
+    #[test]
+    fn test_resize_min_max_rejects_other_postprocessors() {
+        let toml = r#"
+[model]
+id = "bad-dynamic-detector"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize_min_max"
+input_size = [810, 1440]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml"))
+            .expect_err("resize_min_max must not silently route to another postprocessor");
+        assert!(matches!(err, SparrowEngineError::InvalidManifest(ref msg)
+                        if msg.contains("currently supported only")));
     }
 
     #[test]

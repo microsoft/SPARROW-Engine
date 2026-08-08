@@ -827,6 +827,12 @@ impl ClassifierModel {
                     self.manifest.id
                 )));
             }
+            PreprocessMethod::ResizeMinMax => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "ClassifierModel::classify: manifest '{}' specifies detector-only preprocess method 'resize_min_max'",
+                    self.manifest.id
+                )));
+            }
             PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
                 // Defense-in-depth: load() rejects audio manifests at validation
                 // time (B6 / S-NEW-3). Aligned to `InvalidManifest` for variant

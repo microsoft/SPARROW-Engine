@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `resize_min_max` image preprocessing for dynamic NCHW detector inputs
+  that preserve aspect ratio using torchvision-style minimum/maximum side
+  bounds.
+- Added `retinanet_soft_nms` postprocessing for packed `[N,6]` RetinaNet
+  candidates. It supports class-aware Gaussian Soft-NMS, original-score
+  restoration, a class-agnostic hard-suppression pass, and a manifest cap.
+
 ## v0.1.25
 
 ### Added

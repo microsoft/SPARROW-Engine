@@ -154,6 +154,17 @@ pub fn detect_batch(
         }
         return Ok(results);
     }
+    if matches!(manifest.preprocess_method, PreprocessMethod::ResizeMinMax) {
+        let mut results = Vec::with_capacity(images.len());
+        for (i, image) in images.iter().enumerate() {
+            let result = detect(handle, image, opts)?;
+            if let Some(ref mut callback) = on_result {
+                callback(i, &result);
+            }
+            results.push(result);
+        }
+        return Ok(results);
+    }
 
     let session = handle.pin_session()?;
     let labels = &*handle.labels;
@@ -239,8 +250,16 @@ pub fn detect_batch(
                 let outputs = guard
                     .run(ort::inputs![input_value])
                     .map_err(crate::engine::ort_err)?;
-                let detections =
-                    dispatch_postprocess(&outputs, labels, opts, &prep.meta, manifest)?;
+                let shape = prep.tensor.shape();
+                let detections = dispatch_postprocess(
+                    &outputs,
+                    labels,
+                    opts,
+                    &prep.meta,
+                    shape[3] as u32,
+                    shape[2] as u32,
+                    manifest,
+                )?;
                 drop(outputs);
                 drop(guard);
 
@@ -280,6 +299,7 @@ fn detect_single(
     let config = preprocess_config_from_manifest(manifest)?;
     let prep = preprocess::preprocess(image, &config)?;
     let meta = prep.meta;
+    let tensor_shape = prep.tensor.shape().to_vec();
     let orig_w = meta.original_width;
     let orig_h = meta.original_height;
 
@@ -296,7 +316,15 @@ fn detect_single(
         .map_err(crate::engine::ort_err)?;
 
     // Postprocess based on method (outputs borrow from session via guard).
-    let detections = dispatch_postprocess(&outputs, labels, opts, &meta, manifest)?;
+    let detections = dispatch_postprocess(
+        &outputs,
+        labels,
+        opts,
+        &meta,
+        tensor_shape[3] as u32,
+        tensor_shape[2] as u32,
+        manifest,
+    )?;
     drop(outputs);
     drop(guard);
 
@@ -592,6 +620,8 @@ fn dispatch_postprocess(
     labels: &[String],
     opts: &DetectOpts,
     meta: &PreprocessMeta,
+    input_width: u32,
+    input_height: u32,
     manifest: &crate::manifest::ModelManifest,
 ) -> Result<Vec<crate::types::Detection>> {
     let default_threshold = manifest.confidence_threshold;
@@ -665,6 +695,50 @@ fn dispatch_postprocess(
                 opts,
                 default_threshold.unwrap_or(0.2),
                 *topk,
+            )
+        }
+        PostprocessMethod::RetinaNetSoftNms {
+            candidate_threshold,
+            sigma,
+            soft_score_threshold,
+            hard_iou_threshold,
+            max_detections,
+        } => {
+            if outputs.len() == 0 {
+                return Err(SparrowEngineError::Ort(
+                    "retinanet_soft_nms session returned no outputs".to_string(),
+                ));
+            }
+            let output_view: ArrayViewD<'_, f32> = outputs[0]
+                .try_extract_array::<f32>()
+                .map_err(crate::engine::ort_err)?;
+            let shape = output_view.shape();
+            let view_2d: ArrayView2<f32> = if shape.len() == 2 {
+                output_view
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(crate::engine::ort_err)?
+            } else if shape.len() == 3 {
+                let squeezed = output_view.index_axis(Axis(0), 0);
+                squeezed
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .map_err(crate::engine::ort_err)?
+            } else {
+                return Err(SparrowEngineError::Ort(format!(
+                    "Unexpected retinanet_soft_nms output shape: {shape:?}",
+                )));
+            };
+            postprocess::try_retinanet_soft_nms(
+                &view_2d,
+                labels,
+                opts,
+                input_width,
+                input_height,
+                default_threshold.unwrap_or(*soft_score_threshold),
+                *candidate_threshold,
+                *sigma,
+                *soft_score_threshold,
+                *hard_iou_threshold,
+                *max_detections,
             )
         }
         PostprocessMethod::MegadetV5a { iou_threshold } => {

@@ -493,9 +493,17 @@ impl YoloModel {
                     )));
                 }
             }
+            PostprocessMethod::RetinaNetSoftNms { .. } => {
+                if !matches!(manifest.preprocess_method, PreprocessMethod::ResizeMinMax) {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "YoloModel requires preprocess_method = resize_min_max for retinanet_soft_nms, got {:?}",
+                        manifest.preprocess_method
+                    )));
+                }
+            }
             _ => {
                 return Err(SparrowEngineError::InvalidManifest(format!(
-                    "YoloModel requires postprocess_method = yolo_e2e, megadet_v5a, or rtdetr_topk, got {:?}",
+                    "YoloModel requires postprocess_method = yolo_e2e, megadet_v5a, rtdetr_topk, or retinanet_soft_nms, got {:?}",
                     manifest.postprocess_method
                 )));
             }
@@ -511,9 +519,18 @@ impl YoloModel {
             )));
         }
         let normalization = manifest.normalization.unwrap_or(Normalization::Unit);
-        if !matches!(normalization, Normalization::Unit) {
+        let expected_normalization = if matches!(
+            manifest.postprocess_method,
+            PostprocessMethod::RetinaNetSoftNms { .. }
+        ) {
+            Normalization::Imagenet
+        } else {
+            Normalization::Unit
+        };
+        if normalization != expected_normalization {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "YoloModel requires unit normalization, got {normalization:?}"
+                "YoloModel requires {expected_normalization:?} normalization for {}, got {normalization:?}",
+                manifest.postprocess_method.as_str()
             )));
         }
 
@@ -647,7 +664,10 @@ impl YoloModel {
         image: &ImageInput,
         opts: &DetectOpts,
     ) -> Result<DetectResult> {
-        let resize = if matches!(self.manifest.preprocess_method, PreprocessMethod::Resize) {
+        let resize = if matches!(
+            self.manifest.preprocess_method,
+            PreprocessMethod::Resize | PreprocessMethod::ResizeMinMax
+        ) {
             Some(ResizeKernel::new(ctx)?)
         } else {
             None
@@ -733,47 +753,75 @@ impl YoloModel {
         let t_decode = start.elapsed();
 
         // 3. CUDA preprocess + normalize + NCHW.
-        let (input_tensor_f32, lb_meta): (CudaSlice<f32>, Option<LetterboxMeta>) =
-            match self.manifest.preprocess_method {
-                PreprocessMethod::Letterbox => {
-                    let (input, meta): (CudaSlice<f32>, LetterboxMeta) = letterbox_gpu(
-                        &stream,
-                        letterbox,
-                        &decoded,
-                        self.input_w,
-                        self.input_h,
-                        self.pad_value,
-                        self.channel_order,
-                        self.manifest
-                            .interpolation
-                            .unwrap_or(Interpolation::Bilinear),
-                    )?;
-                    (input, Some(meta))
-                }
-                PreprocessMethod::Resize => {
-                    let resize = resize.ok_or_else(|| {
-                        SparrowEngineError::InvalidManifest(
-                            "rtdetr_topk with resize preprocessing requires a ResizeKernel".into(),
-                        )
-                    })?;
-                    (
-                        resize_gpu(
-                            &stream,
-                            resize,
-                            &decoded,
-                            self.input_w,
-                            self.input_h,
-                            self.channel_order,
-                            NormalizeStats::UNIT,
-                            self.manifest
-                                .interpolation
-                                .unwrap_or(Interpolation::Bilinear),
-                        )?,
-                        None,
+        let (input_tensor_f32, lb_meta, model_width, model_height): (
+            CudaSlice<f32>,
+            Option<LetterboxMeta>,
+            u32,
+            u32,
+        ) = match self.manifest.preprocess_method {
+            PreprocessMethod::Letterbox => {
+                let (input, meta): (CudaSlice<f32>, LetterboxMeta) = letterbox_gpu(
+                    &stream,
+                    letterbox,
+                    &decoded,
+                    self.input_w,
+                    self.input_h,
+                    self.pad_value,
+                    self.channel_order,
+                    self.manifest
+                        .interpolation
+                        .unwrap_or(Interpolation::Bilinear),
+                )?;
+                (input, Some(meta), self.input_w, self.input_h)
+            }
+            PreprocessMethod::Resize => {
+                let resize = resize.ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(
+                        "rtdetr_topk with resize preprocessing requires a ResizeKernel".into(),
                     )
-                }
-                _ => unreachable!("YoloModel::load rejects other preprocess methods"),
-            };
+                })?;
+                let input = resize_gpu(
+                    &stream,
+                    resize,
+                    &decoded,
+                    self.input_w,
+                    self.input_h,
+                    self.channel_order,
+                    NormalizeStats::UNIT,
+                    self.manifest
+                        .interpolation
+                        .unwrap_or(Interpolation::Bilinear),
+                )?;
+                (input, None, self.input_w, self.input_h)
+            }
+            PreprocessMethod::ResizeMinMax => {
+                let resize = resize.ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(
+                        "resize_min_max preprocessing requires a ResizeKernel".into(),
+                    )
+                })?;
+                let (target_w, target_h) = sparrow_engine_core::preprocess::min_max_side_dims(
+                    original_w,
+                    original_h,
+                    self.input_w,
+                    self.input_h,
+                );
+                let input = resize_gpu(
+                    &stream,
+                    resize,
+                    &decoded,
+                    target_w,
+                    target_h,
+                    self.channel_order,
+                    NormalizeStats::IMAGENET,
+                    self.manifest
+                        .interpolation
+                        .unwrap_or(Interpolation::Bilinear),
+                )?;
+                (input, None, target_w, target_h)
+            }
+            _ => unreachable!("YoloModel::load rejects other preprocess methods"),
+        };
 
         // Synchronize so the GPU buffer is ready before binding.
         stream
@@ -786,7 +834,7 @@ impl YoloModel {
         // accept FP32 input and emit FP32 output; the FP16 graph performs
         // the Cast internally. Single inference path.
         let (raw_output, t_dtoh_in_ms, t_run_ms, t_extract_ms) =
-            self.run_inference_profiled(&stream, input_tensor_f32)?;
+            self.run_inference_profiled(&stream, input_tensor_f32, model_width, model_height)?;
         let t_infer = start.elapsed();
         tracing::trace!(
             target: "sparrow_engine_gpu::yolo",
@@ -838,6 +886,25 @@ impl YoloModel {
                     topk,
                 )?
             }
+            PostprocessMethod::RetinaNetSoftNms {
+                candidate_threshold,
+                sigma,
+                soft_score_threshold,
+                hard_iou_threshold,
+                max_detections,
+            } => sparrow_engine_core::postprocess::try_retinanet_soft_nms(
+                &view,
+                &self.labels,
+                opts,
+                model_width,
+                model_height,
+                self.default_threshold,
+                candidate_threshold,
+                sigma,
+                soft_score_threshold,
+                hard_iou_threshold,
+                max_detections,
+            )?,
             _ => unreachable!("YoloModel::load rejects other postprocess methods"),
         };
         let t_after_pp = start.elapsed();
@@ -982,8 +1049,12 @@ impl YoloModel {
         // sync above ensures the input tensor is visible to it.
         // Pass decode_stream as the "input stream" since the device pointer
         // was last written by ops on that stream.
-        let (raw_output, t_dtoh_in_ms, t_run_ms, t_extract_ms) =
-            self.run_inference_profiled(&decode_stream, input_tensor_f32)?;
+        let (raw_output, t_dtoh_in_ms, t_run_ms, t_extract_ms) = self.run_inference_profiled(
+            &decode_stream,
+            input_tensor_f32,
+            self.input_w,
+            self.input_h,
+        )?;
 
         // Step 5: postprocess.
         let view: ArrayView2<f32> = raw_output.view();
@@ -1007,6 +1078,9 @@ impl YoloModel {
                     self.default_threshold,
                     iou_threshold,
                 )?
+            }
+            PostprocessMethod::RtDetrTopk { .. } | PostprocessMethod::RetinaNetSoftNms { .. } => {
+                unreachable!("pipelined detection rejects resize-based detectors")
             }
             _ => unreachable!("YoloModel::load rejects other postprocess methods"),
         };
@@ -1080,11 +1154,13 @@ impl YoloModel {
         }
         if matches!(
             self.manifest.postprocess_method,
-            PostprocessMethod::RtDetrTopk { .. }
-        ) || matches!(self.manifest.preprocess_method, PreprocessMethod::Resize)
-        {
+            PostprocessMethod::RtDetrTopk { .. } | PostprocessMethod::RetinaNetSoftNms { .. }
+        ) || matches!(
+            self.manifest.preprocess_method,
+            PreprocessMethod::Resize | PreprocessMethod::ResizeMinMax
+        ) {
             return Err(SparrowEngineError::InvalidManifest(
-                "YoloModel::detect_batch_pipelined supports only letterbox YOLO/MegaDet models; use per-image detect for rtdetr_topk".into(),
+                "YoloModel::detect_batch_pipelined supports only letterbox YOLO/MegaDet models; use per-image detect for resize-based detectors".into(),
             ));
         }
 
@@ -1215,12 +1291,14 @@ impl YoloModel {
         &self,
         stream: &Arc<CudaStream>,
         input_gpu: CudaSlice<f32>,
+        input_width: u32,
+        input_height: u32,
     ) -> Result<(Array2<f32>, f64, f64, f64)> {
-        let total_in = (3 * self.input_h * self.input_w) as usize;
+        let total_in = (3 * input_height * input_width) as usize;
         debug_assert_eq!(input_gpu.len(), total_in);
 
         if self.use_host_roundtrip {
-            return self.run_inference_host_roundtrip(stream, input_gpu);
+            return self.run_inference_host_roundtrip(stream, input_gpu, input_width, input_height);
         }
 
         let mut guard = self
@@ -1232,7 +1310,7 @@ impl YoloModel {
         // GPU-resident path: zero-copy bind. dtoh is 0 by construction.
         let dtoh_ms = 0.0_f64;
 
-        let shape = Shape::from([1_i64, 3, self.input_h as i64, self.input_w as i64]);
+        let shape = Shape::from([1_i64, 3, input_height as i64, input_width as i64]);
         let (dev_ptr_u64, _sync) = input_gpu.device_ptr(stream);
         let mem_info = self.cuda_mem_info.clone();
 
@@ -1294,6 +1372,8 @@ impl YoloModel {
         &self,
         stream: &Arc<CudaStream>,
         input_gpu: CudaSlice<f32>,
+        input_width: u32,
+        input_height: u32,
     ) -> Result<(Array2<f32>, f64, f64, f64)> {
         let mut guard = self
             .session
@@ -1311,7 +1391,7 @@ impl YoloModel {
         let t1 = std::time::Instant::now();
 
         let arr = ndarray::Array4::<f32>::from_shape_vec(
-            (1, 3, self.input_h as usize, self.input_w as usize),
+            (1, 3, input_height as usize, input_width as usize),
             host_in,
         )
         .map_err(|e| SparrowEngineError::Ort(format!("input tensor reshape: {e}")))?;
@@ -1460,9 +1540,9 @@ fn validate_output_dims(
     }
     let last = dims[dims.len() - 1];
     let static_last_ok = match method {
-        PostprocessMethod::YoloE2e | PostprocessMethod::RtDetrTopk { .. } => {
-            last == 6 || last == -1
-        }
+        PostprocessMethod::YoloE2e
+        | PostprocessMethod::RtDetrTopk { .. }
+        | PostprocessMethod::RetinaNetSoftNms { .. } => last == 6 || last == -1,
         PostprocessMethod::MegadetV5a { .. } => {
             let _ = num_labels;
             // Runtime MegaDet postprocess accepts any `[N, 5+C]` with `C > 0`

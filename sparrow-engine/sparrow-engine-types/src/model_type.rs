@@ -46,11 +46,17 @@ pub fn derive_model_type(
         // falls through to Detector. MelSpectrogram+Sigmoid (AudioDetector) is
         // matched above; RawAudio+Sigmoid is rejected by manifest validation.
         (
-            PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop,
+            PreprocessMethod::Letterbox
+            | PreprocessMethod::Resize
+            | PreprocessMethod::ResizeMinMax
+            | PreprocessMethod::ResizeCrop,
             PostprocessMethod::Sigmoid { .. },
         ) => ModelType::Classifier,
         (
-            PreprocessMethod::Letterbox | PreprocessMethod::Resize | PreprocessMethod::ResizeCrop,
+            PreprocessMethod::Letterbox
+            | PreprocessMethod::Resize
+            | PreprocessMethod::ResizeMinMax
+            | PreprocessMethod::ResizeCrop,
             PostprocessMethod::Embedding { .. },
         ) => ModelType::ImageEncoder,
         _ => ModelType::Detector,

@@ -7,7 +7,7 @@
 use image::RgbImage;
 use ndarray::Array4;
 
-use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
+use sparrow_engine_core::preprocess::{checked_tensor_len_3hw, min_max_side_dims};
 use sparrow_engine_types::ImageInput;
 
 use crate::error::{Result, SparrowEngineError};
@@ -70,27 +70,54 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
         ));
     }
 
-    let target_w = config.input_size[0];
-    let target_h = config.input_size[1];
+    let configured_w = config.input_size[0];
+    let configured_h = config.input_size[1];
 
     // 2. Resize / letterbox
-    let (canvas, scale, pad_x, pad_y) = match config.method {
-        PreprocessMethod::Letterbox => letterbox(
-            &rgb,
-            target_w,
-            target_h,
-            config.pad_value,
-            &config.normalization,
-            config.interpolation,
-        )?,
-        PreprocessMethod::Resize => resize_direct(&rgb, target_w, target_h, config.interpolation)?,
+    let (canvas, scale, pad_x, pad_y, tensor_w, tensor_h) = match config.method {
+        PreprocessMethod::Letterbox => {
+            let (canvas, scale, pad_x, pad_y) = letterbox(
+                &rgb,
+                configured_w,
+                configured_h,
+                config.pad_value,
+                &config.normalization,
+                config.interpolation,
+            )?;
+            (canvas, scale, pad_x, pad_y, configured_w, configured_h)
+        }
+        PreprocessMethod::Resize => {
+            let (canvas, scale, pad_x, pad_y) =
+                resize_direct(&rgb, configured_w, configured_h, config.interpolation)?;
+            (canvas, scale, pad_x, pad_y, configured_w, configured_h)
+        }
+        PreprocessMethod::ResizeMinMax => {
+            let (target_w, target_h) =
+                min_max_side_dims(orig_w, orig_h, configured_w, configured_h);
+            let (canvas, _, pad_x, pad_y) =
+                resize_direct(&rgb, target_w, target_h, config.interpolation)?;
+            (
+                canvas,
+                target_w as f32 / orig_w as f32,
+                pad_x,
+                pad_y,
+                target_w,
+                target_h,
+            )
+        }
         PreprocessMethod::ResizeCrop => {
             let rc = config.resize_crop.ok_or_else(|| {
                 crate::error::SparrowEngineError::InvalidManifest(
                     "resize_crop method requires resize_crop config".to_string(),
                 )
             })?;
-            resize_crop(&rgb, [target_w, target_h], &rc, config.interpolation)?
+            let (canvas, scale, pad_x, pad_y) = resize_crop(
+                &rgb,
+                [configured_w, configured_h],
+                &rc,
+                config.interpolation,
+            )?;
+            (canvas, scale, pad_x, pad_y, configured_w, configured_h)
         }
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             return Err(crate::error::SparrowEngineError::InvalidManifest(format!(
@@ -105,6 +132,7 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
     let tensor_norm = match config.method {
         PreprocessMethod::Letterbox => Normalization::None,
         PreprocessMethod::Resize => config.normalization,
+        PreprocessMethod::ResizeMinMax => config.normalization,
         PreprocessMethod::ResizeCrop => config.normalization,
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
             unreachable!()
@@ -114,8 +142,8 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
     // 3. Layout conversion (+ normalization for resize path)
     let tensor = build_tensor(
         &canvas,
-        target_w,
-        target_h,
+        tensor_w,
+        tensor_h,
         &tensor_norm,
         config.layout,
         config.channel_order,
@@ -705,6 +733,18 @@ mod tests {
         assert_eq!(shorter_side_dims(500, 500, 224), (224, 224));
         // shorter side is EXACTLY s even when s*long/short would round the short side down.
         assert_eq!(shorter_side_dims(600, 600, 224), (224, 224));
+    }
+
+    #[test]
+    fn test_min_max_side_dims_matches_torchvision_resize() {
+        // 2506x1363 would make the long side 1489 at min_side=810, so the
+        // max_size pass clamps width to 1440 and truncates height to 783.
+        assert_eq!(min_max_side_dims(2506, 1363, 810, 1440), (1440, 783));
+        assert_eq!(min_max_side_dims(1363, 2506, 810, 1440), (783, 1440));
+        // No max-size clamp: shorter side is exactly 810.
+        assert_eq!(min_max_side_dims(1200, 900, 810, 1440), (1080, 810));
+        assert_eq!(min_max_side_dims(900, 1200, 810, 1440), (810, 1080));
+        assert_eq!(min_max_side_dims(900, 900, 810, 1440), (810, 810));
     }
 
     #[test]

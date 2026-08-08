@@ -28,7 +28,7 @@ Plain definitions before the first technical sentence.
 | **PyO3** | The Rust library that builds Python bindings. The sparrow-engine Python wheel uses it. |
 | **csbindgen / cbindgen** | Auto-generators that turn Rust function signatures into a C# `NativeMethods.g.cs` file (csbindgen) and a C `sparrow_engine.h` header (cbindgen). |
 | **NCHW** | Tensor layout: Batch × Channels × Height × Width. Sparrow Engine mandates this; NHWC models must be re-exported. |
-| **NMS** | Non-Maximum Suppression — the cleanup step that removes duplicate detector boxes. Must live in the ONNX graph, not in sparrow_engine. |
+| **NMS** | Non-Maximum Suppression — the cleanup step that removes duplicate detector boxes. End-to-end models keep it in the graph; documented raw-head lanes run their declared NMS in Sparrow Engine. |
 | **letterbox** | Resize-with-padding. Keeps aspect ratio by adding gray bars. MegaDetector's preprocessing. |
 | **wheel** | A Python package file (`.whl`). Sparrow Engine ships two: `sparrow-engine` (CPU) and `sparrow-engine-gpu` (GPU). Both import as `sparrow-engine`. |
 | **idempotent** | Running it twice has the same effect as running it once. |
@@ -1441,6 +1441,7 @@ empty    = 0.48
 |--------|------|---------|
 | `yolo_e2e` | YOLO with NMS-in-graph; output is `[N, 6]` boxes directly. | MDv6, DeepFaune, Amazon CT v2 |
 | `megadet_v5a` | YOLOv5 raw rows `[N, 5+C]`; sparrow-engine does cxcywh→xyxy + class-aware NMS in Rust. | `MDV5a` (legacy) |
+| `retinanet_soft_nms` | RetinaNet `[N,6]` candidates; class-aware Gaussian Soft-NMS, original-score restoration, then class-agnostic hard suppression. | DuckNet |
 | `softmax` | Single-image softmax → top-k. | SpeciesNet-Crop |
 | `sigmoid_window` | Per-window sigmoid (audio sliding-window). | md-audiobirds-v1 |
 | `tiled_dual_heatmap` | Two-output heatmap (animal mask + class). HerdNet. | HerdNet |

@@ -17,7 +17,7 @@
 
 use image::{ImageReader, RgbImage};
 
-use sparrow_engine_types::{SparrowEngineError, ImageInput, PixelFormat, Result};
+use sparrow_engine_types::{ImageInput, PixelFormat, Result, SparrowEngineError};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -46,7 +46,8 @@ pub fn decode_to_rgb(input: &ImageInput) -> Result<RgbImage> {
             if !path.exists() {
                 return Err(SparrowEngineError::ImageFileNotFound(path.clone()));
             }
-            let dyn_img = image::open(path).map_err(|e| SparrowEngineError::ImageDecode(e.to_string()))?;
+            let dyn_img =
+                image::open(path).map_err(|e| SparrowEngineError::ImageDecode(e.to_string()))?;
             Ok(dyn_img.to_rgb8())
         }
         ImageInput::Raw {
@@ -76,6 +77,22 @@ pub fn checked_tensor_len_3hw(height: u32, width: u32) -> Result<usize> {
     Ok(total)
 }
 
+/// torchvision `Resize(min_side, max_size=max_side)` output dimensions.
+pub fn min_max_side_dims(w: u32, h: u32, min_side: u32, max_side: u32) -> (u32, u32) {
+    let (short, long) = (w.min(h), w.max(h));
+    let mut new_short = min_side;
+    let mut new_long = ((min_side as u64 * long as u64) / short as u64) as u32;
+    if new_long > max_side {
+        new_short = ((max_side as u64 * short as u64) / long as u64) as u32;
+        new_long = max_side;
+    }
+    if w <= h {
+        (new_short.max(1), new_long.max(1))
+    } else {
+        (new_long.max(1), new_short.max(1))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Raw-buffer helpers
 // ---------------------------------------------------------------------------
@@ -89,10 +106,9 @@ fn decode_raw(
     format: PixelFormat,
 ) -> Result<RgbImage> {
     let bpp = bytes_per_pixel(format);
-    let min_stride =
-        width
-            .checked_mul(bpp)
-            .ok_or(SparrowEngineError::InvalidStride { stride, width, bpp })?;
+    let min_stride = width
+        .checked_mul(bpp)
+        .ok_or(SparrowEngineError::InvalidStride { stride, width, bpp })?;
     if stride < min_stride {
         return Err(SparrowEngineError::InvalidStride { stride, width, bpp });
     }

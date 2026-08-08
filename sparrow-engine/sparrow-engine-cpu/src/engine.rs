@@ -1112,7 +1112,9 @@ fn validate_output_dims(
     let method_str = method.as_str().to_string();
 
     match method {
-        PostprocessMethod::YoloE2e | PostprocessMethod::RtDetrTopk { .. } => {
+        PostprocessMethod::YoloE2e
+        | PostprocessMethod::RtDetrTopk { .. }
+        | PostprocessMethod::RetinaNetSoftNms { .. } => {
             // Expected: [N, 6] or [1, N, 6] where N is dynamic (-1) or
             // positive.
             if shape.len() != 2 && shape.len() != 3 {
