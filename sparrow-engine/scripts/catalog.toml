@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21832059"
+record = "21864316"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.26.0"
+version = "0.27.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -1086,6 +1086,24 @@ ai4g_relationship = "third_party"
 commercial_use = true
 reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
 
+[[model]]
+id = "buzzdetect"
+domain = "acoustics"
+task = "classifier"
+format = "onnx"
+family = ["BuzzDetect", "YAMNet"]
+status = "active"
+license = "MIT AND Apache-2.0"
+zip = "acoustics__classifier__buzzdetect.zip"
+description = "BuzzDetect 13-class acoustic-event classifier with the YAMNet frontend fused into the graph."
+geo_scope = "global"
+geo_regions = []
+display_name = "BuzzDetect Acoustic Event Classifier"
+developer = "OSU Bee Lab; YAMNet backbone by Google"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "OSU Bee Lab BuzzDetect v1.0.1, source revision a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6: https://github.com/OSU-Bee-Lab/buzzdetect/tree/a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6. YAMNet: https://github.com/tensorflow/models/tree/master/research/audioset/yamnet."
+
 # FP16 variant of perch-v2. Same labels and same top-1 predictions (76/76 on the
 # conversion corpus; verified through the engine on real recordings), and half
 # the download and GPU memory. NOTE: unlike bioclip-2-fp16 this is NOT faster —
@@ -1185,6 +1203,67 @@ developer = "Imageomics Institute (Jenna Kline, The Ohio State University)"
 ai4g_relationship = "third_party"
 commercial_use = true
 reference = "Kline, J., et al. MMLA: Multi-Environment, Multi-Species, Low-Altitude Aerial Footage Dataset. arXiv:2504.07744. https://arxiv.org/abs/2504.07744. Source revision 7930ec0d758400bdc04e355fc4565ba67b36cdca: https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca"
+
+[[model]]
+id = "deepforest-tree"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = ["DeepForest", "RetinaNet"]
+status = "active"
+license = "MIT"
+zip = "overhead__detector__deepforest-tree.zip"
+description = "DeepForest single-class tree-crown detector for 400 x 400 airborne-image tiles."
+species_direct = false
+detector_gate_class = "tree"
+geo_scope = "global"
+geo_regions = []
+display_name = "DeepForest Tree-Crown Detector"
+developer = "DeepForest project / Weecology"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Weinstein et al., DeepForest. Pinned model revision cc21436bc5d572dde8ff5f93c1e71a32f563cace: https://huggingface.co/weecology/deepforest-tree/tree/cc21436bc5d572dde8ff5f93c1e71a32f563cace."
+
+[[model]]
+id = "deepforest-bird"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = ["DeepForest", "RetinaNet"]
+status = "active"
+license = "MIT"
+zip = "overhead__detector__deepforest-bird.zip"
+description = "DeepForest single-class aerial bird detector for 400 x 400 RGB tiles."
+species_direct = false
+detector_gate_class = "bird"
+geo_scope = "global"
+geo_regions = []
+display_name = "DeepForest Aerial Bird Detector"
+developer = "DeepForest project / Weecology"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "DeepForest aerial bird detector, pinned model revision bf68705a43f85cdf82148448467b68d60cf1ae80: https://huggingface.co/weecology/deepforest-bird/tree/bf68705a43f85cdf82148448467b68d60cf1ae80."
+
+[[model]]
+id = "ducknet"
+domain = "overhead"
+task = "detector"
+format = "onnx"
+family = ["DuckNet", "RetinaNet"]
+status = "active"
+license = "CC-BY-NC-SA-4.0"
+zip = "overhead__detector__ducknet.zip"
+description = "DuckNet RetinaNet detector for nine North American waterfowl classes in UAV imagery."
+species_direct = false
+detector_gate_class = "waterfowl"
+geo_scope = "regional"
+geo_regions = ["north_america"]
+geo_locality = "Mississippi Alluvial Valley, USA"
+display_name = "DuckNet Waterfowl Detector"
+developer = "DuckNet authors: Loken, Ringelman, Mini, James, and Mitchell"
+ai4g_relationship = "third_party"
+commercial_use = false
+reference = "Loken, Z. J., Ringelman, K. M., Mini, A., James, D., and Mitchell, M. (2025). DuckNet: an open-source deep learning tool for waterfowl species identification in UAV imagery. https://doi.org/10.1002/rse2.70028. Source revision 68a5ff0440383b7452d7a5f51c5735c83c01cc58: https://github.com/mkmitchell/DuckNet/tree/68a5ff0440383b7452d7a5f51c5735c83c01cc58."
 
 # ============================ Marine Imagery — Detector ========================
 

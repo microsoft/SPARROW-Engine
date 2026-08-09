@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.26
+
 ### Added
 
 - Added `resize_min_max` image preprocessing for dynamic NCHW detector inputs
@@ -16,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `retinanet_soft_nms` postprocessing for packed `[N,6]` RetinaNet
   candidates. It supports class-aware Gaussian Soft-NMS, original-score
   restoration, a class-agnostic hard-suppression pass, and a manifest cap.
+- Added model-zoo entries for DeepForest tree crowns, DeepForest aerial birds,
+  DuckNet waterfowl, and BuzzDetect acoustic events. Sparrow Model Zoo
+  v0.27.0 is published at DOI `10.5281/zenodo.21864316`.
+
+### Fixed
+
+- Image-encoder batch requests now fall back to per-image inference when an
+  ONNX encoder declares a fixed batch axis of 1, instead of submitting an
+  invalid multi-row input tensor.
 
 ## v0.1.25
 

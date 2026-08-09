@@ -1,6 +1,6 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **70 models**, Zenodo record [`21832059`](https://zenodo.org/records/21832059) (v0.26.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **74 models**, Zenodo record [`21864316`](https://zenodo.org/records/21864316) (v0.27.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
 
@@ -98,6 +98,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | orca-ecotype-melinput-fp16-tflite | `orca-ecotype-melinput-fp16-tflite` | DCLDE-orca | tflite-fp16 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 | orca-ecotype-melinput-int8-tflite | `orca-ecotype-melinput-int8-tflite` | DCLDE-orca | tflite-int8 | Classifier | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 | perch-v2 | `perch-v2` | — | onnx | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | ✅ |
+| BuzzDetect Acoustic Event Classifier | `buzzdetect` | BuzzDetect, YAMNet | onnx | Classifier | Global | OSU Bee Lab; YAMNet backbone by Google | Third-party | MIT AND Apache-2.0 | ✅ |
 | perch-v2-fp16 | `perch-v2-fp16` | — | onnx-fp16 | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | ✅ |
 
 ## Acoustics — Cascade
@@ -113,6 +114,9 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | HerdNet\_General\_Dataset\_2022 | `HerdNet_General_Dataset_2022` | — | onnx | Detector · direct species output | Sub-Saharan Africa — aerial savanna | University of Liege, Gembloux Agro-Bio Tech (Delplanque et al.) | Third-party | CC-BY-NC-SA-4.0 | ❌ |
 | OWL | `OWL` | — | onnx | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | ✅ |
 | Imageomics MMLA Aerial Wildlife Detector | `imageomics-mmla` | Imageomics, YOLO11 | onnx | Detector · direct species output | Sub-Saharan Africa, North America — Mpala Research Centre and Ol Pejeta Conservancy, Kenya; The Wilds, Ohio, USA | Imageomics Institute (Jenna Kline, The Ohio State University) | Third-party | MIT | ✅ |
+| DeepForest Tree-Crown Detector | `deepforest-tree` | DeepForest, RetinaNet | onnx | Detector · gates on tree | Global | DeepForest project / Weecology | Third-party | MIT | ✅ |
+| DeepForest Aerial Bird Detector | `deepforest-bird` | DeepForest, RetinaNet | onnx | Detector · gates on bird | Global | DeepForest project / Weecology | Third-party | MIT | ✅ |
+| DuckNet Waterfowl Detector | `ducknet` | DuckNet, RetinaNet | onnx | Detector · gates on waterfowl | North America — Mississippi Alluvial Valley, USA | DuckNet authors: Loken, Ringelman, Mini, James, and Mitchell | Third-party | CC-BY-NC-SA-4.0 | ❌ |
 
 ## Marine Imagery — Detector
 
@@ -193,11 +197,15 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`orca-ecotype-melinput-fp16-tflite`** — Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673.
 - **`orca-ecotype-melinput-int8-tflite`** — Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673.
 - **`perch-v2`** — Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665.
+- **`buzzdetect`** — OSU Bee Lab BuzzDetect v1.0.1, source revision a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6: https://github.com/OSU-Bee-Lab/buzzdetect/tree/a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6. YAMNet: https://github.com/tensorflow/models/tree/master/research/audioset/yamnet.
 - **`perch-v2-fp16`** — FP16-converted variant of perch-v2. Reference the FP32 sibling: Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665.
 - **`orca-cascade`** — Pipeline descriptor combining orca-detector-v5-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; updated for Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269.
 - **`HerdNet_General_Dataset_2022`** — Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet.
 - **`OWL`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G)).
 - **`imageomics-mmla`** — Kline, J., et al. MMLA: Multi-Environment, Multi-Species, Low-Altitude Aerial Footage Dataset. arXiv:2504.07744. https://arxiv.org/abs/2504.07744. Source revision 7930ec0d758400bdc04e355fc4565ba67b36cdca: https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca
+- **`deepforest-tree`** — Weinstein et al., DeepForest. Pinned model revision cc21436bc5d572dde8ff5f93c1e71a32f563cace: https://huggingface.co/weecology/deepforest-tree/tree/cc21436bc5d572dde8ff5f93c1e71a32f563cace.
+- **`deepforest-bird`** — DeepForest aerial bird detector, pinned model revision bf68705a43f85cdf82148448467b68d60cf1ae80: https://huggingface.co/weecology/deepforest-bird/tree/bf68705a43f85cdf82148448467b68d60cf1ae80.
+- **`ducknet`** — Loken, Z. J., Ringelman, K. M., Mini, A., James, D., and Mitchell, M. (2025). DuckNet: an open-source deep learning tool for waterfowl species identification in UAV imagery. https://doi.org/10.1002/rse2.70028. Source revision 68a5ff0440383b7452d7a5f51c5735c83c01cc58: https://github.com/mkmitchell/DuckNet/tree/68a5ff0440383b7452d7a5f51c5735c83c01cc58.
 - **`fathomnet-mbari-315k`** — FathomNet MBARI Monterey Bay 315k YOLOv8 model, source revision f4a839a78214441e32bee1928839fa7578c2bcd8: https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8
 - **`fathomnet-vme`** — FathomNet vulnerable marine ecosystems model, source revision dffb2d9c6178bab0be813752e06b474b9b6515a0: https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0
 - **`fathomnet-trash`** — FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762
