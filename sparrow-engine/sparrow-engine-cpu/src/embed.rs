@@ -69,6 +69,38 @@ fn infer_prepared(
     let manifest = &handle.manifest;
     let session = handle.pin_session()?;
 
+    // Some valid encoder graphs expose a fixed batch axis of 1. Preserve the
+    // public batch API by running those graphs once per prepared image instead
+    // of submitting an invalid [N, C, H, W] tensor. Dynamic-batch encoders
+    // retain the single-session.run fast path below.
+    let static_batch_one = {
+        let guard = session
+            .lock()
+            .map_err(|_| SparrowEngineError::Ort("encoder session lock poisoned".into()))?;
+        let input = guard.inputs().first().ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "image encoder '{}' has no ONNX inputs",
+                manifest.id
+            ))
+        })?;
+        match input.dtype() {
+            ValueType::Tensor { shape, .. } => shape.iter().next().copied() == Some(1),
+            other => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "image encoder '{}' requires a tensor input, got {other:?}",
+                    manifest.id
+                )));
+            }
+        }
+    };
+    if static_batch_one && prepared.len() > 1 {
+        let mut results = Vec::with_capacity(prepared.len());
+        for item in prepared {
+            results.extend(infer_prepared(handle, std::slice::from_ref(item), start)?);
+        }
+        return Ok(results);
+    }
+
     // Concatenate the per-image [1, C, H, W] tensors into one [N, C, H, W] batch. Geometry is
     // fixed by the manifest, so a mismatch here is a bug rather than bad input.
     let views: Vec<_> = prepared.iter().map(|p| p.tensor.view()).collect();
