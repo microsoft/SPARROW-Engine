@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 
 use sparrow_engine_types::manifest::{
@@ -35,6 +36,20 @@ pub use sparrow_engine_types::{Device, EngineConfig};
 
 /// Process-global flag: true if an Engine instance exists.
 static ENGINE_EXISTS: AtomicBool = AtomicBool::new(false);
+
+fn cpu_graph_optimization_level(
+    model_type: ModelType,
+    precision: manifest::Precision,
+) -> GraphOptimizationLevel {
+    // ORT 1.25.1's level-3 layout pass segfaults while creating CPU sessions
+    // for FP16 ViT encoders (reproduced by both BioCLIP 2 and BioCLIP 2.5).
+    // Extended keeps the safe fusion passes; every other model retains All.
+    if model_type == ModelType::ImageEncoder && precision == manifest::Precision::Fp16 {
+        GraphOptimizationLevel::Level2
+    } else {
+        GraphOptimizationLevel::All
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -209,8 +224,6 @@ impl Engine {
     fn create_session_builder(
         config: &EngineConfig,
     ) -> Result<ort::session::builder::SessionBuilder> {
-        use ort::session::builder::GraphOptimizationLevel;
-
         let builder = Session::builder().map_err(ort_err)?;
 
         // Enable all graph optimizations (constant folding, node fusions, layout).
@@ -284,14 +297,13 @@ impl Engine {
             ),
         };
 
-        if matches!(
-            derive_model_type(
-                &manifest.preprocess_method,
-                &manifest.postprocess_method,
-                manifest.subtype,
-            ),
-            ModelType::ImageEncoder
-        ) {
+        let model_type = derive_model_type(
+            &manifest.preprocess_method,
+            &manifest.postprocess_method,
+            manifest.subtype,
+        );
+
+        if model_type == ModelType::ImageEncoder {
             let expected = manifest.onnx_sha256.clone().ok_or_else(|| {
                 SparrowEngineError::InvalidManifest(
                     "image encoders require [model] onnx_sha256".to_string(),
@@ -318,12 +330,18 @@ impl Engine {
 
         // Create ORT session from cloned template builder.
         let session = {
-            let mut builder = self
+            let builder = self
                 .inner
                 .session_builder
                 .lock()
                 .expect("session_builder lock poisoned")
                 .clone();
+            let mut builder = builder
+                .with_optimization_level(cpu_graph_optimization_level(
+                    model_type,
+                    manifest.precision,
+                ))
+                .map_err(ort_err)?;
             builder.commit_from_file(&onnx_path).map_err(ort_err)?
         };
 
@@ -1304,6 +1322,26 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::path::PathBuf;
+
+    #[test]
+    fn fp16_image_encoder_uses_extended_graph_optimization() {
+        assert!(matches!(
+            cpu_graph_optimization_level(ModelType::ImageEncoder, manifest::Precision::Fp16),
+            GraphOptimizationLevel::Level2
+        ));
+    }
+
+    #[test]
+    fn other_model_paths_keep_all_graph_optimizations() {
+        assert!(matches!(
+            cpu_graph_optimization_level(ModelType::ImageEncoder, manifest::Precision::Fp32),
+            GraphOptimizationLevel::All
+        ));
+        assert!(matches!(
+            cpu_graph_optimization_level(ModelType::Classifier, manifest::Precision::Fp16),
+            GraphOptimizationLevel::All
+        ));
+    }
 
     fn dummy_model_dir() -> PathBuf {
         PathBuf::from("/tmp/bongo_test_models_nonexistent")
