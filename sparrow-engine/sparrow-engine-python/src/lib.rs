@@ -74,6 +74,16 @@ pyo3::create_exception!(
     TrtUnsupportedHardware,
     SparrowEngineError
 );
+pyo3::create_exception!(
+    _sparrow_engine_core,
+    EmbedPartialFailureError,
+    SparrowEngineError
+);
+pyo3::create_exception!(
+    _sparrow_engine_core,
+    EmbedAllFailedError,
+    SparrowEngineError
+);
 
 fn to_pyerr(e: sparrow_engine::SparrowEngineError) -> PyErr {
     match e {
@@ -831,6 +841,110 @@ fn device_from_str(s: &str) -> PyResult<Device> {
     }
 }
 
+fn resolve_embed_batch<T, E, F>(
+    expected: usize,
+    batch: Result<Vec<T>, E>,
+    mut embed_one: F,
+) -> Vec<Result<T, E>>
+where
+    F: FnMut(usize) -> Result<T, E>,
+{
+    match batch {
+        Ok(results) if results.len() == expected => results.into_iter().map(Ok::<T, E>).collect(),
+        Ok(_) | Err(_) => (0..expected).map(&mut embed_one).collect(),
+    }
+}
+
+fn embed_aligned_native(
+    engine: &Engine,
+    py: Python<'_>,
+    paths: Vec<String>,
+    model: &str,
+    progress_callback: Option<PyObject>,
+) -> PyResult<Vec<Option<sparrow_engine::EmbedResult>>> {
+    // Images handed to `embed_batch` per call.
+    //
+    // Deliberately a MULTIPLE of the engine crates' own MAX_INFERENCE_BATCH (8), not equal
+    // to it. `embed_batch` pipelines the decode of chunk i+1 against the inference of chunk
+    // i, which requires it to receive more than one chunk; passing exactly 8 gave it a
+    // single chunk and silently disabled that overlap. Measured on GPU fp16: 313.5 img/s
+    // at a window of 8 against 386.5 at 256, with the internal chunk held at 8.
+    //
+    // 256 on measurement: 313.5 img/s at a window of 8, 363.7 at 32, 375.9 at 64, 386.5 at
+    // 256, flat beyond. It is nearly free in memory -- `embed_batch` decodes per internal
+    // chunk and holds at most two chunks of tensors, so the window only sizes the path list
+    // and the result vector (256 x 768 floats is under 1 MB).
+    //
+    // Override with `SPARROW_ENGINE_EMBED_WINDOW`.
+    let window: usize = std::env::var("SPARROW_ENGINE_EMBED_WINDOW")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(256);
+
+    let model_id = model.to_owned();
+    let total = paths.len();
+
+    py.detach(move || {
+        let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
+        let mut results = Vec::with_capacity(paths.len());
+        let mut errors = 0usize;
+        let mut done = 0usize;
+
+        for chunk in paths.chunks(window) {
+            let inputs: Vec<ImageInput> = chunk
+                .iter()
+                .map(|path| ImageInput::FilePath(PathBuf::from(path)))
+                .collect();
+            let batch = sparrow_engine::embed::embed_batch(&handle, &inputs);
+            if let Ok(batch_results) = &batch {
+                if batch_results.len() != inputs.len() {
+                    tracing::warn!(
+                        target: "sparrow_engine::python",
+                        expected = inputs.len(),
+                        returned = batch_results.len(),
+                        "embed_batch returned an unaligned result count; retrying per input"
+                    );
+                }
+            }
+
+            let resolved = resolve_embed_batch(inputs.len(), batch, |index| {
+                sparrow_engine::embed::embed(&handle, &inputs[index])
+            });
+            for (path, result) in chunk.iter().zip(resolved) {
+                match result {
+                    Ok(result) => results.push(Some(result)),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "sparrow_engine::python",
+                            "skipping {path}: {error}"
+                        );
+                        results.push(None);
+                        errors += 1;
+                    }
+                }
+            }
+
+            // Progress is reported per file so the callback contract is unchanged.
+            for path in chunk {
+                invoke_progress(progress_callback.as_ref(), done, total, path)?;
+                done += 1;
+            }
+        }
+
+        if errors > 0 {
+            tracing::warn!(
+                target: "sparrow_engine::python",
+                "{errors} file(s) skipped due to errors"
+            );
+        }
+        if errors == total && total > 0 {
+            return Err(EmbedAllFailedError::new_err("All files failed processing."));
+        }
+        Ok(results)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // PyEngine — wraps sparrow_engine::Engine
 // ---------------------------------------------------------------------------
@@ -1000,86 +1114,44 @@ impl PyEngine {
         model: &str,
         progress_callback: Option<PyObject>,
     ) -> PyResult<Vec<EmbedResult>> {
-        // Images handed to `embed_batch` per call.
-        //
-        // Deliberately a MULTIPLE of the engine crates' own MAX_INFERENCE_BATCH (8), not equal
-        // to it. `embed_batch` pipelines the decode of chunk i+1 against the inference of chunk
-        // i, which requires it to receive more than one chunk; passing exactly 8 gave it a
-        // single chunk and silently disabled that overlap. Measured on GPU fp16: 313.5 img/s
-        // at a window of 8 against 386.5 at 256, with the internal chunk held at 8.
-        //
-        // 256 on measurement: 313.5 img/s at a window of 8, 363.7 at 32, 375.9 at 64, 386.5 at
-        // 256, flat beyond. It is nearly free in memory -- `embed_batch` decodes per internal
-        // chunk and holds at most two chunks of tensors, so the window only sizes the path list
-        // and the result vector (256 x 768 floats is under 1 MB).
-        //
-        // Override with `SPARROW_ENGINE_EMBED_WINDOW`.
-        let window: usize = std::env::var("SPARROW_ENGINE_EMBED_WINDOW")
-            .ok()
-            .and_then(|raw| raw.trim().parse::<usize>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(256);
-
-        let engine = &self.engine;
-        let model_id = model.to_owned();
         let total = paths.len();
-
-        let native_results = py.detach(move || {
-            let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
-            let mut results = Vec::with_capacity(paths.len());
-            let mut errors = 0usize;
-            let mut done = 0usize;
-
-            for chunk in paths.chunks(window) {
-                let inputs: Vec<ImageInput> = chunk
-                    .iter()
-                    .map(|path| ImageInput::FilePath(PathBuf::from(path)))
-                    .collect();
-
-                // Fast path: one batched call, which is where the engine's batched inference
-                // and parallel decode actually engage. This loop previously called the
-                // single-image `embed` per path, so a wheel caller got none of either --
-                // measured 160.7 img/s against 402.9 for the batched path on the same GPU.
-                match sparrow_engine::embed::embed_batch(&handle, &inputs) {
-                    Ok(batch) => results.extend(batch),
-                    Err(_) => {
-                        // `embed_batch` fails the whole batch on the first bad file. Real
-                        // camera-trap collections contain broken files, and the previous
-                        // per-image loop tolerated them, so retry this chunk one image at a
-                        // time to keep the failure isolated to its own slot rather than
-                        // discarding up to the whole window of good images with it.
-                        for (path, input) in chunk.iter().zip(inputs.iter()) {
-                            match sparrow_engine::embed::embed(&handle, input) {
-                                Ok(r) => results.push(r),
-                                Err(e) => {
-                                    tracing::warn!(target: "sparrow_engine::python", "skipping {path}: {e}");
-                                    errors += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Progress is reported per file so the callback contract is unchanged.
-                for path in chunk {
-                    invoke_progress(progress_callback.as_ref(), done, total, path)?;
-                    done += 1;
-                }
-            }
-
-            if errors > 0 {
-                tracing::warn!(target: "sparrow_engine::python", "{errors} file(s) skipped due to errors");
-            }
-            if errors == total && total > 0 {
-                return Err(SparrowEngineError::new_err("All files failed processing."));
-            }
-            Ok(results)
-        })?;
-
+        let native_results =
+            embed_aligned_native(&self.engine, py, paths, model, progress_callback)?;
+        let failed = native_results
+            .iter()
+            .filter(|result| result.is_none())
+            .count();
+        if failed > 0 {
+            return Err(EmbedPartialFailureError::new_err(format!(
+                "{failed} of {total} files failed; use PyEngine.embed_aligned() to preserve input positions"
+            )));
+        }
         Ok(native_results
             .into_iter()
-            .map(|r| py_embed_result(py, r))
+            .flatten()
+            .map(|result| py_embed_result(py, result))
             .collect())
+    }
+
+    /// Run image embedding while preserving one output slot per input path.
+    ///
+    /// A failed file produces ``None`` at its original index. If every file fails, the method
+    /// raises :class:`EmbedAllFailedError` so a systemic model/device failure cannot be mistaken
+    /// for a collection of ordinary corrupt files.
+    #[pyo3(signature = (paths, model, progress_callback=None))]
+    fn embed_aligned(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        model: &str,
+        progress_callback: Option<PyObject>,
+    ) -> PyResult<Vec<Option<EmbedResult>>> {
+        Ok(
+            embed_aligned_native(&self.engine, py, paths, model, progress_callback)?
+                .into_iter()
+                .map(|result| result.map(|result| py_embed_result(py, result)))
+                .collect(),
+        )
     }
 
     /// Run audio detection on a list of audio file paths.
@@ -1958,6 +2030,14 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "TrtUnsupportedHardware",
         m.py().get_type::<TrtUnsupportedHardware>(),
     )?;
+    m.add(
+        "EmbedPartialFailureError",
+        m.py().get_type::<EmbedPartialFailureError>(),
+    )?;
+    m.add(
+        "EmbedAllFailedError",
+        m.py().get_type::<EmbedAllFailedError>(),
+    )?;
 
     // Engine
     m.add_class::<PyEngine>()?;
@@ -2027,6 +2107,34 @@ mod tests {
             .find(|(name, _)| *name == layer_name)
             .unwrap_or_else(|| panic!("missing audio layer {layer_name}"));
         img.to_rgba8().into_raw()
+    }
+
+    #[test]
+    fn resolve_embed_batch_preserves_successful_batch_order() {
+        let resolved = resolve_embed_batch(3, Ok::<_, &str>(vec![10, 20, 30]), |_| {
+            panic!("fallback must not run")
+        });
+        assert_eq!(resolved, vec![Ok(10), Ok(20), Ok(30)]);
+    }
+
+    #[test]
+    fn resolve_embed_batch_retries_each_input_after_batch_failure() {
+        let resolved = resolve_embed_batch(4, Err::<Vec<i32>, _>("batch failed"), |index| {
+            if index == 1 {
+                Err("corrupt")
+            } else {
+                Ok(index as i32)
+            }
+        });
+        assert_eq!(resolved, vec![Ok(0), Err("corrupt"), Ok(2), Ok(3)]);
+    }
+
+    #[test]
+    fn resolve_embed_batch_retries_unaligned_success() {
+        let resolved = resolve_embed_batch(3, Ok::<_, &str>(vec![10, 20]), |index| {
+            Ok(100 + index as i32)
+        });
+        assert_eq!(resolved, vec![Ok(100), Ok(101), Ok(102)]);
     }
 
     #[test]

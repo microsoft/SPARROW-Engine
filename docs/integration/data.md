@@ -69,6 +69,17 @@ live in Sparrow Data. Get embeddings via `POST /v1/embed` / `/v1/embed/batch`
 (HTTP), `spe embed` (CLI), `Engine.embed(...)` (Python), or
 `sparrow_engine_embed` (FFI).
 
+For direct Python batch integration, use
+`PyEngine.embed_aligned(paths, model)`. It returns exactly one slot per input,
+in input order: an `EmbedResult` on success and `None` when that file could not
+be embedded. If every input fails, it raises `EmbedAllFailedError`.
+
+Legacy `PyEngine.embed(paths, model)` keeps its successful return type
+(`list[EmbedResult]`) but now raises `EmbedPartialFailureError` when only part
+of a batch succeeds. It never returns a shortened list that callers could zip
+onto the original paths. This fail-closed behavior prevents a corrupt image
+from shifting every later vector onto the wrong media record.
+
 `EmbedResult` fields (source: `sparrow-engine-types/src/types.rs`):
 
 | Field | Meaning |
