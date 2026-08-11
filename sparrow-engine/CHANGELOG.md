@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optimization. ONNX Runtime 1.25.1 level-3 layout optimization segfaulted
   during session creation for both `bioclip-2-fp16` and BioCLIP 2.5; all other
   CPU model paths retain full graph optimization.
+- CPU `resize_min_max` preprocessing now preserves float resize values, matching
+  torchvision tensor resize and the GPU path for DuckNet's threshold-sensitive
+  RetinaNet Soft-NMS contract.
 
 ## v0.1.26
 

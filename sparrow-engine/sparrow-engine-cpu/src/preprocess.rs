@@ -95,7 +95,7 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
             let (target_w, target_h) =
                 min_max_side_dims(orig_w, orig_h, configured_w, configured_h);
             let (canvas, _, pad_x, pad_y) =
-                resize_direct(&rgb, target_w, target_h, config.interpolation)?;
+                resize_min_max(&rgb, target_w, target_h, config.interpolation)?;
             (
                 canvas,
                 target_w as f32 / orig_w as f32,
@@ -345,6 +345,78 @@ fn resize_direct(
     }
 
     Ok((canvas, 1.0, 0.0, 0.0))
+}
+
+/// Float-tensor resize used by torchvision-style `Resize(min_side, max_size)`.
+///
+/// DuckNet converts the decoded image to a float tensor before resizing, so
+/// quantizing the resized pixels back to u8 changes threshold-sensitive
+/// RetinaNet candidates. Preserve the convolution result as f32 to match the
+/// GPU kernel and upstream tensor resize. The current ResizeMinMax contract is
+/// bilinear; other interpolation modes retain the generic image resize path.
+fn resize_min_max(
+    img: &RgbImage,
+    target_w: u32,
+    target_h: u32,
+    interp: Interpolation,
+) -> Result<(Vec<f32>, f32, f32, f32)> {
+    if interp != Interpolation::Bilinear {
+        return resize_direct(img, target_w, target_h, interp);
+    }
+
+    let x_weights = triangle_weights(img.width(), target_w);
+    let y_weights = triangle_weights(img.height(), target_h);
+    let total = checked_tensor_len_3hw(target_h, target_w)?;
+    let mut canvas = Vec::with_capacity(total);
+
+    for y_axis in &y_weights {
+        for x_axis in &x_weights {
+            let mut rgb = [0.0f32; 3];
+            for &(src_y, wy) in y_axis {
+                for &(src_x, wx) in x_axis {
+                    let pixel = img.get_pixel(src_x, src_y);
+                    let weight = wx * wy;
+                    rgb[0] += weight * pixel[0] as f32;
+                    rgb[1] += weight * pixel[1] as f32;
+                    rgb[2] += weight * pixel[2] as f32;
+                }
+            }
+            canvas.extend(rgb.map(|value| value.clamp(0.0, 255.0)));
+        }
+    }
+
+    Ok((canvas, 1.0, 0.0, 0.0))
+}
+
+fn triangle_weights(src_len: u32, dst_len: u32) -> Vec<Vec<(u32, f32)>> {
+    let scale = src_len as f32 / dst_len as f32;
+    let filter_scale = scale.max(1.0);
+    let radius = filter_scale;
+    let reciprocal = 1.0 / filter_scale;
+
+    (0..dst_len)
+        .map(|out| {
+            let input_center = (out as f32 + 0.5) * scale;
+            let center = input_center - 0.5;
+            let left = ((input_center - radius).floor() as i64)
+                .clamp(0, src_len.saturating_sub(1) as i64) as u32;
+            let right = ((input_center + radius).ceil() as i64)
+                .clamp(left as i64 + 1, src_len as i64) as u32;
+            let mut weights: Vec<(u32, f32)> = (left..right)
+                .map(|source| {
+                    let distance = ((source as f32 - center) * reciprocal).abs();
+                    (source, (1.0 - distance).max(0.0))
+                })
+                .collect();
+            let sum: f32 = weights.iter().map(|(_, weight)| *weight).sum();
+            if sum != 0.0 {
+                for (_, weight) in &mut weights {
+                    *weight /= sum;
+                }
+            }
+            weights
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +691,18 @@ mod tests {
         assert!((scale - 1.0).abs() < 1e-6);
         assert!(pad_x.abs() < 1e-6);
         assert!(pad_y.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_resize_min_max_preserves_float_tensor_values() {
+        let mut img = RgbImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgb([0, 0, 0]));
+        img.put_pixel(1, 0, image::Rgb([255, 255, 255]));
+
+        let (canvas, _, _, _) = resize_min_max(&img, 3, 1, Interpolation::Bilinear).unwrap();
+
+        assert_eq!(canvas.len(), 9);
+        assert!((canvas[3] - 127.5).abs() < 1e-5);
     }
 
     #[test]
