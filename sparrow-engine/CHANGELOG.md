@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   battery by 3.43 percentage points. Sparrow Model Zoo v0.28.0 is published
   at DOI `10.5281/zenodo.21890514`. Existing `bioclip-2-v1` 768-dimensional
   embeddings and indexes remain unchanged.
+- Added `PyEngine.embed_aligned()`, which returns one optional result per input
+  path and preserves the original batch positions across unreadable files.
+- Added `EmbedPartialFailureError` and `EmbedAllFailedError` so callers can
+  distinguish partial input failure from complete batch failure.
 
 ### Fixed
 
@@ -27,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CPU `resize_min_max` preprocessing now preserves float resize values, matching
   torchvision tensor resize and the GPU path for DuckNet's threshold-sensitive
   RetinaNet Soft-NMS contract.
+- `PyEngine.embed()` now raises on a partial batch failure instead of returning
+  a shortened result list that callers could misattach to later input paths.
 
 ## v0.1.26
 

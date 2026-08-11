@@ -9,6 +9,8 @@ _ProgressCallback = Callable[[int, int, str], None]
 
 class SparrowEngineError(Exception): ...
 class TrtUnsupportedHardware(SparrowEngineError): ...
+class EmbedPartialFailureError(SparrowEngineError): ...
+class EmbedAllFailedError(SparrowEngineError): ...
 
 class TrtStateInfo(TypedDict):
     state: Literal[
@@ -157,6 +159,12 @@ class PyEngine:
         model: str,
         progress_callback: Optional[_ProgressCallback] = None,
     ) -> list[EmbedResult]: ...
+    def embed_aligned(
+        self,
+        paths: list[str],
+        model: str,
+        progress_callback: Optional[_ProgressCallback] = None,
+    ) -> list[Optional[EmbedResult]]: ...
     def detect_audio(
         self,
         paths: list[str],
