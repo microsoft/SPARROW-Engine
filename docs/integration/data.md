@@ -94,6 +94,8 @@ from shifting every later vector onto the wrong media record.
 | `image_width`, `image_height` | source image dims |
 | `processing_time_ms` | embed wall time |
 
+The fields above name the Rust core type (`sparrow-engine-types/src/types.rs`); the Python `EmbedResult` returned by `embed_aligned()`/`embed()` exposes the vector as `.vector` (a NumPy array) and adds `embed_schema_version`.
+
 ### Index-compatibility contract
 
 `embedding_version` + `model_hash` are the versioned contract for a retrieval

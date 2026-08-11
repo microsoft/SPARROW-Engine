@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/21864316/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/21890514/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 67 ONNX models in the Zenodo bundle (image classifiers, audio detectors, overhead- and marine-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 68 ONNX models in the Zenodo bundle (image classifiers, audio detectors, overhead- and marine-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -141,11 +141,11 @@ Three install paths. **Option A** is the simplest; **B** + **C** remain for offl
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest
-docker pull zhongqimiao/sparrow-engine-server:v0.1.23        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.28        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.23
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.28
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
@@ -241,7 +241,7 @@ Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a p
 
 **Zenodo DOI**: [10.5281/zenodo.21890514](https://doi.org/10.5281/zenodo.21890514) (v0.28.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 3 opt-in ONNX precision variants, fetched on demand either by name or with `--all`):
+Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 3 opt-in ONNX models (two FP16 precision variants plus the separate BioCLIP 2.5 Huge encoder), fetched on demand either by name or with `--all`):
 
 ```bash
 bash scripts/download_models.sh
