@@ -239,7 +239,7 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.21864316](https://doi.org/10.5281/zenodo.21864316) (v0.27.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.21890514](https://doi.org/10.5281/zenodo.21890514) (v0.28.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
 Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 2 opt-in ONNX precision variants, fetched on demand either by name or with `--all`):
 
@@ -272,7 +272,7 @@ The downloader verifies MD5 per model (against the Zenodo record API), is idempo
 
 This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
 
-The tables below highlight the most-used models across four groups (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **74-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, the FathomNet marine-imagery detectors, and the `bioclip-2` image encoder in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). `yolo_e2e` detectors carry NMS in the ONNX graph; declared raw-head lanes use the shared engine-side `megadet_v5a` or `retinanet_soft_nms` postprocessor. All classifiers consume crops produced by an upstream detector.
+The tables below highlight the most-used models across four groups (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **75-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, the FathomNet marine-imagery detectors, and the BioCLIP image encoders in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). `yolo_e2e` detectors carry NMS in the ONNX graph; declared raw-head lanes use the shared engine-side `megadet_v5a` or `retinanet_soft_nms` postprocessor. All classifiers consume crops produced by an upstream detector.
 
 #### Bounding-box detectors
 
@@ -339,7 +339,7 @@ The tables below highlight the most-used models across four groups (detectors, h
 
 #### License summary
 
-This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 74 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
+This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 75 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
 
 - **Ultralytics AGPL-3.0**: MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-SA 4.0).
 - **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.

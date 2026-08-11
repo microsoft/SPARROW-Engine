@@ -1,6 +1,6 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **74 models**, Zenodo record [`21864316`](https://zenodo.org/records/21864316) (v0.27.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **75 models**, Zenodo record [`21890514`](https://zenodo.org/records/21890514) (v0.28.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
 
@@ -135,6 +135,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 |---|---|---|---|---|---|---|---|---|---|
 | bioclip-2 | `bioclip-2` | BioCLIP | onnx · v2 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
 | bioclip-2-fp16 | `bioclip-2-fp16` | BioCLIP | onnx-fp16 · v2 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
+| BioCLIP 2.5 Huge | `bioclip-25` | BioCLIP | onnx-fp16 · 1.0.0 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | ✅ |
 | dinov3-vitl16 | `dinov3-vitl16` | DINOv3 | onnx · vitl16-lvd1689m | Encoder · embeddings | Foundational (global) | Meta AI | Third-party | DINOv3 License | ✅ |
 
 ## References & citations
@@ -214,4 +215,5 @@ Canonical source + citation per model (from the model-zoo metadata audit):
 - **`fathomnet-megafish-yolov5l-640`** — Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36
 - **`bioclip-2`** — Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2.
 - **`bioclip-2-fp16`** — FP16-converted variant of bioclip-2. Reference the FP32 sibling: Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2.
+- **`bioclip-25`** — Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. BioCLIP 2.5 Huge model v1.0.0, pinned revision 191d741545e4c741cdef4b22c6eb69c945c1e592: https://huggingface.co/imageomics/bioclip-2.5-vith14.
 - **`dinov3-vitl16`** — Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., et al. DINOv3. Meta AI, 2025. https://arxiv.org/abs/2508.10104. Model: facebook/dinov3-vitl16-pretrain-lvd1689m (LVD-1689M pretrain, ViT-L/16, 1024-d), Hugging Face, https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m. License: DINOv3 License (custom Meta license).

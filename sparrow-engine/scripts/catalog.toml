@@ -29,9 +29,9 @@
 schema_version = "1.1"
 
 [zenodo]
-record = "21864316"
+record = "21890514"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.27.0"
+version = "0.28.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -1429,6 +1429,29 @@ developer = "Imageomics Institute and Ohio State University"
 ai4g_relationship = "third_party"
 commercial_use = true
 reference = "FP16-converted variant of bioclip-2. Reference the FP32 sibling: Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
+
+# BioCLIP 2.5 is a separate 1024-d embedding space, not an in-place upgrade of
+# the 768-d bioclip-2 entries. It passed the predeclared IDLE-OO + Rare Species
+# + NeWT battery by +3.43 percentage points, at 2.08x the FP16 batch latency.
+# Keep it opt-in so consumers migrate and rebuild indexes deliberately.
+[[model]]
+id = "bioclip-25"
+domain = "general"
+task = "encoder"
+format = "onnx"
+family = ["BioCLIP"]
+version = "1.0.0"
+flavor = "onnx-fp16"
+status = "active"
+license = "MIT"
+zip = "general__encoder__bioclip-25.zip"
+display_name = "BioCLIP 2.5 Huge"
+geo_scope = "foundational"
+geo_regions = []
+developer = "Imageomics Institute and Ohio State University"
+ai4g_relationship = "third_party"
+commercial_use = true
+reference = "Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. BioCLIP 2.5 Huge model v1.0.0, pinned revision 191d741545e4c741cdef4b22c6eb69c945c1e592: https://huggingface.co/imageomics/bioclip-2.5-vith14."
 
 [[model]]
 id = "dinov3-vitl16"

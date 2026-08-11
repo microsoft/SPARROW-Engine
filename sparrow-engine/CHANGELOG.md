@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added BioCLIP 2.5 Huge as a separate opt-in 1024-dimensional image encoder.
+  It passed a predeclared IDLE-OO, Rare Species, and NeWT frozen-feature
+  battery by 3.43 percentage points. Sparrow Model Zoo v0.28.0 is published
+  at DOI `10.5281/zenodo.21890514`. Existing `bioclip-2-v1` 768-dimensional
+  embeddings and indexes remain unchanged.
+
+### Fixed
+
+- CPU sessions for FP16 image encoders now use ONNX Runtime level-2 graph
+  optimization. ONNX Runtime 1.25.1 level-3 layout optimization segfaulted
+  during session creation for both `bioclip-2-fp16` and BioCLIP 2.5; all other
+  CPU model paths retain full graph optimization.
+
 ## v0.1.26
 
 ### Added
