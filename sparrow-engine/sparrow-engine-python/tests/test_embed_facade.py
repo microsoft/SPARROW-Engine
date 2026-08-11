@@ -60,6 +60,18 @@ def _case_dir(name: str) -> Path:
     return path
 
 
+def test_aligned_embedding_errors_are_public() -> None:
+    assert issubclass(
+        sparrow_engine.EmbedPartialFailureError,
+        sparrow_engine.SparrowEngineError,
+    )
+    assert issubclass(
+        sparrow_engine.EmbedAllFailedError,
+        sparrow_engine.SparrowEngineError,
+    )
+    assert hasattr(sparrow_engine.PyEngine, "embed_aligned")
+
+
 def test_embed_single_returns_owned_writable_vector(monkeypatch):
     case_dir = _case_dir("single")
     image = case_dir / "a.jpg"

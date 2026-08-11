@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.27
+
+### Added
+
+- Added `PyEngine.embed_aligned()`, which returns one optional result per input
+  path and preserves the original batch positions across unreadable files.
+- Added `EmbedPartialFailureError` and `EmbedAllFailedError` so callers can
+  distinguish partial input failure from complete batch failure.
+
+### Fixed
+
+- `PyEngine.embed()` now raises on a partial batch failure instead of returning
+  a shortened result list that callers could misattach to later input paths.
+
 ## v0.1.26
 
 ### Added
