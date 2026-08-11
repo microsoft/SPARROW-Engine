@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.27
+
 ### Added
 
 - Added BioCLIP 2.5 Huge as a separate opt-in 1024-dimensional image encoder.

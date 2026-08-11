@@ -241,7 +241,7 @@ Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a p
 
 **Zenodo DOI**: [10.5281/zenodo.21890514](https://doi.org/10.5281/zenodo.21890514) (v0.28.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 2 opt-in ONNX precision variants, fetched on demand either by name or with `--all`):
+Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 3 opt-in ONNX precision variants, fetched on demand either by name or with `--all`):
 
 ```bash
 bash scripts/download_models.sh
