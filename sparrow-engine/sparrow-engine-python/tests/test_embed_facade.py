@@ -72,6 +72,46 @@ def test_aligned_embedding_errors_are_public() -> None:
     assert hasattr(sparrow_engine.PyEngine, "embed_aligned")
 
 
+def test_embed_with_meta_skips_files_raising_new_error_subclass(monkeypatch):
+    case_dir = _case_dir("skip-new-subclass")
+    image_a = case_dir / "a.jpg"
+    image_b = case_dir / "b.jpg"
+    image_a.write_bytes(b"a")
+    image_b.write_bytes(b"b")
+    # A single unreadable file makes native ``embed([path])`` raise
+    # EmbedAllFailedError (for a one-element batch, one failure is a total
+    # failure). The facade must catch it via ``except SparrowEngineError`` and
+    # skip the file — this guards that the new error stays a SparrowEngineError
+    # subclass so partial-failure tolerance does not silently break.
+    engine = PerFileFakeEngine({
+        str(image_a): fake_result([1.0, 0.0]),
+        str(image_b): sparrow_engine.EmbedAllFailedError("bad image"),
+    })
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+
+    out = sparrow_engine.embed_with_meta([image_b, image_a], "encoder")
+
+    assert isinstance(out, list)
+    assert len(out) == 1
+    assert out[0].vector.tolist() == [1.0, 0.0]
+
+
+def test_embed_with_meta_all_fail_with_new_error_subclass(monkeypatch):
+    case_dir = _case_dir("all-fail-new-subclass")
+    image_a = case_dir / "a.jpg"
+    image_b = case_dir / "b.jpg"
+    image_a.write_bytes(b"a")
+    image_b.write_bytes(b"b")
+    engine = PerFileFakeEngine({
+        str(image_a): sparrow_engine.EmbedAllFailedError("bad a"),
+        str(image_b): sparrow_engine.EmbedAllFailedError("bad b"),
+    })
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+
+    with pytest.raises(sparrow_engine.SparrowEngineError, match="All files failed"):
+        sparrow_engine.embed_with_meta([image_b, image_a], "encoder")
+
+
 def test_embed_single_returns_owned_writable_vector(monkeypatch):
     case_dir = _case_dir("single")
     image = case_dir / "a.jpg"
