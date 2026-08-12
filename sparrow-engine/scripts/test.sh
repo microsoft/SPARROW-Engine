@@ -57,7 +57,11 @@ done
 # If no non-flag args are given, run the full suite. CPU, GPU, and mobile all
 # publish a library named `sparrow_engine`, so GPU and mobile use isolated
 # target dirs instead of sharing the workspace target and racing on the same
-# rlib/cdylib filenames.
+# rlib/cdylib filenames. The GPU package additionally compiles
+# `sparrow-engine-cpu` as a dev-dependency; because it too is named
+# `sparrow_engine`, its cdylib collides with the GPU crate's at the same output
+# path. Isolated target dirs alone do not fix that intra-package collision, so
+# the GPU `cargo test` below builds with a single job (`--jobs 1`) — see there.
 #
 # Handle sparrow-engine-python specially:
 # it has `default = ["extension-module"]`, which asks pyo3 NOT to link libpython
@@ -95,8 +99,15 @@ if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
     GPU_TEST_TARGET_DIR="${SPARROW_ENGINE_GPU_TEST_TARGET_DIR:-$SCRIPT_DIR/../target/test-gpu}"
     echo "Running: isolated sparrow-engine-gpu tests ${CARGO_FLAGS[*]:-}"
     echo "---"
+    # `--jobs 1`: serialize the build so the `sparrow-engine-cpu` dev-dependency
+    # (also lib name `sparrow_engine`) compiles before the GPU crate, leaving the
+    # GPU `libsparrow_engine` as the deterministic last writer at the shared
+    # output path. Without it, parallel Cargo jobs can leave the CPU artifact
+    # there and the GPU integration tests fail to resolve GPU-only modules
+    # (audio, kernels, models, decode). The full, unfiltered GPU test set
+    # (lib + integration tests + examples + doctests) still runs.
     CARGO_TARGET_DIR="$GPU_TEST_TARGET_DIR" \
-        cargo test -p sparrow-engine-gpu \
+        cargo test --jobs 1 -p sparrow-engine-gpu \
         ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- --test-threads=1
     echo "---"
 
