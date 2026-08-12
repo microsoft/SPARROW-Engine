@@ -26,8 +26,10 @@ deployment can swap in another sink implementation.
   (500).
 
 **Idempotency is your job.** The engine may emit the same logical inference more
-than once (retries, replays); Sparrow Data's storage layer must dedupe (e.g. on
-`request_id` + `media_hash`). The engine does not dedupe.
+than once (retries, replays); Sparrow Data's storage layer must dedupe on
+`media_hash` + `model_id` — the canonical UNIQUE key (see `inference_log.rs`).
+Do not key on `request_id`: it is a per-request UUID (v4) that changes on every
+retry, so it would defeat dedup. The engine does not dedupe.
 
 ### Record schema (`SCHEMA_VERSION = "1.0"`)
 
@@ -66,21 +68,35 @@ CUSUM, alarm paths — Tier-3) is **not** in the engine; that lives in the
 
 The engine emits embeddings only; the vector index + nearest-neighbor search
 live in Sparrow Data. Get embeddings via `POST /v1/embed` / `/v1/embed/batch`
-(HTTP), `spe embed` (CLI), `Engine.embed(...)` (Python), or
+(HTTP), `spe embed` (CLI), `sparrow_engine.embed(...)` (Python), or
 `sparrow_engine_embed` (FFI).
 
-For direct Python batch integration, use
-`PyEngine.embed_aligned(paths, model)`. It returns exactly one slot per input,
-in input order: an `EmbedResult` on success and `None` when that file could not
-be embedded. If every input fails, it raises `EmbedAllFailedError`.
+**Python facade (`sparrow_engine`).** `sparrow_engine.embed()` and
+`embed_with_meta()` are order-preserving and fail-closed: results come back in
+caller order, and if any requested file fails they raise
+`EmbedPartialFailureError` (partial batch) or `EmbedAllFailedError` (all files)
+rather than silently returning a shortened list. For safe positional matching
+against the inputs, use the aligned facade variants (`sparrow_engine.embed_aligned*`):
+they return exactly one slot per input in caller order, `None` for each failed
+file, and raise `EmbedAllFailedError` only when every input fails. The `_with_meta`
+form yields `list[Optional[EmbedResult]]`; the bare form yields a per-input list of
+`Optional[np.ndarray]` (a list, not a stacked matrix — `None` slots cannot stack).
 
-Legacy `PyEngine.embed(paths, model)` keeps its successful return type
-(`list[EmbedResult]`) but now raises `EmbedPartialFailureError` when only part
-of a batch succeeds. It never returns a shortened list that callers could zip
-onto the original paths. This fail-closed behavior prevents a corrupt image
-from shifting every later vector onto the wrong media record.
+**Native `PyEngine` (direct batch integration).**
+`PyEngine.embed_aligned(paths, model)` returns exactly one slot per input, in
+input order: an `EmbedResult` on success and `None` when that file could not be
+embedded. If every input fails, it raises `EmbedAllFailedError`.
 
-`EmbedResult` fields (source: `sparrow-engine-types/src/types.rs`):
+`PyEngine.embed(paths, model)` keeps its successful return type
+(`list[EmbedResult]`) but raises `EmbedPartialFailureError` when only part of a
+batch succeeds. It never returns a shortened list that callers could zip onto
+the original paths. This fail-closed behavior prevents a corrupt image from
+shifting every later vector onto the wrong media record.
+
+`EmbedResult` fields — the Rust core struct (`sparrow-engine-types/src/types.rs`),
+the engine's internal representation. This struct is not `Serialize`, so it is not
+the on-the-wire shape; the representation you receive depends on the surface (see
+"Representation by surface" below).
 
 | Field | Meaning |
 |---|---|
@@ -93,6 +109,23 @@ from shifting every later vector onto the wrong media record.
 | `model_hash` | ONNX `sha256`, load-verified against the manifest |
 | `image_width`, `image_height` | source image dims |
 | `processing_time_ms` | embed wall time |
+
+**Representation by surface.** The field names above are the Rust core struct.
+Three surfaces differ from it:
+
+- **Python object** — returned by `sparrow_engine.embed_with_meta(...)` and
+  `PyEngine.embed` / `embed_aligned`; typed in `_core.pyi`. The vector is exposed
+  as attribute **`vector`** (a NumPy array), not `embedding`, and the object also
+  carries **`embed_schema_version`** (currently `"1.0"`). All other fields match by
+  name.
+- **HTTP `/v1/embed[/batch]` response** — the per-item vector field is `embedding`,
+  image dims are `image_size: [width, height]`, and each response carries
+  `embed_schema_version`.
+- **Inference-log `result` payload** (`store=true`;
+  `sparrow-engine-server/src/handlers/embed.rs` `embedding_log_payload`) —
+  deliberately **omits the raw vector** and **includes** `embed_schema_version`
+  plus the identity fields. A stored record is provenance, not the vector itself;
+  fetch vectors from the embed surfaces above.
 
 ### Index-compatibility contract
 

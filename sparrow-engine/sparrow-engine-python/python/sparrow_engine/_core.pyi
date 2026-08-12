@@ -188,6 +188,25 @@ class PyEngine:
     def active_device(self) -> str: ...
 
 
+def hash_file(path: str) -> str: ...
+
+
+def day_night(path: str) -> dict: ...
+
+
+def verify_model(model_dir: str, model_id: str) -> dict: ...
+
+
+def summarize(results: list[DetectResult]) -> dict: ...
+
+
+def visualize(
+    items: list[tuple[str, DetectResult | ClassifyResult | PipelineResult]],
+    output_dir: Optional[str] = None,
+    show_labels: bool = False,
+) -> list[bytes]: ...
+
+
 def visualize_audio(
     engine: PyEngine,
     items: list[tuple[str, AudioResult]],
@@ -196,3 +215,11 @@ def visualize_audio(
     show_windows: bool = False,
     show_ranges: bool = True,
 ) -> list[list[bytes]]: ...
+
+
+def export_results(
+    items: list[tuple[str, DetectResult | PipelineResult]],
+    format: str,
+    output: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> str: ...
