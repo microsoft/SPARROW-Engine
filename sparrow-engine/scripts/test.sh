@@ -20,6 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 "$SCRIPT_DIR/tests/test_download_models.sh"
 "$SCRIPT_DIR/tests/test_check_ffi_symbols.sh"
 "$SCRIPT_DIR/tests/test_installers.sh"
+# Guards ORT auto-discovery (CUDA-runtime compatibility filtering). Runs before
+# ort-env.sh is sourced because it validates the very selection logic that
+# source performs.
+"$SCRIPT_DIR/tests/test_ort_env.sh"
 # Keep this before ort-env.sh: the catalogue smoke test invokes python3, which
 # must not inherit ORT/CUDA loader paths. /dev/null skips on-disk model loading.
 SPARROW_CATALOG='' "$SCRIPT_DIR/smoke_test_models.sh" --model-dir /dev/null
