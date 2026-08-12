@@ -1129,6 +1129,19 @@ impl PyEngine {
     }
 
     /// Run image embedding on a list of image paths.
+    ///
+    /// On success returns one :class:`EmbedResult` per input path, in input order.
+    ///
+    /// Partial failures are surfaced rather than silently dropped, so a shorter,
+    /// position-shifted result can never be mistaken for a complete one:
+    ///
+    /// * some — but not all — paths fail: raises :class:`EmbedPartialFailureError`.
+    ///   Call :meth:`embed_aligned` instead to keep one output slot per input
+    ///   (``None`` for a failed path) without raising.
+    /// * every path fails: raises :class:`EmbedAllFailedError`.
+    ///
+    /// Both exceptions subclass :class:`SparrowEngineError`, so existing
+    /// ``except SparrowEngineError`` handlers keep working.
     #[pyo3(signature = (paths, model, progress_callback=None))]
     fn embed(
         &self,

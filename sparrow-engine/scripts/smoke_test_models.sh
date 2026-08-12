@@ -224,7 +224,7 @@ if catalog_path == canonical_catalog:
     require(readme, f"zoo also holds {mobile_count} mobile", "README")
     require(
         readme,
-        f"and {opt_in_onnx_count} opt-in ONNX precision variants",
+        f"and {opt_in_onnx_count} opt-in ONNX models",
         "README",
     )
     require(readme, f"complete **{total}-model** catalog", "README")

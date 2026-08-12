@@ -95,6 +95,176 @@ ort_dir_has_runtime_lib() {
     [[ -n "$versioned" ]]
 }
 
+# ---------------------------------------------------------------------------
+# Host CUDA-runtime compatibility filtering for auto-discovered GPU ORT builds.
+#
+# WHY: pick_newest_ort_dir ranks cached onnxruntime-gpu builds purely by the ELF
+# VERS_ symbol version. Newer ORT wheels are built against newer CUDA majors —
+# onnxruntime-gpu 1.28 NEEDs libcublasLt.so.13 / libcudart.so.13 (CUDA 13),
+# while a CUDA-12 host exposes only *.so.12. Picking the newest build then
+# succeeds at discovery but fails at model load with
+# "libcublasLt.so.13: cannot open shared object file". The loader only cares
+# whether the provider's CUDA DT_NEEDED sonames resolve on this host, so filter
+# GPU candidates on exactly that BEFORE version ranking.
+#
+# Explicit ORT_DIR stays explicit (handled at the top of find_ort_dir): this
+# filter governs automatic discovery only.
+# ---------------------------------------------------------------------------
+
+# Print the DT_NEEDED sonames of an ELF file, one per line. Prefers readelf,
+# falls back to objdump. Returns 2 when neither tool exists so the caller can
+# degrade gracefully instead of silently trusting an unverified build.
+ort_elf_needed_sonames() {
+    local so="$1"
+    if command -v readelf >/dev/null 2>&1; then
+        # `|| true` neutralises a non-zero readelf (e.g. non-ELF input) under
+        # the caller's set -e/pipefail; empty output is handled downstream.
+        readelf -d "$so" 2>/dev/null |
+            sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p' || true
+        return 0
+    fi
+    if command -v objdump >/dev/null 2>&1; then
+        objdump -p "$so" 2>/dev/null |
+            awk '$1 == "NEEDED" { print $2 }' || true
+        return 0
+    fi
+    return 2
+}
+
+# True when the tooling needed to verify GPU CUDA compatibility is present:
+# an ldconfig host oracle AND an ELF NEEDED reader (readelf or objdump). When
+# false, find_ort_dir degrades to unfiltered newest-version selection so a host
+# that currently works is never made worse.
+ort_can_check_cuda_compat() {
+    command -v ldconfig >/dev/null 2>&1 || return 1
+    command -v readelf >/dev/null 2>&1 || command -v objdump >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# True when $1 (a bare soname such as libcublasLt.so.13) resolves on this host's
+# dynamic loader: present in the ldconfig cache (default search path), under a
+# directory already on LD_LIBRARY_PATH (covers pip nvidia-* wheels not yet in
+# the cache), or under one of the common CUDA toolkit lib dirs that ort-env.sh
+# itself later adds to LD_LIBRARY_PATH. Checking those dirs here keeps discovery
+# in step with the runtime loader path and avoids false-rejecting a build whose
+# CUDA lib lives under /usr/local/cuda but is not registered in the ldconfig
+# cache. $2, when non-empty, is a pre-captured `ldconfig -p` first-field list,
+# reused across lookups to avoid re-forking ldconfig per soname.
+ort_host_has_soname() {
+    local soname="$1"
+    local ldcache="${2:-}"
+    if [[ -z "$ldcache" ]] && command -v ldconfig >/dev/null 2>&1; then
+        ldcache=$(ldconfig -p 2>/dev/null | awk '{ print $1 }' || true)
+    fi
+    if [[ -n "$ldcache" ]] && printf '%s\n' "$ldcache" | grep -qxF "$soname"; then
+        return 0
+    fi
+    # Scan LD_LIBRARY_PATH and the common CUDA loader dirs via process
+    # substitution rather than unquoted word splitting: zsh does not IFS-split
+    # scalar expansions by default, so a `for dir in $LD_LIBRARY_PATH` loop
+    # would misbehave when sourced in zsh. The fixed dirs mirror the locations
+    # the cuDNN/CUDA blocks below feed into EXTRA_LIB_PATHS/LD_LIBRARY_PATH.
+    local dir
+    while IFS= read -r dir; do
+        if [[ -n "$dir" && -e "$dir/$soname" ]]; then
+            return 0
+        fi
+    done < <(
+        # Trailing newline is required: without it the last LD_LIBRARY_PATH
+        # entry would concatenate with the first fixed dir into one bad line.
+        printf '%s\n' "${LD_LIBRARY_PATH:-}" | tr ':' '\n'
+        printf '%s\n' \
+            /usr/local/cuda/lib64 \
+            /usr/local/cuda/targets/x86_64-linux/lib \
+            /usr/lib/x86_64-linux-gnu
+    )
+    return 1
+}
+
+# True when every CUDA-family soname the GPU provider .so DT_NEEDEDs resolves on
+# this host. Non-CUDA sonames (libc, libstdc++, the libcuda.so.1 driver) are
+# ignored: they are always present or ABI-stable. cuDNN is deliberately ignored
+# too (see the case below). $2 is an optional pre-captured ldconfig-cache list.
+# Returns 2 when NEEDED extraction tooling is missing.
+#
+# Fails CLOSED: a corrupt / non-ELF / unreadable provider yields no DT_NEEDED
+# entries (or none in the CUDA family). Such a candidate is never treated as
+# compatible — better to skip it than to select a build we could not verify.
+ort_provider_cuda_compatible() {
+    local provider_so="$1"
+    local ldcache="${2:-}"
+    local needed
+    needed=$(ort_elf_needed_sonames "$provider_so") || return 2
+    # No DT_NEEDED entries at all -> extraction failed or the file is not a
+    # usable ELF provider. Fail closed.
+    [[ -z "$needed" ]] && return 1
+    local soname
+    local saw_cuda=0
+    while IFS= read -r soname; do
+        [[ -z "$soname" ]] && continue
+        case "$soname" in
+            # cuDNN is resolved SEPARATELY by ort-env.sh (pick_newest_cudnn_dir
+            # -> EXTRA_LIB_PATHS) AFTER selection, so it is not on the loader
+            # path at discovery time and must NOT gate GPU-build selection —
+            # otherwise every compatible cu12 build (which NEEDs libcudnn.so.9)
+            # would be wrongly rejected.
+            libcudnn.so.*) continue ;;
+            # CUDA toolkit runtime/math libs: shipped by the system CUDA install
+            # and visible via ldconfig. Their soname major encodes the CUDA
+            # major, so a mismatch here (e.g. libcublasLt.so.13 on a CUDA-12
+            # host) is exactly the incompatibility to screen out before ranking.
+            libcudart.so.*|libcublas.so.*|libcublasLt.so.*|libcufft.so.*|\
+            libcurand.so.*|libcusparse.so.*|libcusolver.so.*|libnvJitLink.so.*|\
+            libnvrtc.so.*) saw_cuda=1 ;;
+            *) continue ;;
+        esac
+        if ! ort_host_has_soname "$soname" "$ldcache"; then
+            return 1
+        fi
+    done <<< "$needed"
+    # A real libonnxruntime_providers_cuda.so always DT_NEEDEDs CUDA runtime
+    # libs; if we saw none, the file is not a usable GPU provider -> fail closed.
+    [[ "$saw_cuda" -eq 1 ]] || return 1
+    return 0
+}
+
+# Auto-discovery twin of pick_newest_ort_dir for the GPU path: identical version
+# ranking, but skips candidates whose CUDA DT_NEEDED sonames do not resolve on
+# this host, so ranking only considers loader-compatible builds. Prints the
+# newest compatible onnxruntime/capi dir, or nothing when none are compatible.
+pick_newest_compatible_gpu_ort_dir() {
+    if ! command -v strings >/dev/null 2>&1; then
+        echo >&2 "warn: 'strings' (binutils) not found — ORT version detection disabled; install with 'apt-get install binutils' or equivalent"
+        return
+    fi
+    # Capture the ldconfig cache once; the pipeline subshell below inherits this
+    # parent-scope var and reuses it for every candidate's every soname.
+    local ldcache=""
+    if command -v ldconfig >/dev/null 2>&1; then
+        ldcache=$(ldconfig -p 2>/dev/null | awk '{ print $1 }' || true)
+    fi
+    # Same find|while|sort|head|awk shape as pick_newest_ort_dir (see the NOTE
+    # there about bash-subshell vs zsh-parent-shell: the body only printfs, so
+    # do NOT add cross-iteration state here either).
+    find "$HOME/.cache/uv" -path "$1" -print 2>/dev/null |
+        while IFS= read -r p; do
+            d=$(dirname "$p")
+            if ! ort_provider_cuda_compatible "$p" "$ldcache"; then
+                echo >&2 "info: skipping CUDA-incompatible onnxruntime-gpu (unresolved CUDA soname) at $d"
+                continue
+            fi
+            real=$(find "$d" -maxdepth 1 -name 'libonnxruntime.so.*.*.*' -type f 2>/dev/null | sort -V | tail -1)
+            [[ -z "$real" ]] && continue
+            v=$(strings "$real" 2>/dev/null |
+                grep -E '^VERS_1\.[0-9]+\.[0-9]+' |
+                sort -V | tail -1)
+            if [[ -n "$v" ]]; then
+                printf '%s %s\n' "$v" "$d"
+            fi
+        done |
+        sort -V -r | head -1 | awk '{print $2}'
+}
+
 find_ort_dir() {
     # Check explicit override first.
     if [[ -n "${ORT_DIR:-}" ]]; then
@@ -115,12 +285,49 @@ find_ort_dir() {
     fi
 
     # Search uv cache for onnxruntime-gpu first (has CUDA provider .so).
-    local gpu_candidate
-    gpu_candidate=$(pick_newest_ort_dir "*/onnxruntime/capi/libonnxruntime_providers_cuda.so")
+    #
+    # Filter candidates by host CUDA-runtime compatibility BEFORE version
+    # ranking. The newest cached onnxruntime-gpu may be built against a CUDA
+    # major this host does not provide (e.g. 1.28 -> libcublasLt.so.13 on a
+    # CUDA-12 host); that fails at model load, not at discovery. See the
+    # compatibility helpers above.
+    local gpu_any
+    gpu_any=$(find "$HOME/.cache/uv" -path "*/onnxruntime/capi/libonnxruntime_providers_cuda.so" -print -quit 2>/dev/null)
 
-    if [[ -n "$gpu_candidate" ]]; then
-        echo "$gpu_candidate"
-        return
+    if [[ -n "$gpu_any" ]]; then
+        if ort_can_check_cuda_compat; then
+            local gpu_candidate
+            gpu_candidate=$(pick_newest_compatible_gpu_ort_dir "*/onnxruntime/capi/libonnxruntime_providers_cuda.so")
+            if [[ -n "$gpu_candidate" ]]; then
+                echo "$gpu_candidate"
+                return
+            fi
+            # Cached GPU ORT exists but none resolves this host's CUDA runtime.
+            # Fail loudly with a remedy instead of silently downgrading to a CPU
+            # build (GPU is the default) or selecting an incompatible build that
+            # only fails later at model load.
+            echo >&2 "error: found cached onnxruntime-gpu, but none is compatible with this host's CUDA runtime."
+            echo >&2 "  The cached GPU ONNX Runtime build(s) need CUDA sonames this host does not expose"
+            echo >&2 "  (e.g. libcublasLt.so.13 while this host provides libcublasLt.so.12)."
+            echo >&2 "  Remedy (pick one):"
+            echo >&2 "    - install an onnxruntime-gpu wheel built for this host's CUDA major:"
+            echo >&2 "        uv pip install onnxruntime-gpu"
+            echo >&2 "    - install the CUDA runtime the cached build needs (matching libcudart/libcublasLt majors),"
+            echo >&2 "    - or point ORT_DIR at a compatible onnxruntime/capi directory:"
+            echo >&2 "        ORT_DIR=/path/to/onnxruntime/capi"
+            return 1
+        else
+            # No ldconfig + ELF-reader tooling to verify compatibility. Do not
+            # regress a host where selection currently works: fall back to the
+            # unfiltered newest-version GPU pick, but say why.
+            echo >&2 "warn: cannot verify CUDA compatibility (need ldconfig plus readelf or objdump); selecting newest onnxruntime-gpu unfiltered"
+            local gpu_candidate
+            gpu_candidate=$(pick_newest_ort_dir "*/onnxruntime/capi/libonnxruntime_providers_cuda.so")
+            if [[ -n "$gpu_candidate" ]]; then
+                echo "$gpu_candidate"
+                return
+            fi
+        fi
     fi
 
     # Fallback: any onnxruntime capi directory (CPU).
@@ -342,10 +549,14 @@ for cudnn_dir in \
     fi
 done
 
-# CUDA runtime: usually in system lib path or /usr/local/cuda.
+# CUDA runtime: usually in system lib path or /usr/local/cuda. The
+# /usr/local/cuda/targets/x86_64-linux/lib entry mirrors the same standard
+# toolkit location the compatibility oracle (ort_host_has_soname) probes, so
+# discovery-time compatibility and the runtime loader path stay in step.
 for cuda_dir in \
     /usr/lib/x86_64-linux-gnu \
-    /usr/local/cuda/lib64; do
+    /usr/local/cuda/lib64 \
+    /usr/local/cuda/targets/x86_64-linux/lib; do
     if [[ -f "$cuda_dir/libcudart.so" ]] || [[ -f "$cuda_dir/libcudart.so.12" ]]; then
         # The system directory is already in the native loader's default
         # search path. Adding it explicitly can make foreign-loader hosts

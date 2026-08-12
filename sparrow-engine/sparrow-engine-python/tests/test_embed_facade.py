@@ -107,6 +107,40 @@ def test_aligned_embedding_errors_are_public() -> None:
 # --- Strict (fail-closed, order-preserving) contract -------------------------
 
 
+def test_embed_with_meta_propagates_partial_failure_subclass(monkeypatch):
+    case_dir = _case_dir("partial-new-subclass")
+    image = case_dir / "a.jpg"
+    image.write_bytes(b"a")
+
+    def raise_partial(paths, model, progress_callback=None):
+        raise sparrow_engine.EmbedPartialFailureError("one file failed")
+
+    engine = SimpleNamespace(embed=raise_partial)
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+
+    with pytest.raises(
+        sparrow_engine.EmbedPartialFailureError, match="one file failed"
+    ):
+        sparrow_engine.embed_with_meta(image, "encoder")
+
+
+def test_embed_with_meta_propagates_all_failed_subclass(monkeypatch):
+    case_dir = _case_dir("all-fail-new-subclass")
+    image = case_dir / "a.jpg"
+    image.write_bytes(b"a")
+
+    def raise_all(paths, model, progress_callback=None):
+        raise sparrow_engine.EmbedAllFailedError("All files failed processing.")
+
+    engine = SimpleNamespace(embed=raise_all)
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+
+    with pytest.raises(
+        sparrow_engine.EmbedAllFailedError, match="All files failed"
+    ):
+        sparrow_engine.embed_with_meta(image, "encoder")
+
+
 def test_embed_single_returns_owned_writable_vector(monkeypatch):
     case_dir = _case_dir("single")
     image = case_dir / "a.jpg"
