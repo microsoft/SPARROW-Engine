@@ -158,7 +158,67 @@ def test_embed_empty_batch_returns_empty_matrix(monkeypatch):
     assert arr.dtype == np.float32
     assert arr.flags.owndata
     assert arr.flags.writeable
-    assert engine.embed_calls == [[]]
+    assert engine.embed_calls == []
+
+
+@pytest.mark.parametrize("shape", ["empty_list", "empty_dir", "no_match_glob_in_list"])
+def test_embed_empty_inputs_do_not_invoke_engine(monkeypatch, shape):
+    # Empty resolutions must be a no-op: return an empty result WITHOUT invoking
+    # the native engine (which loads the model before its chunk loop, so an empty
+    # request would otherwise raise when the model is unavailable). The recorded
+    # call list is the only signal that proves the engine was never touched.
+    engine = BatchFakeEngine({})
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+    case_dir = _case_dir(f"empty-strict-{shape}")
+    if shape == "empty_list":
+        input = []
+    elif shape == "empty_dir":
+        input = str(case_dir)
+    else:  # no_match_glob_in_list
+        input = [str(case_dir / "*.jpg")]
+
+    arr = sparrow_engine.embed(input, "encoder")
+    meta = sparrow_engine.embed_with_meta(input, "encoder")
+
+    assert arr.shape == (0, 0)
+    assert arr.dtype == np.float32
+    assert meta == []
+    assert engine.embed_calls == []
+
+
+@pytest.mark.parametrize("shape", ["empty_list", "empty_dir", "no_match_glob_in_list"])
+def test_embed_aligned_empty_inputs_do_not_invoke_engine(monkeypatch, shape):
+    # Same no-op contract for the aligned variants: an empty positional list and
+    # NO native call.
+    engine = BatchFakeEngine({})
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+    case_dir = _case_dir(f"empty-aligned-{shape}")
+    if shape == "empty_list":
+        input = []
+    elif shape == "empty_dir":
+        input = str(case_dir)
+    else:  # no_match_glob_in_list
+        input = [str(case_dir / "*.jpg")]
+
+    bare = sparrow_engine.embed_aligned(input, "encoder")
+    meta = sparrow_engine.embed_aligned_with_meta(input, "encoder")
+
+    assert bare == []
+    assert meta == []
+    assert engine.embed_aligned_calls == []
+
+
+def test_embed_single_no_match_glob_raises_without_engine(monkeypatch):
+    # A SINGLE-STRING no-match glob is fail-closed: it raises BEFORE the engine is
+    # touched (guarding that the REV-004 short-circuit did not weaken this path).
+    engine = BatchFakeEngine({})
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+    case_dir = _case_dir("single-no-match-glob")
+
+    with pytest.raises(sparrow_engine.SparrowEngineError):
+        sparrow_engine.embed_with_meta(str(case_dir / "*.jpg"), "encoder")
+
+    assert engine.embed_calls == []
 
 
 def test_embed_with_meta_preserves_identity(monkeypatch):

@@ -495,6 +495,14 @@ def embed_with_meta(
     paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive, preserve_order=True)
     if single_path_input and not paths and not Path(input).is_dir():
         raise SparrowEngineError("No image files found.")
+    # No-op on a genuinely empty resolution (empty list, empty directory,
+    # no-match glob in a list). Return without touching the engine so an empty
+    # request neither loads the model nor raises when it is unavailable — the
+    # native ``embed_aligned_native`` loads the model before its (empty) chunk
+    # loop. The single-string missing/no-match-glob and single-missing-path
+    # cases already raised above (fail-closed) and never reach here.
+    if not paths:
+        return []
     # Delegate to the native fail-closed strict path, which preserves input
     # order, raises EmbedPartialFailureError / EmbedAllFailedError on failure,
     # and fires ``progress_callback`` once per file in caller order.
@@ -555,6 +563,11 @@ def embed_aligned_with_meta(
     paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive, preserve_order=True)
     if single_path_input and not paths and not Path(input).is_dir():
         raise SparrowEngineError("No image files found.")
+    # No-op on a genuinely empty resolution (see ``embed_with_meta``): return an
+    # empty positional list without invoking the engine, so no model load
+    # occurs. Single-string missing/no-match-glob inputs already raised above.
+    if not paths:
+        return []
     return _get_engine().embed_aligned(paths, model, progress_callback)
 
 
