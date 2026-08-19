@@ -855,6 +855,29 @@ where
     }
 }
 
+/// Decide the legacy compact-embed outcome from an aligned optional-result vector.
+///
+/// Returns `Ok(dense)` when every slot succeeded (the fail-closed happy path), or
+/// `Err(failed_count)` when any slot is `None`. Pure and side-effect free so the
+/// fail-closed decision underpinning `PyEngine::embed` (and the Python facade that
+/// now delegates to it) is unit-testable without a live ORT engine.
+fn compact_or_partial<T>(results: Vec<Option<T>>) -> Result<Vec<T>, usize> {
+    let failed = results.iter().filter(|slot| slot.is_none()).count();
+    if failed > 0 {
+        Err(failed)
+    } else {
+        Ok(results.into_iter().flatten().collect())
+    }
+}
+
+/// True only when every requested input failed and at least one was requested.
+///
+/// An empty batch (`total == 0`) is never "all failed". Pure helper backing the
+/// `EmbedAllFailedError` decision in `embed_aligned_native`.
+fn all_inputs_failed(errors: usize, total: usize) -> bool {
+    errors == total && total > 0
+}
+
 fn embed_aligned_native(
     engine: &Engine,
     py: Python<'_>,
@@ -938,7 +961,7 @@ fn embed_aligned_native(
                 "{errors} file(s) skipped due to errors"
             );
         }
-        if errors == total && total > 0 {
+        if all_inputs_failed(errors, total) {
             return Err(EmbedAllFailedError::new_err("All files failed processing."));
         }
         Ok(results)
@@ -1130,20 +1153,15 @@ impl PyEngine {
         let total = paths.len();
         let native_results =
             embed_aligned_native(&self.engine, py, paths, model, progress_callback)?;
-        let failed = native_results
-            .iter()
-            .filter(|result| result.is_none())
-            .count();
-        if failed > 0 {
-            return Err(EmbedPartialFailureError::new_err(format!(
+        match compact_or_partial(native_results) {
+            Ok(results) => Ok(results
+                .into_iter()
+                .map(|result| py_embed_result(py, result))
+                .collect()),
+            Err(failed) => Err(EmbedPartialFailureError::new_err(format!(
                 "{failed} of {total} files failed; use PyEngine.embed_aligned() to preserve input positions"
-            )));
+            ))),
         }
-        Ok(native_results
-            .into_iter()
-            .flatten()
-            .map(|result| py_embed_result(py, result))
-            .collect())
     }
 
     /// Run image embedding while preserving one output slot per input path.
@@ -2148,6 +2166,39 @@ mod tests {
             Ok(100 + index as i32)
         });
         assert_eq!(resolved, vec![Ok(100), Ok(101), Ok(102)]);
+    }
+
+    #[test]
+    fn compact_or_partial_returns_dense_when_no_gaps() {
+        let out = compact_or_partial(vec![Some(1), Some(2), Some(3)]);
+        assert_eq!(out, Ok(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn compact_or_partial_reports_single_gap() {
+        let out = compact_or_partial(vec![Some(1), None, Some(3)]);
+        assert_eq!(out, Err(1));
+    }
+
+    #[test]
+    fn compact_or_partial_counts_multiple_gaps() {
+        let out: Result<Vec<i32>, usize> = compact_or_partial(vec![None, Some(2), None]);
+        assert_eq!(out, Err(2));
+    }
+
+    #[test]
+    fn compact_or_partial_empty_is_ok_empty() {
+        let out: Result<Vec<i32>, usize> = compact_or_partial(vec![]);
+        assert_eq!(out, Ok(vec![]));
+    }
+
+    #[test]
+    fn all_inputs_failed_truth_table() {
+        assert!(all_inputs_failed(2, 2));
+        assert!(!all_inputs_failed(1, 2));
+        assert!(!all_inputs_failed(0, 3));
+        // An empty batch is not "all failed".
+        assert!(!all_inputs_failed(0, 0));
     }
 
     #[test]

@@ -246,6 +246,8 @@ __all__ = [
     "classify",
     "embed",
     "embed_with_meta",
+    "embed_aligned",
+    "embed_aligned_with_meta",
     "detect_audio",
     "pipeline",
     "list_models",
@@ -290,6 +292,13 @@ _engine: Optional[PyEngine] = None
 _engine_lock = threading.Lock()
 
 
+def _default_model_dir() -> str:
+    """Default model directory: ``SPARROW_ENGINE_MODEL_DIR`` or ``~/.sparrow-engine/models``."""
+    return os.environ.get(
+        "SPARROW_ENGINE_MODEL_DIR", str(Path.home() / ".sparrow-engine" / "models")
+    )
+
+
 def _get_engine() -> PyEngine:
     """Return the global engine, creating it lazily with env-var defaults."""
     global _engine
@@ -299,9 +308,7 @@ def _get_engine() -> PyEngine:
         if _engine is not None:
             return _engine
         device = os.environ.get("SPARROW_ENGINE_DEVICE", "auto")
-        model_dir = os.environ.get(
-            "SPARROW_ENGINE_MODEL_DIR", str(Path.home() / ".sparrow-engine" / "models")
-        )
+        model_dir = _default_model_dir()
         _engine = PyEngine(device=device, model_dir=model_dir)
         return _engine
 
@@ -314,12 +321,20 @@ def _resolve_inputs(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
     extensions: set[str],
     recursive: bool = False,
+    preserve_order: bool = False,
 ) -> list[str]:
     """Normalize input to a list of file paths.
 
     Accepts a single path (str or Path), a directory (expands to matching
     files), or a list of paths. When ``recursive`` is True, directories
     are traversed recursively.
+
+    By default the full result is sorted — the historical behavior shared by
+    ``detect``/``classify``/``detect_audio``/``pipeline``. When
+    ``preserve_order`` is True the caller's list order is kept and only the
+    files discovered *within* each directory/glob expansion are sorted for
+    determinism; the embedding path uses this so results line up positionally
+    with the requested inputs.
     """
     if isinstance(input, (str, Path)):
         input = [input]
@@ -328,25 +343,28 @@ def _resolve_inputs(
         p = Path(item)
         if p.is_dir():
             if recursive:
-                files.extend(
+                matched = [
                     str(f) for f in p.rglob("*") if f.suffix.lower() in extensions
-                )
+                ]
             else:
-                files.extend(
+                matched = [
                     str(f) for f in p.iterdir() if f.suffix.lower() in extensions
-                )
+                ]
+            files.extend(sorted(matched) if preserve_order else matched)
         elif any(ch in str(item) for ch in "*?["):
+            matched = []
             for match in glob.glob(str(item), recursive=recursive):
                 f = Path(match)
                 if f.is_file() and f.suffix.lower() in extensions:
-                    files.append(str(f))
+                    matched.append(str(f))
+            files.extend(sorted(matched) if preserve_order else matched)
         else:
             files.append(str(p))
-    return sorted(files)
+    return files if preserve_order else sorted(files)
 
 
 # -------------------------------------------------------------------------
-# 8 MVP functions
+# Public inference + utility functions
 # -------------------------------------------------------------------------
 
 
@@ -360,9 +378,7 @@ def init(device: str = "auto", model_dir: Optional[str] = None) -> None:
     global _engine
     with _engine_lock:
         if model_dir is None:
-            model_dir = os.environ.get(
-                "SPARROW_ENGINE_MODEL_DIR", str(Path.home() / ".sparrow-engine" / "models")
-            )
+            model_dir = _default_model_dir()
         _engine = None  # Drop old engine first → ENGINE_EXISTS = false
         _engine = PyEngine(device=device, model_dir=model_dir)
 
@@ -434,6 +450,11 @@ def embed(
     ``embedding_version`` and ``model_hash``. Pin identity with
     ``model_info(model)`` or use ``embed_with_meta()`` before sending vectors
     to sparrow-data or any persistent embedding index.
+
+    Preserves caller order and **fails closed**: any failed file raises
+    (``EmbedPartialFailureError`` on partial failure, ``EmbedAllFailedError``
+    when all fail). Use ``embed_aligned()`` for a per-input list that keeps a
+    ``None`` slot for each failed file instead of raising.
     """
     single_file_input = isinstance(input, (str, Path)) and Path(input).is_file()
     results = embed_with_meta(
@@ -456,38 +477,98 @@ def embed_with_meta(
     recursive: bool = False,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> Union[EmbedResult, list[EmbedResult]]:
-    """Compute image embeddings and keep the full identity metadata."""
+    """Compute image embeddings and keep the full identity metadata.
+
+    Preserves caller order and **fails closed**: if any requested file fails,
+    this raises rather than silently dropping it — ``EmbedPartialFailureError``
+    when only some inputs fail, ``EmbedAllFailedError`` when every input fails.
+    Use ``embed_aligned_with_meta()`` to keep a ``None`` slot per failed input
+    instead of raising.
+
+    A single file path returns one :class:`EmbedResult`; directories, glob
+    patterns, and lists return ``list[EmbedResult]`` in the requested order.
+    """
     single_path_input = isinstance(input, (str, Path))
     single_file_input = single_path_input and Path(input).is_file()
     if single_path_input and not Path(input).exists() and not any(ch in str(input) for ch in "*?["):
         raise SparrowEngineError("No image files found.")
-    paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive)
+    paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive, preserve_order=True)
     if single_path_input and not paths and not Path(input).is_dir():
         raise SparrowEngineError("No image files found.")
-    engine = _get_engine()
-    results: list[EmbedResult] = []
-    errors = 0
-    total = len(paths)
-    for i, path in enumerate(paths):
-        try:
-            per_file_results = engine.embed([path], model, None)
-            if per_file_results:
-                results.append(per_file_results[0])
-            else:
-                errors += 1
-                _LOG.warning("skipping %s: no embedding returned", path)
-        except SparrowEngineError as exc:
-            errors += 1
-            _LOG.warning("skipping %s: %s", path, exc)
-        if progress_callback is not None:
-            progress_callback(i, total, path)
-    if errors and errors == total and total > 0:
-        raise SparrowEngineError("All files failed processing.")
+    # No-op on a genuinely empty resolution (empty list, empty directory,
+    # no-match glob in a list). Return without touching the engine so an empty
+    # request neither loads the model nor raises when it is unavailable — the
+    # native ``embed_aligned_native`` loads the model before its (empty) chunk
+    # loop. The single-string missing/no-match-glob and single-missing-path
+    # cases already raised above (fail-closed) and never reach here.
+    if not paths:
+        return []
+    # Delegate to the native fail-closed strict path, which preserves input
+    # order, raises EmbedPartialFailureError / EmbedAllFailedError on failure,
+    # and fires ``progress_callback`` once per file in caller order.
+    results = _get_engine().embed(paths, model, progress_callback)
     if single_file_input:
         if not results:
             raise SparrowEngineError("No image files found.")
         return results[0]
     return results
+
+
+def embed_aligned(
+    input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
+    model: str,
+    *,
+    recursive: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> list[Optional[np.ndarray]]:
+    """Compute image embeddings with one slot per requested input.
+
+    Returns a list the same length and order as the resolved inputs: a
+    ``float32`` owned/writable :class:`numpy.ndarray` for each success and
+    ``None`` for each failed file, so positional matching against the inputs
+    stays safe. Raises :class:`EmbedAllFailedError` only when *every* input
+    fails. This is the bare-vector counterpart to :func:`embed`; because
+    ``None`` slots cannot be stacked it returns a per-input list, not a stacked
+    matrix.
+    """
+    results = embed_aligned_with_meta(
+        input, model, recursive=recursive, progress_callback=progress_callback
+    )
+    return [
+        None if r is None else np.array(r.vector, dtype="<f4", copy=True)
+        for r in results
+    ]
+
+
+def embed_aligned_with_meta(
+    input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
+    model: str,
+    *,
+    recursive: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> list[Optional[EmbedResult]]:
+    """Compute image embeddings with full identity metadata, one slot per input.
+
+    Returns ``list[Optional[EmbedResult]]`` the same length and order as the
+    resolved inputs, with ``None`` for each failed file so positional matching
+    stays safe. Raises :class:`EmbedAllFailedError` only when *every* input
+    fails. This is the identity-preserving counterpart to
+    :func:`embed_with_meta`; unlike it, a single-file input still returns a
+    one-element list (never an unwrapped scalar) so the positional contract is
+    uniform.
+    """
+    single_path_input = isinstance(input, (str, Path))
+    if single_path_input and not Path(input).exists() and not any(ch in str(input) for ch in "*?["):
+        raise SparrowEngineError("No image files found.")
+    paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive, preserve_order=True)
+    if single_path_input and not paths and not Path(input).is_dir():
+        raise SparrowEngineError("No image files found.")
+    # No-op on a genuinely empty resolution (see ``embed_with_meta``): return an
+    # empty positional list without invoking the engine, so no model load
+    # occurs. Single-string missing/no-match-glob inputs already raised above.
+    if not paths:
+        return []
+    return _get_engine().embed_aligned(paths, model, progress_callback)
 
 
 def detect_audio(
@@ -606,9 +687,7 @@ def verify_model(
     ``"size_mismatch"``, ``"checksum_mismatch"``).
     """
     if model_dir is None:
-        model_dir = os.environ.get(
-            "SPARROW_ENGINE_MODEL_DIR", str(Path.home() / ".sparrow-engine" / "models")
-        )
+        model_dir = _default_model_dir()
     return _verify_model_core(str(model_dir), model_id)
 
 
