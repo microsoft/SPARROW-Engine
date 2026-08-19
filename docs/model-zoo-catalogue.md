@@ -1,8 +1,21 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **75 models**, Zenodo record [`21890514`](https://zenodo.org/records/21890514) (v0.28.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **75 models**, Zenodo record [`22018132`](https://zenodo.org/records/22018132) (v0.29.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license bundle**: every model keeps its own upstream license. Download with `sparrow-engine/scripts/download_models.sh` (fetches ONNX models by default; TFLite / cascade artifacts on demand).
+
+## Catalogue summary
+
+**75 active entries** · 69 ONNX · 5 TFLite · 1 cascade · 61 commercial-use allowed · 14 non-commercial / restricted.
+
+| Area | Detectors | Classifiers | Encoders | Cascades | Total |
+|---|---:|---:|---:|---:|---:|
+| Camera Trap | 21 | 27 | 0 | 0 | 48 |
+| Acoustics | 4 | 6 | 0 | 1 | 11 |
+| Overhead | 6 | 0 | 0 | 0 | 6 |
+| Marine Imagery | 6 | 0 | 0 | 0 | 6 |
+| General | 0 | 0 | 4 | 0 | 4 |
+| **Total** | **37** | **33** | **4** | **1** | **75** |
 
 ## Reading this catalogue
 
