@@ -60,7 +60,7 @@ _spe_main() {
     local self_dir scripts_dir ws src dev tfr model_dir out_dir subset_dir
     local test_dir overhead_dir audio_dir test_img test_wav
     local expected_models found_models img wav
-    local rc miss model_report d f
+    local rc miss model_report d f common_git primary_dev
 
     self_dir="$(cd "$(dirname "$_spe_self_raw")" >/dev/null 2>&1 && pwd -P)" || {
         echo "error: cannot resolve manual_test_setup.sh directory." >&2; return 1; }
@@ -73,15 +73,33 @@ _spe_main() {
     fi
     SPARROW_ENGINE_SOURCE="$src"
 
-    # --- dev companion: explicit override, else documented sibling layout ---
+    # --- dev companion: explicit override wins; else the documented sibling;
+    # else, for a Git-worktree public checkout, the sibling beside the PRIMARY
+    # checkout (a linked worktree's parent is not the sibling layout). ---
     if [ -n "${SPARROW_ENGINE_DEV:-}" ]; then
         dev="$SPARROW_ENGINE_DEV"
     else
+        # (1) normal layout: sibling beside the public source.
         dev="$(cd "$src/.." >/dev/null 2>&1 && pwd -P)/sparrow-engine-dev"
+        # (2) Git-worktree layout: when the public source is a LINKED worktree
+        # (its .git is a file, not a dir) and the normal sibling is absent,
+        # resolve the PRIMARY checkout from the common git dir and try the
+        # sibling beside that primary checkout instead.
+        if { [ ! -d "$dev" ] || [ ! -d "$dev/docs" ]; } && [ -f "$src/.git" ] && command -v git >/dev/null 2>&1; then
+            common_git="$(git -C "$src" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+            if [ -n "$common_git" ] && [ -d "$common_git" ]; then
+                # common_git = <primary>/.git  ->  <primary>/.git/../.. = <primary-parent>
+                primary_dev="$(cd "$common_git/../.." >/dev/null 2>&1 && pwd -P)/sparrow-engine-dev"
+                if [ -d "$primary_dev" ] && [ -d "$primary_dev/docs" ]; then
+                    dev="$primary_dev"
+                fi
+            fi
+        fi
     fi
     if [ ! -d "$dev" ] || [ ! -d "$dev/docs" ]; then
         echo "error: dev companion not found/invalid: $dev" >&2
-        echo "  Set SPARROW_ENGINE_DEV=/path/to/sparrow-engine-dev or place it beside the code repo." >&2
+        echo "  Tried the sibling beside the public checkout (and, for a Git worktree, beside the" >&2
+        echo "  primary checkout). Set SPARROW_ENGINE_DEV=/path/to/sparrow-engine-dev to override." >&2
         return 1
     fi
     dev="$(cd "$dev" >/dev/null 2>&1 && pwd -P)"
