@@ -59,7 +59,7 @@ fi
 _spe_main() {
     local self_dir scripts_dir ws src dev tfr model_dir out_dir subset_dir
     local test_dir overhead_dir audio_dir test_img test_wav
-    local expected_models found_models img wav
+    local expected_models found_models img wav overhead_probe
     local rc miss model_report d f common_git primary_dev
 
     self_dir="$(cd "$(dirname "$_spe_self_raw")" >/dev/null 2>&1 && pwd -P)" || {
@@ -86,10 +86,10 @@ _spe_main() {
         # resolve the PRIMARY checkout from the common git dir and try the
         # sibling beside that primary checkout instead.
         if { [ ! -d "$dev" ] || [ ! -d "$dev/docs" ]; } && [ -f "$src/.git" ] && command -v git >/dev/null 2>&1; then
-            common_git="$(git -C "$src" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+            common_git="$(git -C "$src" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common_git=""
             if [ -n "$common_git" ] && [ -d "$common_git" ]; then
                 # common_git = <primary>/.git  ->  <primary>/.git/../.. = <primary-parent>
-                primary_dev="$(cd "$common_git/../.." >/dev/null 2>&1 && pwd -P)/sparrow-engine-dev"
+                primary_dev="$(cd "$common_git/../.." >/dev/null 2>&1 && pwd -P)/sparrow-engine-dev" || primary_dev=""
                 if [ -d "$primary_dev" ] && [ -d "$primary_dev/docs" ]; then
                     dev="$primary_dev"
                 fi
@@ -105,7 +105,7 @@ _spe_main() {
     dev="$(cd "$dev" >/dev/null 2>&1 && pwd -P)"
     SPARROW_ENGINE_DEV="$dev"
 
-    # --- ORT dynamic-link env (queue-001 compatibility auto-selection) ---
+    # --- ORT dynamic-link env (loader-compatible auto-selection) ---
     # shellcheck source=/dev/null
     source "$scripts_dir/ort-env.sh" || {
         echo "error: failed sourcing ort-env.sh (no loader-compatible ONNX Runtime?)." >&2; return 1; }
@@ -122,11 +122,15 @@ _spe_main() {
     for d in "$test_dir" "$overhead_dir" "$audio_dir"; do
         if [ ! -d "$d" ]; then echo "error: missing fixture corpus: $d" >&2; return 1; fi
     done
-    img="$(find "$test_dir" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort | head -1)"
+    img="$(find "$test_dir" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort | sed -n '1p')"
     if [ -z "$img" ]; then echo "error: no camera-trap image under $test_dir." >&2; return 1; fi
-    wav="$(find "$audio_dir" -maxdepth 1 -type f -iname '*.wav' 2>/dev/null | sort | head -1)"
+    wav="$(find "$audio_dir" -maxdepth 1 -type f -iname '*.wav' 2>/dev/null | sort | sed -n '1p')"
     if [ -z "$wav" ]; then echo "error: no .wav under $audio_dir." >&2; return 1; fi
-    if ! find "$overhead_dir" -maxdepth 1 -type f 2>/dev/null | grep -q .; then
+    # Non-empty check via find's own `-print -quit` (no early-consumer pipeline:
+    # find prints the first match then quits itself, so nothing can SIGPIPE under
+    # a caller's `set -o pipefail`).
+    overhead_probe="$(find "$overhead_dir" -maxdepth 1 -type f -print -quit 2>/dev/null)"
+    if [ -z "$overhead_probe" ]; then
         echo "error: no overhead tiles under $overhead_dir." >&2; return 1; fi
     test_img="$img"
     test_wav="$wav"
@@ -157,6 +161,7 @@ _spe_main() {
     fi
     # NOTE: the Python program body is at column 0 by necessity (Python is
     # indentation-sensitive; a quoted heredoc preserves leading whitespace).
+    rc=0
     model_report="$(SPE_CATALOG="$scripts_dir/catalog.toml" SPE_MODEL_DIR="$model_dir" python3 - <<'PY'
 import os, sys, tomllib
 try:
@@ -177,8 +182,7 @@ for x in missing:
     print("MISSING %s" % x)
 sys.exit(1 if missing else 0)
 PY
-)"
-    rc=$?
+)" || rc=$?
     expected_models="$(printf '%s\n' "$model_report" | sed -n 's/^COUNT //p')"
     [ -z "$expected_models" ] && expected_models="?"
     if [ "$rc" -ne 0 ]; then
@@ -189,7 +193,7 @@ PY
     fi
     found_models="$expected_models"
 
-    # --- build BOTH flavors into ISOLATED target dirs (queue-002 discipline) ---
+    # --- build BOTH flavors into ISOLATED target dirs ---
     # Both cdylibs are libsparrow_engine.so (locked same-library-name invariant);
     # separate target-cpu/ and target-gpu/ keep them from colliding at the shared
     # output path, so no cargo clean and no cross-flavor race. Current feature
@@ -241,8 +245,8 @@ PY
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         cp -f "$f" "$subset_dir/" || { echo "error: cannot copy subset image." >&2; return 1; }
-        n=$((n + 1)); [ "$n" -ge 10 ] && break
-    done < <(find "$test_dir" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort)
+        n=$((n + 1))
+    done < <(find "$test_dir" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort | sed -n '1,10p')
     if [ "$n" -lt 10 ]; then
         echo "error: only $n images available for the 10-image subset under $test_dir." >&2; return 1; fi
     SPARROW_ENGINE_OUT_DIR="$out_dir"
