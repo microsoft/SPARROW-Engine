@@ -25,6 +25,8 @@ param(
     [switch]$Docker,
 
     # Flavor (cpu|gpu|auto). auto = invoke probe; ignore $env:SPARROW_ENGINE_INSTALL_FLAVOR.
+    # An explicit cpu|gpu must AGREE with $env:SPARROW_ENGINE_INSTALL_FLAVOR when both are
+    # set; a conflict fails with exit 3 (mirrors sparrow-engine-install.sh).
     [ValidateSet('cpu','gpu','auto')]
     [string]$Flavor = 'auto',
 
@@ -139,6 +141,18 @@ function Invoke-Probe {
 function Resolve-Flavor {
     param([string]$Requested)
     if ($Requested -eq 'cpu' -or $Requested -eq 'gpu') {
+        # Explicit -Flavor cpu|gpu. If SPARROW_ENGINE_INSTALL_FLAVOR is also set
+        # and disagrees, fail BEFORE any mutation with exit 3 (installer contract:
+        # explicit flavor and env override must agree — no silent winner).
+        # -Flavor auto (below) ignores the env.
+        # Case-SENSITIVE compare (-cne) to match sparrow-engine-install.sh's
+        # documented exact-lowercase cpu|gpu contract (`[ "$flavor" != "$env" ]`);
+        # e.g. SPARROW_ENGINE_INSTALL_FLAVOR=CPU vs -Flavor cpu is a conflict in
+        # both installers.
+        $envFlavor = $env:SPARROW_ENGINE_INSTALL_FLAVOR
+        if ($envFlavor -and $envFlavor -cne $Requested) {
+            Die 3 "flavor disagreement: -Flavor $Requested conflicts with SPARROW_ENGINE_INSTALL_FLAVOR=$envFlavor. Pass one flavor (make them match), clear one, or use -Flavor auto to run the probe."
+        }
         return $Requested
     }
     # 'auto' explicitly means: ignore env override, force probe (final_design § 2.3).

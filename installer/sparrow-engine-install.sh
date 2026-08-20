@@ -102,8 +102,9 @@ Modes (auto-detected if omitted):
   --docker            Pull docker image zhongqimiao/sparrow-engine-server:latest (CPU) or zhongqimiao/sparrow-engine-server-gpu:latest (GPU)
 
 Flavor:
-  --flavor cpu|gpu|auto    auto = run probe (default).
-                           Honors SPARROW_ENGINE_INSTALL_FLAVOR env unless --flavor=auto.
+  --flavor cpu|gpu|auto    auto = run probe (default; ignores SPARROW_ENGINE_INSTALL_FLAVOR).
+                           An explicit cpu|gpu must AGREE with SPARROW_ENGINE_INSTALL_FLAVOR
+                           when both are set; a conflict fails with exit 3.
 
 Bypass:
   --reinstall              Same-flavor force-overwrite (skip "already installed" gate)
@@ -120,7 +121,9 @@ Other:
   --version                Print installer version
 
 Environment:
-  SPARROW_ENGINE_INSTALL_FLAVOR=cpu|gpu       Override probe (subordinate to --flavor)
+  SPARROW_ENGINE_INSTALL_FLAVOR=cpu|gpu       Override the probe. Must match an explicit
+                                              --flavor cpu|gpu (conflict => exit 3);
+                                              --flavor auto ignores it.
   SPARROW_ENGINE_RELEASE_BASE=<url>           Override release URL prefix
                                      (default: ${SPARROW_ENGINE_RELEASE_BASE_DEFAULT})
   SPARROW_ENGINE_VERSION=X.Y.Z                Override target version
@@ -130,7 +133,7 @@ Exit codes (canonical: docs/design/phase4.1-install-selector/final_design.md §2
   0  Success
   1  Generic error
   2  User aborted (Ctrl-C)
-  3  Probe disagreement (override conflicts with hardware)
+  3  Flavor disagreement (--flavor conflicts with SPARROW_ENGINE_INSTALL_FLAVOR)
   4  Network failure (after retries)
   5  Python too old (<3.11)
   6  sha256 verification failed
@@ -263,9 +266,12 @@ resolve_flavor() {
             *) die 1 "probe_cuda returned invalid flavor: $flavor" ;;
         esac
     elif [ -n "${SPARROW_ENGINE_INSTALL_FLAVOR:-}" ] && [ "$flavor" != "${SPARROW_ENGINE_INSTALL_FLAVOR}" ]; then
-        # User passed both --flavor and SPARROW_ENGINE_INSTALL_FLAVOR; --flavor wins (per §5.1)
-        # but warn so the env-var setter notices.
-        warn "SPARROW_ENGINE_INSTALL_FLAVOR=$SPARROW_ENGINE_INSTALL_FLAVOR ignored; --flavor=$flavor takes precedence"
+        # Explicit --flavor cpu|gpu disagrees with SPARROW_ENGINE_INSTALL_FLAVOR.
+        # Installer contract: an explicit flavor and the env override must agree;
+        # a conflict is a hard error (no silent winner). Fail BEFORE any
+        # probe/mutation with exit 3 and an actionable message.
+        # (--flavor auto is handled above and ignores the env override entirely.)
+        die 3 "flavor disagreement: --flavor=$flavor conflicts with SPARROW_ENGINE_INSTALL_FLAVOR=$SPARROW_ENGINE_INSTALL_FLAVOR. Pass one flavor (make them match), unset one, or use --flavor auto to run the probe."
     fi
 
     say "selected flavor: $flavor"
