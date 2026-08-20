@@ -96,8 +96,34 @@ run_phase_e_gpu_gates() {
 
 build_wheels() {
     echo "[build_all_flavors] === Python wheels ==="
-    cd "$SPARROW_ENGINE_DIR/sparrow-engine-python"
-    SPARROW_ENGINE_FLAVOR="$FLAVOR" ./build.sh
+    local os
+    os="$(uname -s)"
+    # CPU wheel: the local build.sh is correct on every platform — the CPU wheel
+    # is built with `--auditwheel skip`, so no manylinux container is needed.
+    if [[ "$FLAVOR" == "cpu" || "$FLAVOR" == "both" ]]; then
+        ( cd "$SPARROW_ENGINE_DIR/sparrow-engine-python" && SPARROW_ENGINE_FLAVOR=cpu ./build.sh )
+    fi
+    # GPU wheel: platform-dependent.
+    if [[ "$FLAVOR" == "gpu" || "$FLAVOR" == "both" ]]; then
+        case "$os" in
+            Linux)
+                # NEVER run the host GPU build.sh on Linux: on a newer-glibc host it
+                # compiles a linux_x86_64 wheel and then hard-fails the manylinux_2_28
+                # `auditwheel repair` inside build.sh. Build the portable, release-quality
+                # wheel in the release-locked Rocky 8 / CUDA 12.8 container instead.
+                bash "$SPARROW_ENGINE_DIR/scripts/build_gpu_wheel_manylinux.sh"
+                ;;
+            MINGW*|MSYS*|CYGWIN*|Windows_NT)
+                # Windows GPU wheel: the release workflow builds it directly with maturin
+                # (no auditwheel / manylinux step applies off Linux).
+                ( cd "$SPARROW_ENGINE_DIR/sparrow-engine-python" && SPARROW_ENGINE_FLAVOR=gpu ./build.sh )
+                ;;
+            *)
+                echo "[build_all_flavors] ERROR: no GPU wheel target for OS '$os' (GPU wheels ship for Linux + Windows only); refusing to build a mislabeled wheel" >&2
+                exit 1
+                ;;
+        esac
+    fi
     ls -lh "$SPARROW_ENGINE_DIR/target/wheels/"
     if [[ "$FLAVOR" == "gpu" || "$FLAVOR" == "both" ]]; then
         run_phase_e_gpu_gates

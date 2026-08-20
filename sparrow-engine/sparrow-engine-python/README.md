@@ -16,9 +16,12 @@ pip install sparrow-engine-gpu    # GPU/CUDA build (depends on onnxruntime-gpu)
 ```
 
 Both distributions import as `sparrow_engine` and are drop-in replacements for
-each other. Install exactly one per environment; pip refuses to install both
-into the same environment. Neither wheel bundles ONNX Runtime or CUDA — those
-come from the runtime dependency (`onnxruntime` / `onnxruntime-gpu`).
+each other. Install exactly one per environment: they write the same
+`sparrow_engine` import package, so a second flavor overwrites the first. The
+GPU wheel carries only an advisory `Provides-Dist: sparrow-engine`, which pip
+>=22 does not enforce, so pip MAY still install both into one environment —
+keeping them apart is operator discipline. Neither wheel bundles ONNX Runtime or
+CUDA — those come from the runtime dependency (`onnxruntime` / `onnxruntime-gpu`).
 
 ## Usage
 

@@ -12,11 +12,23 @@
 # The CPU wheel uses this directory's `pyproject.toml` as-is. The GPU
 # wheel sed-patches a temp copy (rename `sparrow-engine` -> `sparrow-engine-gpu`,
 # `onnxruntime` -> `onnxruntime-gpu`, `extension-module,cpu` ->
-# `extension-module,gpu`) and post-build patches `Provides-Dist: sparrow-engine`
-# into the wheel's METADATA so pip refuses both wheels in the same env.
+# `extension-module,gpu`) and post-build patches an advisory
+# `Provides-Dist: sparrow-engine` into the wheel's METADATA. That field is
+# advisory in pip >=22 (no Conflicts-Dist is emitted), so pip MAY still install
+# both `sparrow-engine` and `sparrow-engine-gpu` into one environment — keep the
+# flavors in separate environments (operator discipline), not a mechanical block.
 #
 # References: `docs/design/phase3.8/phase_c/implementation_plan.md`
 # §2.3 + §4 W4a + §9 item 4.
+#
+# Linux GPU wheel — release-quality manylinux build: on Linux, a release-quality
+# GPU wheel must be compiled in the release-locked Rocky 8 / glibc 2.28 container
+# via `scripts/build_gpu_wheel_manylinux.sh` (matches release.yml). Running this
+# script's GPU path directly on a newer-glibc host (e.g. Ubuntu 22.04, glibc
+# 2.35) compiles a `linux_x86_64` wheel and then correctly HARD-FAILS the
+# `auditwheel repair --plat manylinux_2_28_x86_64` step below — a raw host build
+# is NOT a valid portable-wheel path. `scripts/build_all_flavors.sh` dispatches
+# the Linux GPU wheel to that container helper automatically.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -201,9 +213,11 @@ build_gpu() {
     mv "$backup" pyproject.toml
     backup=""
 
-    # Post-build: patch `Provides-Dist: sparrow-engine` into the GPU wheel's
-    # METADATA so pip refuses to install both sparrow-engine and sparrow-engine-gpu into
-    # the same env (Acceptance Gate G3 conflict-test).
+    # Post-build: patch an advisory `Provides-Dist: sparrow-engine` into the GPU
+    # wheel's METADATA (Acceptance Gate G3). This field is advisory in pip >=22
+    # (no Conflicts-Dist is emitted), so pip MAY still install both
+    # sparrow-engine and sparrow-engine-gpu into one env — flavor isolation is
+    # operator discipline (separate environments), not a mechanical block.
     #
     # Phase C audit-fix R1 (A3 / 2026-05-06): pipe assignment uses
     # `|| true` so `set -o pipefail` does not abort the script when no

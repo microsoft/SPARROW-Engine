@@ -1965,7 +1965,7 @@ ENFORCEMENT TIERS (today)
         cuDNN >= 9.10                                 (exit 11 if violated)            
    3. NVIDIA driver >= 550.x                         ENFORCED via cuDNN probe          
                                                       side-effect; weak                
-   4. Provides-Dist / Conflicts-Dist                 ADVISORY ONLY in pip ≥22          
+   4. Provides-Dist (GPU wheel only)                 ADVISORY ONLY in pip ≥22
                                                       (does not block install)         
 ```
 

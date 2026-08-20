@@ -20,6 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 "$SCRIPT_DIR/tests/test_download_models.sh"
 "$SCRIPT_DIR/tests/test_check_ffi_symbols.sh"
 "$SCRIPT_DIR/tests/test_installers.sh"
+# Contract for the manylinux GPU wheel build path (release-locked builder recipe,
+# build_all dispatch, no auditwheel escape, docs not overclaiming). Lightweight —
+# does NOT run the Docker build.
+"$SCRIPT_DIR/tests/test_gpu_wheel_build_contract.sh"
 # Guards ORT auto-discovery (CUDA-runtime compatibility filtering). Runs before
 # ort-env.sh is sourced because it validates the very selection logic that
 # source performs.

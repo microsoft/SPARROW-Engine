@@ -14,9 +14,14 @@ build-backend = "maturin"
 #     -> distribution name `sparrow-engine-gpu`, runtime dep
 #        `onnxruntime-gpu>=1.25.1`, cargo feature `gpu` (pulls in
 #        `sparrow-engine-gpu`). The build script sed-patches a temp copy of
-#        this file before invoking maturin and post-build patches
-#        `Provides-Dist: sparrow-engine` into the GPU wheel's METADATA so pip
-#        refuses to install both wheels into the same env.
+#        this file before invoking maturin and post-build patches an advisory
+#        `Provides-Dist: sparrow-engine` into the GPU wheel's METADATA. That
+#        field is advisory in pip >=22 (no Conflicts-Dist is emitted), so pip
+#        MAY still install both wheels into one env — keep the flavors in
+#        separate environments (operator discipline), not a mechanical block.
+#        On Linux the release-quality GPU wheel is built in the release-locked
+#        Rocky 8 manylinux container (scripts/build_gpu_wheel_manylinux.sh); a
+#        raw host build on a newer glibc is not a valid portable wheel.
 #
 # Both wheels keep `module-name = "sparrow_engine._sparrow_engine_core"` -> Python code
 # always writes `import sparrow_engine` (drop-in replacement).
