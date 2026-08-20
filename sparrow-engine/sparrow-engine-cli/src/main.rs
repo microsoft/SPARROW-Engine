@@ -179,9 +179,11 @@ struct ClassifyArgs {
     /// Input files or directories
     #[arg(required = true)]
     input: Vec<PathBuf>,
-    /// Model ID to use
+    /// Model ID to use (required — the catalog ships several classifiers and
+    /// `SpeciesNet-Crop` is a crop-stage classifier, so there is no safe silent
+    /// default; pick one explicitly).
     #[arg(long)]
-    model: Option<String>,
+    model: String,
     /// Number of top predictions to return
     #[arg(long)]
     top_k: Option<u32>,
@@ -1427,6 +1429,24 @@ fn run_visualization<R>(
 // Command: detect
 // ---------------------------------------------------------------------------
 
+/// Canonical detector fallback used when neither an explicit `--model` nor the
+/// engine's catalog/env default resolves. Kept as a named constant (and asserted
+/// to be a real `scripts/catalog.toml` id by the unit tests) rather than an
+/// inline string literal.
+const DEFAULT_DETECTOR_MODEL_ID: &str = "MDV6-yolov10-e";
+
+/// Detector model selection precedence for `detect` (a documented no-`--model`
+/// public path): explicit `--model` > the engine's resolved catalog/env default
+/// (`Engine::resolve_default_model(ModelType::Detector)`) > the canonical
+/// fallback [`DEFAULT_DETECTOR_MODEL_ID`]. Pure + unit-tested; the caller does
+/// the engine lookup and passes it in as `catalog_default`.
+fn select_detect_model_id(explicit: Option<&str>, catalog_default: Option<&str>) -> String {
+    explicit
+        .or(catalog_default)
+        .map(str::to_string)
+        .unwrap_or_else(|| DEFAULT_DETECTOR_MODEL_ID.to_string())
+}
+
 fn cmd_detect(
     device_str: &str,
     model_dir: &Option<PathBuf>,
@@ -1449,7 +1469,9 @@ fn cmd_detect_with_engine(
         return Err("No image files found.".into());
     }
 
-    let model_id = args.model.as_deref().unwrap_or("megadetector-v6-yolov10e");
+    let catalog_default = engine.resolve_default_model(ModelType::Detector);
+    let model_id_owned = select_detect_model_id(args.model.as_deref(), catalog_default.as_deref());
+    let model_id = model_id_owned.as_str();
     let handle = engine.get_or_load_model(model_id)?;
 
     let opts = DetectOpts {
@@ -1639,7 +1661,7 @@ fn cmd_classify_with_engine(
         return Err("No image files found.".into());
     }
 
-    let model_id = args.model.as_deref().unwrap_or("speciesnet");
+    let model_id = args.model.as_str();
     let handle = engine.get_or_load_model(model_id)?;
 
     let opts = ClassifyOpts { top_k: args.top_k };
@@ -2797,6 +2819,69 @@ mod tests {
         assert!(BOOTSTRAP_HINT.contains("10.5281/zenodo.20348978"));
         assert!(!BOOTSTRAP_HINT.contains("10.5281/zenodo.20360316"));
         assert!(!BOOTSTRAP_HINT.contains("Zenodo v"));
+    }
+
+    #[test]
+    fn detect_model_precedence_explicit_over_catalog_over_fallback() {
+        // explicit --model wins over everything
+        assert_eq!(
+            select_detect_model_id(Some("Custom-Detector"), Some("Catalog-Default")),
+            "Custom-Detector"
+        );
+        // no explicit -> the engine's resolved catalog/env default
+        assert_eq!(
+            select_detect_model_id(None, Some("Catalog-Default")),
+            "Catalog-Default"
+        );
+        // neither -> the canonical fallback constant
+        assert_eq!(
+            select_detect_model_id(None, None),
+            DEFAULT_DETECTOR_MODEL_ID
+        );
+        assert_eq!(select_detect_model_id(None, None), "MDV6-yolov10-e");
+    }
+
+    #[test]
+    fn detect_parses_without_model() {
+        let cli = Cli::try_parse_from(["spe", "detect", "img.jpg"])
+            .expect("detect must parse without --model");
+        match cli.command {
+            Some(Commands::Detect(args)) => assert!(args.model.is_none()),
+            _ => panic!("expected detect subcommand"),
+        }
+    }
+
+    #[test]
+    fn classify_rejects_missing_model_at_parse() {
+        // `Cli` does not derive Debug, so match rather than expect_err/unwrap_err.
+        match Cli::try_parse_from(["spe", "classify", "img.jpg"]) {
+            Ok(_) => panic!("classify must reject a missing --model at parse time"),
+            Err(err) => assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument),
+        }
+    }
+
+    #[test]
+    fn classify_parses_with_explicit_model() {
+        let cli = Cli::try_parse_from(["spe", "classify", "img.jpg", "--model", "SpeciesNet-Crop"])
+            .expect("classify must parse with an explicit --model");
+        match cli.command {
+            Some(Commands::Classify(args)) => assert_eq!(args.model, "SpeciesNet-Crop"),
+            _ => panic!("expected classify subcommand"),
+        }
+    }
+
+    #[test]
+    fn detect_fallback_constant_is_a_current_catalog_id() {
+        let catalog = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../scripts/catalog.toml"
+        ))
+        .expect("read scripts/catalog.toml");
+        let needle = format!("id = \"{DEFAULT_DETECTOR_MODEL_ID}\"");
+        assert!(
+            catalog.contains(&needle),
+            "detector fallback {DEFAULT_DETECTOR_MODEL_ID} must be a current catalog id"
+        );
     }
 
     fn model_info(id: &str, model_type: ModelType) -> ModelInfo {

@@ -24,6 +24,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # build_all dispatch, no auditwheel escape, docs not overclaiming). Lightweight —
 # does NOT run the Docker build.
 "$SCRIPT_DIR/tests/test_gpu_wheel_build_contract.sh"
+# Guards that retired public model aliases have not resurfaced in the CLI, the
+# nvJPEG dlopen script, or the public user manual (current catalog IDs only).
+"$SCRIPT_DIR/tests/test_catalog_id_contract.sh"
 # Guards ORT auto-discovery (CUDA-runtime compatibility filtering). Runs before
 # ort-env.sh is sourced because it validates the very selection logic that
 # source performs.

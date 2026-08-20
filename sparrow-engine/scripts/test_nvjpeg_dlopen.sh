@@ -10,7 +10,7 @@
 # - SPARROW_ENGINE_PYTHON: Python executable to run (default: python3).
 # - SPARROW_ENGINE_DEVICE: CUDA device string (default: cuda:0).
 # - SPARROW_ENGINE_MODEL_DIR: model directory used by detect-path cells.
-# - SPARROW_ENGINE_TEST_MODEL: detector model id (default: megadetector-v6-yolov10e).
+# - SPARROW_ENGINE_TEST_MODEL: detector model id (default: MDV6-yolov10-e).
 # - SPARROW_ENGINE_TEST_IMAGE: JPEG fixture for T5/T7/T10. If unset, a tiny
 #   embedded JPEG is written under .phase-e-nvjpeg-dlopen/.
 # - SPARROW_ENGINE_NVJPEG_TEST_TMP: runtime scratch root for mock libraries.
@@ -26,7 +26,7 @@ cd "$SPARROW_ENGINE_DIR" || exit 1
 
 PYTHON_BIN="${SPARROW_ENGINE_PYTHON:-python3}"
 DEVICE="${SPARROW_ENGINE_DEVICE:-cuda:0}"
-MODEL_ID="${SPARROW_ENGINE_TEST_MODEL:-megadetector-v6-yolov10e}"
+MODEL_ID="${SPARROW_ENGINE_TEST_MODEL:-MDV6-yolov10-e}"
 RUNTIME_DIR="${SPARROW_ENGINE_NVJPEG_TEST_WORKDIR:-.phase-e-nvjpeg-dlopen}"
 MOCK_ROOT="${SPARROW_ENGINE_NVJPEG_TEST_TMP:-/tmp}"
 mkdir -p "$RUNTIME_DIR"
@@ -42,7 +42,7 @@ from pathlib import Path
 
 DEVICE = os.environ.get("SPARROW_ENGINE_DEVICE", "cuda:0")
 MODEL_DIR = os.environ.get("SPARROW_ENGINE_MODEL_DIR", str(Path.home() / ".sparrow-engine" / "models"))
-MODEL_ID = os.environ.get("SPARROW_ENGINE_TEST_MODEL", "megadetector-v6-yolov10e")
+MODEL_ID = os.environ.get("SPARROW_ENGINE_TEST_MODEL", "MDV6-yolov10-e")
 
 
 def message(exc: BaseException) -> str:

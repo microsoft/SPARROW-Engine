@@ -663,7 +663,7 @@ sparrow-engine [GLOBAL FLAGS] <COMMAND> [COMMAND FLAGS] [INPUT...]
 
 Global flags:                                                                
   --device {auto,cpu,cuda:N}    default: auto                                
-  --model-dir <PATH>            default: SPARROW_ENGINE_MODEL_DIR or ./models
+  --model-dir <PATH>            default: SPARROW_ENGINE_MODEL_DIR or ~/.sparrow-engine/models
   --quiet                       suppress progress bars                       
 
 Commands:                                                                    
@@ -692,7 +692,7 @@ Commands:
 
 ```
 $ spe detect IMG1.jpg IMG2.jpg \                          
-    --model megadetector-v6-yolov10e \                    
+    --model MDV6-yolov10-e \
     --threshold 0.2 \                                     
     --export-format coco --export-output detections.json \
     --visualize --output-dir viz_out/ --show-labels       
@@ -704,7 +704,7 @@ $ spe detect IMG1.jpg IMG2.jpg \
 
 | Flag | What |
 |------|------|
-| `--model <id>` | Pick a detector (auto-fallback to default if omitted). |
+| `--model <id>` | Optional. If omitted, resolve the engine's catalog/env default detector, else fall back to `MDV6-yolov10-e`. |
 | `--threshold <f>` | Drop detections below this confidence. |
 | `--max-detections <n>` | Cap per image. |
 | `--print` | Stream JSON/CSV per file to stdout (default off). |
@@ -725,7 +725,7 @@ $ spe detect IMG1.jpg IMG2.jpg \
 
 ```
 $ spe classify crops/*.jpg \ 
-    --model speciesnet-crop \
+    --model SpeciesNet-Crop \
     --top-k 3 \              
     --print --format json    
 ```
@@ -757,7 +757,7 @@ $ spe detect-audio recordings/*.wav \
 
 | Flag | What |
 |------|------|
-| `--model <id>` | Audio model. Catalog includes `md-audiobirds-v1` (default binary bird detector), `perch-v2` (14795-class bird species classifier), `orca-detector-dclde2026-v1` (DCLDE 2026 Stage 1 orca screener), `orca-ecotype-dclde2026-v1` (DCLDE 2026 Stage 2 ecotype classifier). |
+| `--model <id>` | Audio model. Catalog includes `md-audiobirds-v1` (default binary bird detector), `perch-v2` (14795-class bird species classifier), `orca-detector-dclde2026-v5` (DCLDE 2026 Stage 1 orca screener), `orca-ecotype-dclde2026-v1` (DCLDE 2026 Stage 2 ecotype classifier). |
 | `--threshold <f>` | Per-window sigmoid threshold (manifest default 0.9). |
 | `--raw-segments` | Emit pre-merge per-window rows. |
 | `--visualize --output-dir <dir>` | Render spectrogram + confidence heatmap PNGs. |
@@ -772,8 +772,8 @@ $ spe detect-audio recordings/*.wav \
 
 ```
 $ spe pipeline IMG.jpg \                            
-    --detector megadetector-v6-yolov10e \           
-    --classifier speciesnet-crop \                  
+    --detector MDV6-yolov10-e \
+    --classifier SpeciesNet-Crop \
     --threshold 0.2 --top-k 3 \                     
     --export-format megadet --export-output out.json
 ```
@@ -1001,7 +1001,7 @@ paths = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in exts)
 # `recursive=True`). Returns one DetectResult per input image, in input order.
 results = sparrow_engine.detect(
     paths,
-    model="megadetector-v6-yolov10e",
+    model="MDV6-yolov10-e",
     threshold=0.20,
     max_detections=100,
 )
@@ -1028,7 +1028,7 @@ for path, r in items[:3]:
 
 | Parameter | Default | Typical use |
 |---|---|---|
-| `model` | (required) | Model ID from the local registry. For MDv6: `"megadetector-v6-yolov10e"`. |
+| `model` | (required) | Model ID from the local registry. For MDv6: `"MDV6-yolov10-e"`. |
 | `threshold` | `None` (manifest default = 0.20 for MDv6) | Raise to 0.30+ to cut false positives; lower to recall more borderline boxes. |
 | `max_detections` | manifest default (300 for MDv6) | Hard cap per image after NMS. |
 | `recursive` | `False` | Pass a directory + `True` to walk subfolders. |
@@ -1040,7 +1040,7 @@ for path, r in items[:3]:
 
 **First-run note**
 
-If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/models/megadetector-v6-yolov10e/` next to its TOML manifest. The Python wheel does not auto-download models; manifests are bundled but ONNX weights must be staged manually (see §2.3 "What lands on disk" and `sparrow-engine/tools/examples/megadetector-v6.toml`).
+If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/models/MDV6-yolov10-e/` next to its TOML manifest. The Python wheel does not auto-download models; manifests are bundled but ONNX weights must be staged manually (see §2.3 "What lands on disk" and `sparrow-engine/tools/examples/megadetector-v6.toml`).
 
 **Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py:327` (`detect`), `:509` (`visualize`), `:566` (`export`); `sparrow-engine/sparrow-engine-python/python/sparrow_engine/_core.pyi:21-28` (`DetectResult`); `sparrow-engine/sparrow-engine-python/src/lib.rs:1557` (export format whitelist); `sparrow-engine/tools/examples/megadetector-v6.toml` (model + threshold defaults).
 
@@ -1219,7 +1219,7 @@ sparrow-engine-client (Python package — separate from sparrow-engine)
   │                                                       │                                                             
   │ c = SparrowEngineClient("http://server:8080")         │                                                             
   │ result = c.detect(open("img.jpg","rb"),               │                                                             
-  │                   model="megadetector-v6-yolov10e")   │                                                             
+  │                   model="MDV6-yolov10-e")             │
   └───────────────────────────────────────────────────────┘                                                             
                               │                                                                                         
                               v                                                                                         
@@ -1363,15 +1363,15 @@ libsparrow_engine.so (CPU flavor):                        libsparrow_engine.so (
 
 ```
 $MODEL_DIR/                       (SPARROW_ENGINE_MODEL_DIR)                           
-├── megadetector-v6-yolov10e/                                                          
+├── MDV6-yolov10-e/
 │   ├── manifest.toml             (canonical schema)                                   
 │   ├── *.onnx                    (model file)                                         
 │   ├── *_fp16.onnx               (optional FP16 file)                                 
 │   └── *_labels.txt              (class names)                                        
-├── speciesnet-crop/                                                                   
+├── SpeciesNet-Crop/
 │   ├── manifest.toml                                                                  
 │   ├── ...                                                                            
-├── megadet-speciesnet/                                                                
+├── mdv6-speciesnet/
 │   └── pipeline.toml             (named pipeline alias)                               
 └── ...                                                                                
 
@@ -1391,7 +1391,7 @@ Mismatch → directory skipped + tracing::warn.
 
 ```toml
 [model]                                                                                                  
-id              = "megadetector-v6-yolov10e"     # MUST match the parent directory name                  
+id              = "MDV6-yolov10-e"               # MUST match the parent directory name
 format          = "onnx"                                                                                 
 file            = "model.onnx"                                                                           
 file_fp16       = "model_fp16.onnx"               # optional                                             
@@ -1455,19 +1455,16 @@ empty    = 0.48
 
 | Model ID | Type | Resolution | Default precision |
 |----------|------|------------|-------------------|
-| `megadetector-v6-yolov10e` | Detector (animals/vehicles/people) | 1280×1280 | FP16 |
-| `megadetector-v6-yolov10e-prov` | MDv6 + provenance fields | 1280×1280 | FP16 |
+| `MDV6-yolov10-e` | Detector (animals/vehicles/people) | 1280×1280 | FP16 |
 | `deepfaune-yolo8s` | Detector | 1280×1280 | FP32 (HELD; FP16 audit fails on a borderline image — see Gotchas §13.5) |
-| `herdnet-general-2022` | Overhead-detector (dual heatmap) | tiled 512×512 | FP16 |
-| `owl-t` | Overhead-detector (single heatmap) | tiled 512×512 | FP16 |
-| `speciesnet-crop` | Classifier | 480×480 | FP32 |
-| `amazon-cameratrap-v2` | Detector | 1280×1280 | FP16 |
+| `HerdNet_General_Dataset_2022` | Overhead-detector (dual heatmap) | tiled 512×512 | FP16 |
+| `OWL` | Overhead-detector (single heatmap) | tiled 512×512 | FP16 |
+| `SpeciesNet-Crop` | Classifier | 480×480 | FP32 |
+| `AI4G-Amazon-V2` | Detector | 1280×1280 | FP16 |
 | `md-audiobirds-v1` | Audio binary detector | 1.0s window, 0.3s stride | FP16 |
-| `orca-detector-dclde2026-v1` | Orca audio detector (Stage 1, DCLDE 2026) | 3.0s window @ 24 kHz, 1.5s stride, `fill_highfreq` | FP32 |
+| `orca-detector-dclde2026-v5` | Orca audio detector (Stage 1, DCLDE 2026) | 3.0s window @ 24 kHz, 1.5s stride, `fill_highfreq` | FP32 |
 | `orca-ecotype-dclde2026-v1` | Orca ecotype audio classifier (Stage 2, DCLDE 2026) | 3.0s window @ 24 kHz raw audio (in-graph mel + fill_highfreq) | FP32 |
-| `megadet-speciesnet` | **Pipeline alias** (MDv6 → SpeciesNet) | n/a | n/a |
 | `MDV5a` | Legacy YOLOv5 detector | 1280×1280 | FP32 |
-| `SpeciesNet-Crop` | (re-export pending: NHWC → NCHW) | 480×480 | FP32 |
 
 **Why these defaults**: each is the result of the Phase 3.8 per-model FP16 audit (`docs/research/phase3.8/step1/fp16_audit.md`, `step2/fp16_audit.md`). DeepFaune stays on FP32 pending P3.8-7 closure.
 
@@ -1479,22 +1476,22 @@ empty    = 0.48
 
 ```toml
 [pipeline]                        
-id = "megadet-speciesnet"         
+id = "mdv6-speciesnet"
 
 [[pipeline.steps]]                
 role  = "detector"                
-model = "megadetector-v6-yolov10e"
+model = "MDV6-yolov10-e"
 
 [[pipeline.steps]]                
 role  = "classifier"              
-model = "speciesnet-crop"         
+model = "SpeciesNet-Crop"
 ```
 
 **Why**: named aliases let consumers say "run pipeline X" instead of specifying both models per request.
 **What**: a tiny TOML mapping an alias ID to a sequence of `(role, model_id)` steps.
 **How**: discovered at boot like model manifests; sparrow-engine validates compatibility (detector before classifier, no audio-after-image, etc.) via `sparrow-engine-core/src/pipeline_compat.rs`. Phase 4.2 also lets you `POST /v1/pipelines` to register an alias at runtime without writing a file.
 
-**Cite**: `test_files/sparrow_engine_models/megadet-speciesnet/pipeline.toml`; `docs/design/phase4.2-cold-start/pipeline_compatibility.md`.
+**Cite**: `docs/design/phase4.2-cold-start/pipeline_compatibility.md`.
 
 ---
 
@@ -1706,7 +1703,7 @@ sparrow-engine (engine):                sparrow-data (deferred sibling):
 ### 12.2 `SPARROW_ENGINE_PRELOAD` semantics
 
 ```
-SPARROW_ENGINE_PRELOAD=megadetector-v6-yolov10e,md-audiobirds-v1 sparrow-engine-server
+SPARROW_ENGINE_PRELOAD=MDV6-yolov10-e,md-audiobirds-v1 sparrow-engine-server
                         │                                                             
                         v                                                             
    Boot: load both models eagerly (parallel, blocking until both succeed).            
@@ -1727,8 +1724,8 @@ POST /v1/pipelines
 {                                                             
   "id": "my-alias",                                           
   "steps": [                                                  
-    {"role": "detector", "model": "megadetector-v6-yolov10e"},
-    {"role": "classifier", "model": "speciesnet-crop"}        
+    {"role": "detector", "model": "MDV6-yolov10-e"},
+    {"role": "classifier", "model": "SpeciesNet-Crop"}
   ]                                                           
 }                                                             
 ```
@@ -1750,10 +1747,10 @@ POST /v1/pipelines
 
 ```json
 [                                                                                                            
-  {"model_id": "megadetector-v6-yolov10e", "model_type": "detector",   "framework": "onnx", "loaded": true}, 
-  {"model_id": "speciesnet-crop",          "model_type": "classifier", "framework": "onnx", "loaded": false},
-  {"model_id": "md-audiobirds-v1",         "model_type": "audio",      "framework": "onnx", "loaded": false},
-  {"model_id": "megadet-speciesnet",       "model_type": "pipeline",   "framework": "alias", "loaded": false}
+  {"model_id": "MDV6-yolov10-e",   "model_type": "detector",   "framework": "onnx",  "loaded": true},
+  {"model_id": "SpeciesNet-Crop",  "model_type": "classifier", "framework": "onnx",  "loaded": false},
+  {"model_id": "md-audiobirds-v1", "model_type": "audio",      "framework": "onnx",  "loaded": false},
+  {"model_id": "mdv6-speciesnet",  "model_type": "pipeline",   "framework": "alias", "loaded": false}
 ]                                                                                                            
 ```
 
