@@ -927,6 +927,70 @@ fn print_trt_warmup_failure(
     }
 }
 
+/// Per-model decision for a `--trt-warm-up` sweep, given whether the `all`
+/// wildcard was used and the model's resolved exit code. Pure (no `process::exit`,
+/// no engine) so the wildcard action decision is unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrtWarmupAction {
+    /// Warm-up succeeded (exit 0) — report ready and continue.
+    Ready,
+    /// `all` wildcard, exit 6 (not-eligible / disabled) — skip and continue.
+    Skip,
+    /// `all` wildcard, model-local error (exit 4 build/state, exit 5 not-found) —
+    /// print the failure, remember it as a deferred failure, and continue the
+    /// best-effort sweep across the rest of the catalog.
+    Defer,
+    /// Explicitly-named ID with any nonzero code, OR `all` wildcard with exit 3
+    /// (global hardware/runtime/flavor rejection) — print the failure and exit
+    /// immediately. Iterating the rest of the catalog after a global rejection is
+    /// pointless and must not be turned into a success.
+    Abort,
+}
+
+/// Classify one model's `--trt-warm-up` result. `all` is best-effort across the
+/// whole catalog; explicitly-named IDs are strict. See [`TrtWarmupAction`].
+fn trt_warmup_action(all_wildcard: bool, code: i32) -> TrtWarmupAction {
+    if code == 0 {
+        return TrtWarmupAction::Ready;
+    }
+    if !all_wildcard {
+        // Explicitly-named IDs stay strict: any nonzero code (3/4/5/6) exits.
+        return TrtWarmupAction::Abort;
+    }
+    match code {
+        // Not TRT-eligible / disabled — skipped, as before.
+        6 => TrtWarmupAction::Skip,
+        // Global hardware / runtime / flavor rejection — stays fatal immediately.
+        3 => TrtWarmupAction::Abort,
+        // Model-local build (4) or missing-manifest (5) error — deferred so the
+        // sweep still attempts every remaining catalog model.
+        _ => TrtWarmupAction::Defer,
+    }
+}
+
+/// Resolve the final process exit code for a `--trt-warm-up` run from the ordered
+/// per-model exit codes. Pure mirror of [`run_trt_warm_up`]'s control flow, so the
+/// wildcard aggregation decision is unit-testable without `process::exit`:
+/// - `Abort` short-circuits and returns that code (explicit-ID failure, or `all`
+///   exit 3), so no later model is even considered.
+/// - `Defer` remembers the FIRST deferred code and keeps sweeping.
+/// - `Ready` / `Skip` contribute nothing.
+///
+/// `None` means "no failure — continue into the requested subcommand with exit 0".
+fn resolve_trt_warmup_exit(all_wildcard: bool, codes: &[i32]) -> Option<i32> {
+    let mut first_deferred: Option<i32> = None;
+    for &code in codes {
+        match trt_warmup_action(all_wildcard, code) {
+            TrtWarmupAction::Ready | TrtWarmupAction::Skip => {}
+            TrtWarmupAction::Defer => {
+                first_deferred.get_or_insert(code);
+            }
+            TrtWarmupAction::Abort => return Some(code),
+        }
+    }
+    first_deferred
+}
+
 fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
     let (ids, all_wildcard) = match parse_trt_warmup_ids(spec, engine) {
         Ok(ids) => ids,
@@ -936,23 +1000,47 @@ fn run_trt_warm_up(engine: &Engine, spec: &str, quiet: bool) {
         }
     };
 
+    // Warm each model, doing the per-model side effects (spinner + status line),
+    // and collect the ordered exit codes. `Abort` (explicit-ID failure, or an
+    // `all`-wildcard global rejection, exit 3) stops the sweep immediately; a
+    // deferred model-local failure (exit 4/5 under `all`) keeps sweeping so every
+    // remaining catalog model is still attempted. The final exit decision is
+    // delegated to `resolve_trt_warmup_exit`, the unit-tested pure aggregation.
+    let mut codes: Vec<i32> = Vec::new();
+    let mut aborted = false;
+
     for id in ids {
         let bar = make_trt_warmup_spinner(&id, quiet);
         let result = engine.trt_warmup_blocking(&id);
         bar.finish_and_clear();
         let code = trt_warmup_result_exit_code(&result);
-        if code == 0 {
-            eprintln!("{id}: trt_ready");
-            continue;
+        codes.push(code);
+        match trt_warmup_action(all_wildcard, code) {
+            TrtWarmupAction::Ready => eprintln!("{id}: trt_ready"),
+            TrtWarmupAction::Skip => eprintln!("{id}: skipped (not TRT-eligible)"),
+            TrtWarmupAction::Defer => {
+                print_trt_warmup_failure(&id, &result, code);
+                eprintln!("{id}: deferred (exit {code}); continuing best-effort 'all' warm-up");
+            }
+            TrtWarmupAction::Abort => {
+                print_trt_warmup_failure(&id, &result, code);
+                aborted = true;
+                break;
+            }
         }
-        // `--trt-warm-up all` is best-effort across the whole catalog: a model that
-        // simply doesn't opt into TensorRT (exit 6 = not-eligible / disabled) is
-        // skipped, not fatal. Explicitly-named IDs stay strict (any failure exits).
-        if all_wildcard && code == 6 {
-            eprintln!("{id}: skipped (not TRT-eligible)");
-            continue;
+    }
+
+    // Single source of truth for the final exit code. `None` => every model was
+    // ready or skipped, so fall through and let the requested subcommand run
+    // (exit 0). `Some(code)` => surface the failure: an immediate abort already
+    // printed its failure above, while a deferred model-local failure gets a
+    // concise end-of-sweep summary so the nonzero exit is never success-shaped.
+    if let Some(code) = resolve_trt_warmup_exit(all_wildcard, &codes) {
+        if !aborted {
+            eprintln!(
+                "trt-warm-up: catalog sweep complete; exiting {code} (first deferred failure)"
+            );
         }
-        print_trt_warmup_failure(&id, &result, code);
         std::process::exit(code);
     }
 }
@@ -2957,6 +3045,56 @@ mod tests {
         for (result, expected_code) in cases {
             assert_eq!(trt_warmup_result_exit_code(&result), expected_code);
         }
+    }
+
+    #[test]
+    fn trt_warmup_action_explicit_ids_are_strict() {
+        // Explicitly-named IDs: success continues, ANY nonzero code (3/4/5/6)
+        // exits immediately — no deferral, unchanged from prior behavior.
+        assert_eq!(trt_warmup_action(false, 0), TrtWarmupAction::Ready);
+        for code in [3, 4, 5, 6] {
+            assert_eq!(
+                trt_warmup_action(false, code),
+                TrtWarmupAction::Abort,
+                "explicit id code {code} must abort"
+            );
+        }
+    }
+
+    #[test]
+    fn trt_warmup_action_wildcard_skips_defers_and_aborts_by_class() {
+        // `all` wildcard: 0 ready, 6 skip, 3 global-abort, 4/5 model-local defer.
+        assert_eq!(trt_warmup_action(true, 0), TrtWarmupAction::Ready);
+        assert_eq!(trt_warmup_action(true, 6), TrtWarmupAction::Skip);
+        assert_eq!(trt_warmup_action(true, 3), TrtWarmupAction::Abort);
+        assert_eq!(trt_warmup_action(true, 4), TrtWarmupAction::Defer);
+        assert_eq!(trt_warmup_action(true, 5), TrtWarmupAction::Defer);
+    }
+
+    #[test]
+    fn resolve_trt_warmup_exit_wildcard_defers_first_and_completes_sweep() {
+        // Reproduced scenario: OWL ready (0), buzzdetect trt_error (4), then more
+        // models (a later not-found 5, a not-eligible 6). The whole catalog is
+        // swept; the FIRST deferred model-local code (4) is returned, never 0.
+        assert_eq!(resolve_trt_warmup_exit(true, &[0, 4, 0, 5, 6]), Some(4));
+        // First deferred wins even when the earlier failure is a not-found (5).
+        assert_eq!(resolve_trt_warmup_exit(true, &[0, 5, 4]), Some(5));
+        // No failures at all -> continue into the requested subcommand (exit 0).
+        assert_eq!(resolve_trt_warmup_exit(true, &[0, 0, 6]), None);
+        // Global rejection (3) short-circuits: the later 4 is never considered.
+        assert_eq!(resolve_trt_warmup_exit(true, &[0, 3, 4]), Some(3));
+        // Empty sweep -> nothing to surface.
+        assert_eq!(resolve_trt_warmup_exit(true, &[]), None);
+    }
+
+    #[test]
+    fn resolve_trt_warmup_exit_explicit_ids_abort_on_first_nonzero() {
+        // Explicit IDs: the first nonzero code aborts; later codes are irrelevant.
+        assert_eq!(resolve_trt_warmup_exit(false, &[0, 4, 5]), Some(4));
+        assert_eq!(resolve_trt_warmup_exit(false, &[0, 6]), Some(6));
+        assert_eq!(resolve_trt_warmup_exit(false, &[3, 4]), Some(3));
+        // All-ready explicit run continues (exit 0).
+        assert_eq!(resolve_trt_warmup_exit(false, &[0, 0]), None);
     }
 
     #[test]
