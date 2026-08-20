@@ -199,7 +199,7 @@ async fn run_server() {
             std::process::exit(1);
         }
     };
-    spawn_trt_warmups(&state, trt_warmup_ids);
+    let trt_warmup_handle = spawn_trt_warmups(&state, trt_warmup_ids, &shutdown_rx);
 
     let drain_timeout = Duration::from_secs(config.drain_timeout_secs);
 
@@ -224,6 +224,16 @@ async fn run_server() {
             tokio::time::sleep(drain_timeout).await;
             warn!("drain timeout exceeded, forcing shutdown");
         } => {}
+    }
+
+    // The boot warm-up queue observed the shutdown signal and will not start
+    // another model. Wait for the one build that may be in flight to finish —
+    // bounded by a SINGLE build, not the whole catalog (queue-013). Individual
+    // async warm-up threads (HTTP/Python/CLI) are joined separately below.
+    if let Some(handle) = trt_warmup_handle {
+        if let Err(e) = handle.await {
+            warn!(error = %e, "TensorRT boot warm-up queue task failed");
+        }
     }
 
     let engine = state.engine.clone();
@@ -295,24 +305,86 @@ fn trt_warmup_ids_from_env(raw: Option<&str>, catalog: &Catalog) -> Result<Vec<S
     Ok(ids.into_iter().collect())
 }
 
-fn spawn_trt_warmups(state: &AppState, ids: Vec<String>) {
+/// Drive the server-boot TensorRT warm-up queue serially. Processes `ids` in
+/// order, calling `warm_one` for each and continuing to the next id after a
+/// per-model error. `should_stop` is checked BEFORE each id; once it returns
+/// true the queue stops WITHOUT starting the next model — this is how boot
+/// warm-up honors the shutdown signal (the single already-active build is
+/// allowed to finish; no second cancellation mechanism, no thread killing).
+/// Returns the ids actually attempted, in order.
+///
+/// Extracted as a free function so the ordering / continue-on-error /
+/// stop-before-next-on-shutdown behavior is unit-testable without a real engine
+/// (queue-013).
+fn drive_trt_warmup_queue<S, W, T, E>(
+    ids: Vec<String>,
+    mut should_stop: S,
+    mut warm_one: W,
+) -> Vec<String>
+where
+    S: FnMut() -> bool,
+    W: FnMut(&str) -> Result<T, E>,
+    T: std::fmt::Debug,
+    E: std::fmt::Display,
+{
+    let total = ids.len();
+    let mut attempted: Vec<String> = Vec::new();
+    for (idx, id) in ids.into_iter().enumerate() {
+        if should_stop() {
+            info!(
+                next_model = %id,
+                remaining = total - idx,
+                "TensorRT boot warm-up queue stopping before next model (shutdown signal)"
+            );
+            break;
+        }
+        info!(model_id = %id, "TensorRT boot warm-up starting");
+        attempted.push(id.clone());
+        match warm_one(&id) {
+            Ok(result) => {
+                info!(model_id = %id, result = ?result, "TensorRT boot warm-up finished")
+            }
+            Err(e) => warn!(model_id = %id, error = %e, "TensorRT boot warm-up failed"),
+        }
+    }
+    attempted
+}
+
+/// Schedule server-boot TensorRT warm-ups as ONE background blocking worker that
+/// processes the ids serially via `trt_warmup_blocking` — each build runs to
+/// completion behind the engine's single build gate before the next starts —
+/// instead of spawning one engine thread per catalog model (which produced the
+/// queue-013 mass false-timeout and a catalog-sized shutdown tail). The worker
+/// is shutdown-aware via the existing `watch` signal. Returns its join handle
+/// (when there is at least one id) so shutdown can wait for the one in-flight
+/// build to finish — bounded by a single build, not the whole catalog.
+///
+/// Individual HTTP / Python / CLI asynchronous warm-up (`engine.trt_warmup`) is
+/// unchanged — this touches only the boot path.
+fn spawn_trt_warmups(
+    state: &AppState,
+    ids: Vec<String>,
+    shutdown_rx: &tokio::sync::watch::Receiver<bool>,
+) -> Option<tokio::task::JoinHandle<()>> {
     if ids.is_empty() {
-        return;
+        return None;
     }
     let engine = state.engine.clone();
-    tokio::spawn(async move {
-        for model_id in ids {
-            let engine = engine.clone();
-            let id_for_log = model_id.clone();
-            match tokio::task::spawn_blocking(move || engine.trt_warmup(&model_id)).await {
-                Ok(Ok(_)) => info!(model_id = %id_for_log, "started TensorRT warm-up"),
-                Ok(Err(e)) => {
-                    warn!(model_id = %id_for_log, error = %e, "TensorRT warm-up was not started")
-                }
-                Err(e) => warn!(model_id = %id_for_log, error = %e, "TensorRT warm-up task failed"),
-            }
-        }
-    });
+    let shutdown_rx = shutdown_rx.clone();
+    let total = ids.len();
+    info!(models = total, "scheduling TensorRT boot warm-up (serial queue)");
+    Some(tokio::task::spawn_blocking(move || {
+        let attempted = drive_trt_warmup_queue(
+            ids,
+            || *shutdown_rx.borrow(),
+            |id| engine.trt_warmup_blocking(id),
+        );
+        info!(
+            attempted = attempted.len(),
+            total = total,
+            "TensorRT boot warm-up queue finished"
+        );
+    }))
 }
 
 fn init_tracing(config: &Config) {
@@ -399,5 +471,77 @@ fn run_healthcheck(config: &Config) -> i32 {
             }
         }
         Err(_) => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drive_trt_warmup_queue;
+    use std::cell::{Cell, RefCell};
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    // queue-013: boot queue processes ids in order and CONTINUES after a
+    // per-model error (a single model failing to build must not abort the rest).
+    #[test]
+    fn boot_queue_runs_in_order_and_continues_after_error() {
+        let processed = RefCell::new(Vec::new());
+        let attempted = drive_trt_warmup_queue(
+            ids(&["a", "b", "c"]),
+            || false,
+            |id| {
+                processed.borrow_mut().push(id.to_string());
+                if id == "b" {
+                    Err("model-local build error".to_string())
+                } else {
+                    Ok(format!("trt_ready:{id}"))
+                }
+            },
+        );
+        assert_eq!(attempted, ids(&["a", "b", "c"]));
+        assert_eq!(*processed.borrow(), ids(&["a", "b", "c"]));
+    }
+
+    // queue-013: after the shutdown signal is observed, the queue stops BEFORE
+    // starting the next model (the one already-active build is out of scope of
+    // this helper — it runs inside `warm_one`).
+    #[test]
+    fn boot_queue_stops_before_next_model_on_shutdown() {
+        // should_stop returns false for the first check (model "a" runs), then
+        // true — so "b"/"c"/"d" must never start.
+        let checks = Cell::new(0u32);
+        let processed = RefCell::new(Vec::new());
+        let attempted = drive_trt_warmup_queue(
+            ids(&["a", "b", "c", "d"]),
+            || {
+                let n = checks.get();
+                checks.set(n + 1);
+                n >= 1
+            },
+            |id| {
+                processed.borrow_mut().push(id.to_string());
+                Ok::<_, String>(format!("trt_ready:{id}"))
+            },
+        );
+        assert_eq!(attempted, ids(&["a"]));
+        assert_eq!(*processed.borrow(), ids(&["a"]));
+    }
+
+    // queue-013: if shutdown is already set when the queue starts, no model runs.
+    #[test]
+    fn boot_queue_starts_no_model_when_already_shutting_down() {
+        let processed = RefCell::new(Vec::new());
+        let attempted = drive_trt_warmup_queue(
+            ids(&["a", "b"]),
+            || true,
+            |id: &str| {
+                processed.borrow_mut().push(id.to_string());
+                Ok::<_, String>(format!("trt_ready:{id}"))
+            },
+        );
+        assert!(attempted.is_empty());
+        assert!(processed.borrow().is_empty());
     }
 }

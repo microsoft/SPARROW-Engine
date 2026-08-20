@@ -452,6 +452,20 @@ fn recover_trt_build_gate(build_gate: &Mutex<()>) -> MutexGuard<'_, ()> {
     }
 }
 
+/// Acquire the process-wide TensorRT build gate and THEN arm the active-build
+/// timeout clock for `warm`, immediately before the caller runs the ORT build.
+/// Splitting the gate wait from the clock start is the queue-013 fix: a model
+/// waiting behind the gate is `TrtWarming` (queued) with a disarmed clock, so
+/// that queue time never counts toward the 300s active-build timeout.
+fn acquire_build_gate_and_arm<'a>(
+    build_gate: &'a Mutex<()>,
+    warm: &WarmSlot,
+) -> MutexGuard<'a, ()> {
+    let gate = recover_trt_build_gate(build_gate);
+    warm.mark_build_started();
+    gate
+}
+
 #[cfg(test)]
 static TRT_VALIDATION_TEST_INJECTION: AtomicU8 = AtomicU8::new(0);
 
@@ -462,7 +476,10 @@ fn run_trt_warmup_build(
     model_id: String,
     expected: Arc<LoadedModel>,
 ) {
-    let _gate = recover_trt_build_gate(&build_gate);
+    // queue-013: acquire the build gate, THEN arm the active-build timeout
+    // clock, so time spent queued behind the gate is excluded from the 300s
+    // active-build budget. See `acquire_build_gate_and_arm`.
+    let _gate = acquire_build_gate_and_arm(&build_gate, &expected.warm);
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<LoadedModelInner> {
         let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
         // Force the effective TRT config so a section-less ONNX manifest (which
@@ -1707,6 +1724,23 @@ mod tests {
 
         assert!(gate.is_poisoned());
         let _guard = recover_trt_build_gate(&gate);
+    }
+
+    // queue-013: the active-build timeout clock must be armed only AFTER the
+    // build gate is acquired, so time spent queued behind the gate is excluded
+    // from the 300s active-build budget. Guards the `run_trt_warmup_build`
+    // wiring (a removed `mark_build_started` would silently disable the timeout
+    // for genuinely hung builds).
+    #[test]
+    fn acquire_build_gate_and_arm_arms_clock_after_gate() {
+        let gate = Mutex::new(());
+        let warm = WarmSlot::new();
+        assert_eq!(warm.begin_warm(), BeginWarm::Owner);
+        // Queued behind the gate: clock disarmed.
+        assert!(!warm.build_clock_armed_for_test());
+        let _held = acquire_build_gate_and_arm(&gate, &warm);
+        // Gate acquired → clock armed for the active build.
+        assert!(warm.build_clock_armed_for_test());
     }
 
     fn mel_classifier_fixture_dir() -> PathBuf {

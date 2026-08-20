@@ -64,7 +64,12 @@ impl WarmSlot {
             Ordering::Acquire,
         ) {
             Ok(_) => {
-                self.started_at_ms.store(now_millis(), Ordering::Release);
+                // Mark the slot QUEUED, not building: the 300s active-build
+                // timeout clock stays disarmed (`started_at_ms == 0`) until the
+                // worker acquires `trt_build_gate` and calls `mark_build_started`.
+                // Time spent waiting behind the gate must NOT count toward the
+                // timeout (queue-013).
+                self.started_at_ms.store(0, Ordering::Release);
                 return BeginWarm::Owner;
             }
             Err(value) => match Phase::from_u8(value) {
@@ -81,7 +86,11 @@ impl WarmSlot {
             Ordering::Acquire,
         ) {
             Ok(_) => {
-                self.started_at_ms.store(now_millis(), Ordering::Release);
+                // Retry after a prior error re-queues the slot. Reset the clock
+                // to 0 (queued) so a previously timed-out build does not leave a
+                // stale `started_at_ms` that would instantly re-time-out before
+                // the retry's build actually starts (queue-013).
+                self.started_at_ms.store(0, Ordering::Release);
                 if let Ok(mut error) = self.error.lock() {
                     *error = None;
                 }
@@ -94,6 +103,17 @@ impl WarmSlot {
                 Phase::Error => BeginWarm::Coalesced,
             },
         }
+    }
+
+    /// Arm the active-build timeout clock. Called by the warm-up worker AFTER it
+    /// acquires the process-wide `trt_build_gate`, immediately before the actual
+    /// ORT/TensorRT build. Only the `BeginWarm::Owner` worker reaches this, and
+    /// no timeout can fire before it (the clock is disarmed while queued), so the
+    /// slot is guaranteed to still be `Warming` here. This is the fix for the
+    /// queue-013 false timeout: time spent waiting behind the gate is excluded
+    /// from the 300s active-build budget.
+    pub(crate) fn mark_build_started(&self) {
+        self.started_at_ms.store(now_millis(), Ordering::Release);
     }
 
     pub(crate) fn mark_ready(&self) {
@@ -148,6 +168,14 @@ impl WarmSlot {
     #[cfg(test)]
     fn set_started_at_for_test(&self, started_at_ms: u64) {
         self.started_at_ms.store(started_at_ms, Ordering::Release);
+    }
+
+    /// Test-only: whether the active-build timeout clock is armed (a build has
+    /// started via `mark_build_started`). Used by the GPU engine wiring test to
+    /// prove the clock is armed only AFTER the build gate is acquired.
+    #[cfg(test)]
+    pub(crate) fn build_clock_armed_for_test(&self) -> bool {
+        self.started_at_ms.load(Ordering::Acquire) != 0
     }
 
     pub(crate) fn view(&self) -> TrtStateView {
@@ -234,5 +262,64 @@ mod tests {
         let ready = slot.view();
         assert_eq!(ready.state, TrtState::TrtReady);
         assert_eq!(ready.detail, None);
+    }
+
+    /// queue-013: a slot that has begun warming but is still QUEUED behind the
+    /// build gate (build not yet started) must never consume the active-build
+    /// timeout, no matter how long it waits.
+    #[test]
+    fn warm_slot_queued_does_not_consume_build_timeout() {
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        // While only queued, even a zero-second timeout check is a no-op because
+        // the build clock is disarmed (`started_at_ms == 0`).
+        slot.mark_timed_out_for_test(Duration::from_secs(0));
+        let queued = slot.view();
+        assert_eq!(queued.state, TrtState::TrtWarming);
+        assert_eq!(queued.detail, None);
+    }
+
+    /// queue-013: the active-build clock is armed by `mark_build_started`; the
+    /// SAME zero-second timeout check that is a no-op while queued fires once the
+    /// build has actually started.
+    #[test]
+    fn warm_slot_timeout_pivots_on_build_start() {
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        // Queued: no-op.
+        slot.mark_timed_out_for_test(Duration::from_secs(0));
+        assert_eq!(slot.view().state, TrtState::TrtWarming);
+        // Build started: the clock is armed, so the timeout now applies.
+        slot.mark_build_started();
+        slot.mark_timed_out_for_test(Duration::from_secs(0));
+        assert_eq!(slot.view().state, TrtState::TrtError);
+    }
+
+    /// queue-013: `mark_ready` and the error/retry path both clear the build
+    /// clock so a re-queued slot does not inherit a stale start that would
+    /// instantly re-time-out before its retry build begins.
+    #[test]
+    fn warm_slot_ready_and_error_reset_build_clock() {
+        // mark_ready clears the clock.
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        slot.mark_build_started();
+        slot.mark_ready();
+        assert_eq!(slot.begin_warm(), BeginWarm::AlreadyReady);
+        slot.mark_timed_out_for_test(Duration::from_secs(0));
+        assert_eq!(slot.view().state, TrtState::TrtReady);
+
+        // A timed-out build followed by a retry must re-queue with a fresh
+        // (disarmed) clock, NOT the stale build start left by the timeout.
+        let slot = WarmSlot::new();
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        slot.mark_build_started();
+        slot.set_started_at_for_test(now_millis().saturating_sub(10_000));
+        slot.mark_timed_out_for_test(Duration::from_secs(1));
+        assert_eq!(slot.view().state, TrtState::TrtError);
+        // Retry: Owner again, re-queued behind the gate with a disarmed clock.
+        assert_eq!(slot.begin_warm(), BeginWarm::Owner);
+        slot.mark_timed_out_for_test(Duration::from_secs(0));
+        assert_eq!(slot.view().state, TrtState::TrtWarming);
     }
 }
