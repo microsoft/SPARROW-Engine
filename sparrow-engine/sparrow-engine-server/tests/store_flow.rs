@@ -194,7 +194,14 @@ fn build_log_record_populates_server_fields() {
     assert_eq!(record.schema_version, "1.0");
     assert_eq!(record.media_hash, "abc123");
     assert_eq!(record.model_id, "model-a");
+    // Flavor-strict device contract: the CPU build keeps the constructed
+    // `Device::Cpu` as `cpu`; the GPU build coerces it to `Cuda(0)` (see
+    // `sparrow-engine-gpu` device resolution), whose public token is `cuda:0`.
+    // Assert the exact token each shipped flavor emits.
+    #[cfg(feature = "cpu")]
     assert_eq!(record.device, "cpu");
+    #[cfg(feature = "gpu")]
+    assert_eq!(record.device, "cuda:0");
     assert_eq!(record.inference_ms, 12.5);
     assert!(record.drift_metrics.is_some());
     assert!(uuid::Uuid::parse_str(&record.request_id).is_ok());
