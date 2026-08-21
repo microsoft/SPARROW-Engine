@@ -350,6 +350,46 @@ impl EncoderModel {
             )));
         }
 
+        // Some valid encoder graphs pin their ONNX batch axis to a static 1
+        // (the committed synthetic image-encoder fixture is one). Such a graph
+        // rejects an [N, C, H, W] tensor for N > 1, so preserve the public
+        // batch API by running it once per prepared image instead of
+        // submitting an invalid batch. Dynamic-batch encoders (BioCLIP 2 is
+        // `pixel_values['batch',3,224,224]`) retain the single batched
+        // `Session::run` fast path below. Mirrors the CPU encoder
+        // (`sparrow-engine-cpu/src/embed.rs::infer_prepared`).
+        //
+        // Read the input metadata under the session lock, then RELEASE the lock
+        // before recursing: `std::sync::Mutex` is not reentrant, so the
+        // per-image runs below must not be issued while this guard is held.
+        let static_batch_one = {
+            let guard = self.session.lock().map_err(|_| {
+                SparrowEngineError::Ort("EncoderModel session lock poisoned".into())
+            })?;
+            let input = guard.inputs().first().ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(format!(
+                    "image encoder '{}' has no ONNX inputs",
+                    self.manifest.id
+                ))
+            })?;
+            match input.dtype() {
+                ValueType::Tensor { shape, .. } => leading_dim_is_static_one(shape),
+                other => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "image encoder '{}' requires a tensor input, got {other:?}",
+                        self.manifest.id
+                    )));
+                }
+            }
+        };
+        if static_batch_one && prepared.len() > 1 {
+            let mut results = Vec::with_capacity(prepared.len());
+            for item in prepared {
+                results.extend(self.infer_prepared(ctx, std::slice::from_ref(item), start)?);
+            }
+            return Ok(results);
+        }
+
         // Every image in one run must share the tensor geometry; the geometry
         // comes from the manifest, so a mismatch is a bug rather than input.
         let target_w = prepared[0].target_w;
@@ -606,6 +646,18 @@ fn finalize_embedding_for_model(v: &mut [f32], normalize: bool, model_id: &str) 
     })
 }
 
+/// Whether an encoder's ONNX input pins its leading (batch) dimension to a
+/// static `1`.
+///
+/// A graph with a fixed batch axis of 1 rejects an `[N, C, H, W]` tensor for
+/// `N > 1`, so [`EncoderModel::infer_prepared`] runs such a graph one prepared
+/// image at a time. A dynamic batch axis is reported as `-1` and a larger
+/// static axis as its own value; both keep the single batched `Session::run`.
+/// Mirrors the CPU encoder path (`sparrow-engine-cpu/src/embed.rs`).
+fn leading_dim_is_static_one(dims: &[i64]) -> bool {
+    dims.first().copied() == Some(1)
+}
+
 fn validate_input_dtype_fp32(session: &Session, model_id: &str) -> Result<()> {
     use ort::value::{TensorElementType, ValueType};
     match session.inputs().first().map(|o| o.dtype()) {
@@ -780,5 +832,16 @@ mod batch_output_tests {
             .expect("fixture shape");
         let rows = extract_embedding_rows(out.view(), &manifest(Some(2)), 2, |x| x).expect("split");
         assert!(rows.iter().all(|r| r.len() == 2));
+    }
+
+    /// The static-batch-1 fallback in `infer_prepared` diverts a graph to
+    /// per-image runs only when its leading input dim is a fixed `1`; a dynamic
+    /// (`-1`) or larger static leading dim keeps the batched `Session::run`.
+    #[test]
+    fn static_batch_one_is_detected_only_for_a_fixed_leading_one() {
+        assert!(leading_dim_is_static_one(&[1, 3, 224, 224]));
+        assert!(!leading_dim_is_static_one(&[-1, 3, 224, 224]));
+        assert!(!leading_dim_is_static_one(&[2, 3, 224, 224]));
+        assert!(!leading_dim_is_static_one(&[]));
     }
 }
