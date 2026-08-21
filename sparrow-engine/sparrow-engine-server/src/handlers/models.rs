@@ -246,12 +246,24 @@ mod tests {
         );
         let mut app = crate::router::build_router(state);
 
-        let known = request(&mut app, Method::POST, "/v1/models/known/trt-warmup").await;
-        assert_eq!(known.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body = response_json(known).await;
-        assert_eq!(body["error"]["code"], "TRT_UNSUPPORTED_HARDWARE");
-        assert_eq!(body["error"]["reason"], "cpu_build");
+        // The known-model warm-up returns HTTP 422 `TRT_UNSUPPORTED_HARDWARE` /
+        // `cpu_build` only when the engine is a CPU build. Under the `gpu` feature
+        // the flavor-strict contract coerces `Device::Cpu` to `Cuda(0)` (see
+        // `engine_dispatch` -> active flavor crate), so this request would instead
+        // reach model loading and fail on the incomplete fixture. Compile and run
+        // this arm only where its premise (a CPU-only engine) holds.
+        #[cfg(feature = "cpu")]
+        {
+            let known = request(&mut app, Method::POST, "/v1/models/known/trt-warmup").await;
+            assert_eq!(known.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            let body = response_json(known).await;
+            assert_eq!(body["error"]["code"], "TRT_UNSUPPORTED_HARDWARE");
+            assert_eq!(body["error"]["reason"], "cpu_build");
+        }
 
+        // The unknown-model warm-up is device-independent: the manifest lookup
+        // fails before any device/TRT logic, so it returns 404 `MANIFEST_NOT_FOUND`
+        // in BOTH the CPU and GPU flavors and is asserted unconditionally.
         let unknown = request(&mut app, Method::POST, "/v1/models/missing/trt-warmup").await;
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         let body = response_json(unknown).await;
