@@ -163,12 +163,23 @@ jobs:
             echo "::error::could not extract one or both installer default versions"
             exit 2
           fi
+          # Homebrew formula TEMPLATES track the release version (SHA256 stays a
+          # REPLACE_WITH_* placeholder; see installer/homebrew/README.md § Template
+          # policy). Only the `version "X.Y.Z"` header line is release-tied.
+          brew_cpu_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]+"([^"]+)".*/\1/p' installer/homebrew/sparrow-engine.rb | head -1)"
+          brew_gpu_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]+"([^"]+)".*/\1/p' installer/homebrew/sparrow-engine-gpu.rb | head -1)"
+          if [ -z "$brew_cpu_version" ] || [ -z "$brew_gpu_version" ]; then
+            echo "::error::could not extract version from one or both Homebrew formula templates"
+            exit 2
+          fi
 
           echo "Tag version (stripped 'v'):           ${tag_version:-<n/a — workflow_dispatch>}"
           echo "sparrow-engine-cli Cargo.toml:        $cli_version"
           echo "sparrow-engine-python pyproject.toml: $py_version"
           echo "shell installer default:              $sh_installer_version"
           echo "PowerShell installer default:         $ps_installer_version"
+          echo "Homebrew sparrow-engine.rb:            $brew_cpu_version"
+          echo "Homebrew sparrow-engine-gpu.rb:        $brew_gpu_version"
 
           fail=0
           if [ "$mode" = "tag-push" ]; then
@@ -195,6 +206,11 @@ jobs:
             echo "::error::installer default drift: cli=$cli_version shell=$sh_installer_version PowerShell=$ps_installer_version"
             fail=1
           fi
+          if [ "$cli_version" != "$brew_cpu_version" ] || [ "$cli_version" != "$brew_gpu_version" ]; then
+            echo "::error::Homebrew formula template version drift: cli=$cli_version sparrow-engine.rb=$brew_cpu_version sparrow-engine-gpu.rb=$brew_gpu_version"
+            echo "  -> bump installer/homebrew/{sparrow-engine,sparrow-engine-gpu}.rb 'version' to '$cli_version' (SHA256 fields stay REPLACE_WITH_* placeholders)."
+            fail=1
+          fi
           if [ "$fail" -ne 0 ]; then
             echo ""
             echo "FAIL: version consistency guard (Phase F B-03)."
@@ -203,9 +219,9 @@ jobs:
             exit 1
           fi
           if [ "$mode" = "tag-push" ]; then
-            echo "PASS: tag, package metadata, and installer defaults agree on '$tag_version'."
+            echo "PASS: tag, package metadata, installer defaults, and Homebrew templates agree on '$tag_version'."
           else
-            echo "PASS (workflow_dispatch): package metadata and installer defaults agree on '$cli_version' (tag check skipped — no tag context)."
+            echo "PASS (workflow_dispatch): package metadata, installer defaults, and Homebrew templates agree on '$cli_version' (tag check skipped — no tag context)."
           fi
 
       - name: Compare ORT_VERSION across Dockerfile.cpu and Dockerfile.gpu
@@ -249,6 +265,101 @@ jobs:
             exit 1
           fi
           echo "PASS: Dockerfile.cpu, Dockerfile.gpu, and docker/.ort-version agree on ORT_VERSION=$cpu_ort."
+
+      - name: Compare README + user-manual version pins against release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Doc-pin drift guard (finding P-iface-3). README.md + docs/user-manual.md
+          # carry two kinds of RELEASE-VERSION-TIED pins that must never drift from
+          # the package version:
+          #   (a) piped-install one-liner tags:  .../refs/tags/vX.Y.Z/installer/...
+          #   (b) Docker Hub image tags:         zhongqimiao/sparrow-engine-server[-gpu]:vX.Y.Z
+          # Everything else that looks version-ish is deliberately NOT gated:
+          #   * "≥ vX.Y.Z" model floors, "vX.Y.Z+" feature-availability notes,
+          #   * the literal ":vX.Y.Z" placeholder and ":latest" moving tags,
+          #   * base-image pins (nvidia/cuda:..., debian:bookworm-slim) — infra
+          #     versions, not tied to the sparrow-engine release.
+          # The patterns key on surrounding structure (the tag-URL path, the docker
+          # image path), not line numbers, so a version bump (0.1.28 -> 0.1.29 -> …)
+          # needs no change here.
+          #
+          # Trigger taxonomy matches "check-version-consistency" above:
+          #   tag-push / workflow_dispatch : enforce.
+          #   branch-push / PR             : skip (a docs bump may legitimately lag the
+          #                                  code bump intra-dev; the release run gates it).
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            :
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            :
+          else
+            echo "Non-release trigger (event=${GITHUB_EVENT_NAME}, ref=${GITHUB_REF}). Skipping doc-pin check."
+            exit 0
+          fi
+
+          release_version="$(awk '
+            /^\[package\][[:space:]]*$/       { in_pkg = 1; next }
+            in_pkg && /^\[/                   { in_pkg = 0 }
+            in_pkg && /^version[[:space:]]*=/ { match($0, /"[^"]+"/); print substr($0, RSTART+1, RLENGTH-2); exit }
+          ' sparrow-engine/sparrow-engine-cli/Cargo.toml)"
+          if [ -z "$release_version" ]; then
+            echo "::error::could not extract [package].version from sparrow-engine/sparrow-engine-cli/Cargo.toml"
+            exit 2
+          fi
+          echo "Release version (sparrow-engine-cli Cargo.toml): $release_version"
+
+          docs="README.md docs/user-manual.md"
+          for f in $docs; do
+            [ -f "$f" ] || { echo "::error::expected doc file '$f' not found (doc-pin gate)"; exit 2; }
+          done
+
+          fail=0
+          found_installer=0
+          found_docker=0
+
+          # (a) piped-install one-liner tags
+          inst_vers="$(grep -hoE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+/installer/' $docs \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -u || true)"
+          [ -n "$inst_vers" ] && found_installer=1
+          while IFS= read -r ver; do
+            [ -n "$ver" ] || continue
+            [ "$ver" = "$release_version" ] && continue
+            echo "::error::piped-install one-liner tag pinned to v$ver (expected v$release_version):"
+            grep -HnE "refs/tags/v${ver//./\\.}/installer/" $docs | sed 's/^/    /' || true
+            fail=1
+          done <<< "$inst_vers"
+
+          # (b) Docker Hub image tags
+          docker_vers="$(grep -hoE 'zhongqimiao/sparrow-engine-server(-gpu)?:v[0-9]+\.[0-9]+\.[0-9]+' $docs \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -u || true)"
+          [ -n "$docker_vers" ] && found_docker=1
+          while IFS= read -r ver; do
+            [ -n "$ver" ] || continue
+            [ "$ver" = "$release_version" ] && continue
+            echo "::error::Docker Hub image tag pinned to v$ver (expected v$release_version):"
+            grep -HnE "zhongqimiao/sparrow-engine-server(-gpu)?:v${ver//./\\.}" $docs | sed 's/^/    /' || true
+            fail=1
+          done <<< "$docker_vers"
+
+          # Robustness guard: the two pin styles are stable, documented distribution
+          # channels (piped one-liner install + Docker Hub pull). If NEITHER matches
+          # anywhere, the doc layout or these patterns changed and the gate would
+          # silently pass on nothing — fail loudly so the patterns get updated.
+          if [ "$found_installer" -eq 0 ] && [ "$found_docker" -eq 0 ]; then
+            echo "::error::doc-pin gate matched zero installer-tag AND zero docker-tag pins across: $docs"
+            echo "  -> the pin format or doc layout likely changed; update the grep patterns in this step."
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "FAIL: README/user-manual release-version pin drift (finding P-iface-3)."
+            echo "  Bump the stale pin(s) to match the release version, or — for a genuine"
+            echo "  version floor / feature-availability note — reword so it is not a"
+            echo "  'refs/tags/vX.Y.Z/installer/' or 'zhongqimiao/...:vX.Y.Z' pin."
+            exit 1
+          fi
+          echo "PASS: all release-version-tied README/user-manual pins agree on '$release_version'."
 
   # -------- CPU build matrix --------
 

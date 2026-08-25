@@ -1,7 +1,7 @@
 class SparrowEngine < Formula
   desc "Camera-trap ML inference engine (sparrow-engine CLI binary)"
   homepage "https://github.com/microsoft/SPARROW-Engine"
-  version "0.1.21"
+  version "0.1.28"
   license "MIT"
 
   # RP-4 (2026-05-26): the formula points at the GH Release tarballs produced
@@ -13,10 +13,19 @@ class SparrowEngine < Formula
   #   ├── README.md
   #   └── VERSION
   #
-  # SHA256 placeholders MUST be replaced before tap publish — the cut-release
-  # script fetches the .sha256 sidecars from the GH Release and substitutes
-  # them in. Until then, this formula will not install (brew validates the
-  # checksum before unpacking).
+  # This file is a TEMPLATE, not a directly installable formula. Two fields are
+  # release-managed:
+  #   * version — tracks the current package/release version (0.1.28 here). CI
+  #     guards it against sparrow-engine-cli/Cargo.toml in
+  #     .github/workflows/release.yml § check-version-consistency, and the
+  #     contract test sparrow-engine/scripts/tests/test_installers.sh asserts the
+  #     same locally, so it cannot silently drift.
+  #   * sha256 — REPLACE_WITH_* placeholders. The cut-release / tap-publish flow
+  #     (installer/homebrew/README.md § Bootstrapping) fetches the .sha256
+  #     sidecars from the GH Release and substitutes them into the tap-repo copy.
+  #     Until then this formula will not install (brew validates the checksum
+  #     before unpacking), so the in-repo template is never mistaken for an
+  #     installable formula.
 
   on_macos do
     on_arm do

@@ -129,7 +129,7 @@ Environment:
   SPARROW_ENGINE_VERSION=X.Y.Z                Override target version
   SPARROW_ENGINE_NO_MODIFY_PATH=1              Skip rc-file edits
 
-Exit codes (canonical: docs/design/phase4.1-install-selector/final_design.md §2.10):
+Exit codes this installer emits (numbering per docs/design/phase4.1-install-selector/final_design.md §2.10):
   0  Success
   1  Generic error
   2  User aborted (Ctrl-C)
@@ -137,15 +137,14 @@ Exit codes (canonical: docs/design/phase4.1-install-selector/final_design.md §2
   4  Network failure (after retries)
   5  Python too old (<3.11)
   6  sha256 verification failed
-  7  Disk space insufficient
   8  Required tool missing (curl/tar/docker/pip)
-  9  Platform/flavor combination not supported
+  9  Platform/flavor combination not supported (POSIX installer only; e.g. GPU on macOS)
   10 OS not supported
   11 cuDNN <9.10 (driver layer-2 probe failure)
   12 Cross-flavor install attempted without --reprobe
   13 Manual rc-file edit detected without --force-rc-overwrite
 
-See docs/install.md for the user guide.
+See docs/user-manual.md § 2 (Installation) for the user guide.
 EOF
 }
 
