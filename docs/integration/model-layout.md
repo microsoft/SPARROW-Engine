@@ -1,8 +1,5 @@
 # Model layout, manifests, and the catalog
 
-> **Status: stub.** This page will be expanded with the full manifest TOML
-> schema reference. For now it points at the authoritative sources.
-
 Sparrow Engine is **model-agnostic**: a model is onboarded by writing a TOML
 manifest next to its ONNX file. The engine reads the manifest to drive all
 pre- and post-processing; it never hard-codes model behavior.
@@ -29,7 +26,10 @@ directory.
 - **ONNX** for all models (vision + audio).
 - **NCHW** layout mandatory (ORT CUDA EP has NHWC + dynamic-shape bugs).
 - **Normalized bbox `[0,1]`** at all public API boundaries.
-- **NMS in the ONNX graph, never in the engine** — validated at load time.
+- **NMS has two load-validated lanes**: `yolo_e2e`/`yolo_nms` detectors carry
+  NMS in the ONNX graph; declared raw-head detectors use the shared engine-side
+  `megadet_v5a` (or `retinanet_soft_nms`) postprocessor. Both emit normalized
+  `[0, 1]` boxes at the public boundary.
 - Manifests are **TOML** (not YAML).
 
 ## Catalog + download
@@ -40,6 +40,48 @@ reads it to fetch + checksum-verify models. See
 [`../model-zoo-catalogue.md`](../model-zoo-catalogue.md) for the published model
 list and licenses.
 
-Until this page is filled in, the authoritative manifest schema is the
-`ModelManifest` type in `sparrow-engine/sparrow-engine-types/src/manifest.rs`,
-and example manifests ship next to every catalog model.
+## Manifest schema (TOML)
+
+Each `manifest.toml` is a single `[model]` table with nested sub-tables. A
+detector manifest, abbreviated from `sparrow-engine/tools/examples/megadetector-v6.toml`:
+
+```toml
+schema_version = "1.0"
+
+[model]
+id           = "megadetector-v6"
+type         = "detection"           # detection | classification | audio | image_encoder | ...
+format       = "onnx"
+file         = "megadetector_v6.onnx"
+sha256       = "…"                    # verified at load
+input_format = "NCHW"                 # NCHW is mandatory
+input_shape  = [-1, 3, 640, 640]
+labels_file  = "labels.txt"
+
+[model.preprocessing]
+type        = "image_letterbox"
+resize      = [640, 640]
+scale       = 255.0
+color_space = "RGB"
+
+[model.postprocessing]
+type                   = "yolo_nms"   # in-graph NMS lane; raw-head models declare megadet_v5a / retinanet_soft_nms
+default_conf_threshold = 0.2
+iou_threshold          = 0.45
+max_detections         = 300
+
+[model.labels]
+"0" = "animal"
+"1" = "person"
+"2" = "vehicle"
+
+# Optional, round-tripped but never interpreted by the engine:
+[model.provenance]                    # producer_name / producer_version / training_* ids
+# [model.drift_reference]             # reference distribution for Tier-1/2 drift metrics
+```
+
+The **authoritative, always-current** schema is the `ModelManifest` type in
+`sparrow-engine/sparrow-engine-types/src/manifest.rs`; runnable example
+manifests live in `sparrow-engine/tools/examples/` and next to every catalog
+model. The top-level [`../user-manual.md`](../user-manual.md) §10 carries the
+field-by-field walkthrough.

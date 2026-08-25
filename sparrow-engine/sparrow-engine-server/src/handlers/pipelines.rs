@@ -1,7 +1,10 @@
-//! Pipeline management handlers: list, load, unload.
+//! Pipeline load handler (POST /v1/pipelines/load).
+//!
+//! List and delete live in [`super::pipelines_mgmt`], which the router wires to
+//! `GET`/`POST /v1/pipelines` and `DELETE /v1/pipelines/{id}`.
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Json, Path, State};
+use axum::extract::{Json, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -26,11 +29,6 @@ pub struct PipelineStepResponse {
 pub struct PipelineInfoResponse {
     pub id: String,
     pub steps: Vec<PipelineStepResponse>,
-}
-
-#[derive(Serialize)]
-pub struct PipelinesListResponse {
-    pub pipelines: Vec<PipelineInfoResponse>,
 }
 
 fn validate_manifest_against_catalog(
@@ -92,17 +90,6 @@ fn manifest_to_response(p: &PipelineManifest) -> PipelineInfoResponse {
 
 // -- Handlers ----------------------------------------------------------------
 
-/// GET /v1/pipelines
-pub async fn list_pipelines(State(state): State<AppState>) -> Json<PipelinesListResponse> {
-    let pipelines = state
-        .engine
-        .loaded_pipelines()
-        .iter()
-        .map(manifest_to_response)
-        .collect();
-    Json(PipelinesListResponse { pipelines })
-}
-
 /// POST /v1/pipelines/load — load a pipeline by ID (idempotent, 200 on reload).
 pub async fn load_pipeline(
     State(state): State<AppState>,
@@ -158,13 +145,4 @@ pub async fn load_pipeline(
     let manifest = blocking_result?;
 
     Ok(Json(manifest_to_response(&manifest)))
-}
-
-/// DELETE /v1/pipelines/{pipeline_id} — 204 on success, 404 if not found.
-pub async fn unload_pipeline(
-    State(state): State<AppState>,
-    Path(pipeline_id): Path<String>,
-) -> Result<StatusCode, AppError> {
-    state.engine.unload_pipeline(&pipeline_id)?;
-    Ok(StatusCode::NO_CONTENT)
 }

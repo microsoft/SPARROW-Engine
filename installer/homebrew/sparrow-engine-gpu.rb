@@ -1,7 +1,7 @@
 class SparrowEngineGpu < Formula
   desc "Camera-trap ML inference engine — GPU (NVIDIA CUDA) CLI binary"
   homepage "https://github.com/microsoft/SPARROW-Engine"
-  version "0.1.21"
+  version "0.1.28"
   license "MIT"
 
   # RP-4 + RP-17 (2026-05-27): canonical GPU formula template. Substitution
@@ -16,6 +16,14 @@ class SparrowEngineGpu < Formula
   #
   # GPU is Linux x86_64 only — NVIDIA CUDA does not exist on macOS, and
   # Linux aarch64 has no matching tarball in the RP-4 release matrix.
+  #
+  # version tracks the current package/release version (0.1.28 here) and is
+  # CI-guarded against sparrow-engine-cli/Cargo.toml
+  # (.github/workflows/release.yml § check-version-consistency) + asserted by
+  # sparrow-engine/scripts/tests/test_installers.sh, so it cannot silently
+  # drift. The sha256 stays a REPLACE_WITH_* placeholder until tap-publish, so
+  # brew refuses to install this in-repo template (checksum validation fails) —
+  # it is never mistaken for a directly installable formula.
 
   on_linux do
     on_intel do

@@ -357,4 +357,71 @@ expect_rc 0 "reprobe idempotency (no-op)" -- \
 grep -qi 'already installed' "$TEST_ROOT/last.out" ||
     fail "reprobe idempotency no-op message missing"
 
-echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), and reinstall/reprobe idempotency gates"
+echo "[13] installer help points at docs/user-manual.md (not the nonexistent docs/install.md)"
+sh_help="$(bash "$SH_INSTALLER" --help)"
+grep -Fq "docs/user-manual.md" <<<"$sh_help" ||
+    fail "shell --help no longer references docs/user-manual.md"
+for f in "$SH_INSTALLER" "$PS_INSTALLER"; do
+    grep -Fq "docs/user-manual.md" "$f" ||
+        fail "$(basename "$f") no longer references docs/user-manual.md"
+    if grep -Fq "docs/install.md" "$f"; then
+        fail "$(basename "$f") still references the nonexistent docs/install.md"
+    fi
+done
+
+echo "[14] shell exit-code table matches the codes the script actually emits"
+# Documented codes: the integers in the --help exit-code table (e.g. '  9  ...').
+sh_doc_codes="$(
+    printf '%s\n' "$sh_help" |
+        awk '/^Exit codes/{f=1;next} /^See docs\//{f=0} f && /^[[:space:]]+[0-9]+[[:space:]]/{print $1}' |
+        sort -un
+)"
+# Implemented codes: every literal `die N` / `exit N` in the source. Code 3
+# (flavor disagreement) IS emitted (resolve_flavor die 3) and MUST stay documented.
+sh_impl_codes="$(
+    grep -oE '(^|[[:space:]])(die|exit)[[:space:]]+[0-9]+' "$SH_INSTALLER" |
+        grep -oE '[0-9]+' | sort -un
+)"
+[[ -n "$sh_doc_codes" ]] || fail "could not parse the shell exit-code table from --help"
+[[ -n "$sh_impl_codes" ]] || fail "could not parse implemented exit codes from the shell installer"
+[[ "$sh_doc_codes" == "$sh_impl_codes" ]] ||
+    fail "shell exit-code table drift: documented=[$(echo $sh_doc_codes)] implemented=[$(echo $sh_impl_codes)]"
+# Code 9 (GPU-on-macOS) is POSIX-installer-only and must be marked as such.
+printf '%s\n' "$sh_help" | grep -Eq '^[[:space:]]*9[[:space:]].*(macOS|POSIX)' ||
+    fail "shell --help code 9 is not marked POSIX/macOS-specific"
+
+echo "[15] PowerShell emits the shell exit-code set minus the POSIX-only code 9; wording is accurate"
+ps_impl_codes="$(
+    grep -oE '(^|[[:space:]])(Die|exit)[[:space:]]+[0-9]+' "$PS_INSTALLER" |
+        grep -oE '[0-9]+' | sort -un
+)"
+[[ -n "$ps_impl_codes" ]] || fail "could not parse implemented exit codes from the PowerShell installer"
+# Shell set minus code 9 (GPU-on-macOS cannot occur on Windows). Both installers
+# emit code 3, so the parity check confirms the shared flavor-conflict contract too.
+sh_minus9="$(printf '%s\n' "$sh_impl_codes" | grep -vx '9' | sort -un)"
+[[ "$ps_impl_codes" == "$sh_minus9" ]] ||
+    fail "shell/PowerShell exit-code parity drift: PowerShell=[$(echo $ps_impl_codes)] expected(shell minus 9)=[$(echo $sh_minus9)]"
+# The stale '0..14' range must not reappear; code 9 must be flagged POSIX-only.
+if grep -Fq '0..14' "$PS_INSTALLER"; then
+    fail "PowerShell installer still advertises the stale '0..14' exit-code range"
+fi
+grep -Fq 'POSIX' "$PS_INSTALLER" ||
+    fail "PowerShell installer no longer documents code 9 as POSIX-installer-only"
+
+echo "[16] Homebrew formula templates track the release version; SHA256s stay placeholders"
+for rb in "$INSTALLER_DIR/homebrew/sparrow-engine.rb" "$INSTALLER_DIR/homebrew/sparrow-engine-gpu.rb"; do
+    rb_name="$(basename "$rb")"
+    rb_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]+"([^"]+)".*/\1/p' "$rb" | head -1)"
+    [[ -n "$rb_version" ]] || fail "$rb_name: could not parse 'version'"
+    [[ "$rb_version" == "$cli_version" ]] ||
+        fail "$rb_name version $rb_version != engine version $cli_version (formula template must track the release)"
+    # In-repo templates carry placeholder SHA256s substituted at tap-publish; a
+    # real 64-hex checksum here would falsely imply the template is installable.
+    grep -Eq 'sha256[[:space:]]+"REPLACE_WITH_[^"]*"' "$rb" ||
+        fail "$rb_name: expected placeholder sha256 \"REPLACE_WITH_*\" (in-repo formula is a template, not installable)"
+    if grep -Eq 'sha256[[:space:]]+"[0-9a-f]{64}"' "$rb"; then
+        fail "$rb_name: carries a real 64-hex sha256 in-repo; real checksums belong only in the tap repo"
+    fi
+done
+
+echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), reinstall/reprobe idempotency, help-path (docs/user-manual.md), exit-code table match, shell/PowerShell exit-code parity, and Homebrew-template gates"

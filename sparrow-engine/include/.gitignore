@@ -1,2 +1,4 @@
 *
 !.gitignore
+!sparrow_engine.h
+!NativeMethods.g.cs

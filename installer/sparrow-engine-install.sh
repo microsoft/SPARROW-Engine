@@ -129,7 +129,7 @@ Environment:
   SPARROW_ENGINE_VERSION=X.Y.Z                Override target version
   SPARROW_ENGINE_NO_MODIFY_PATH=1              Skip rc-file edits
 
-Exit codes (canonical: docs/design/phase4.1-install-selector/final_design.md §2.10):
+Exit codes this installer emits (numbering per docs/design/phase4.1-install-selector/final_design.md §2.10):
   0  Success
   1  Generic error
   2  User aborted (Ctrl-C)
@@ -137,15 +137,14 @@ Exit codes (canonical: docs/design/phase4.1-install-selector/final_design.md §2
   4  Network failure (after retries)
   5  Python too old (<3.11)
   6  sha256 verification failed
-  7  Disk space insufficient
   8  Required tool missing (curl/tar/docker/pip)
-  9  Platform/flavor combination not supported
+  9  Platform/flavor combination not supported (POSIX installer only; e.g. GPU on macOS)
   10 OS not supported
   11 cuDNN <9.10 (driver layer-2 probe failure)
   12 Cross-flavor install attempted without --reprobe
   13 Manual rc-file edit detected without --force-rc-overwrite
 
-See docs/install.md for the user guide.
+See docs/user-manual.md § 2 (Installation) for the user guide.
 EOF
 }
 
@@ -415,7 +414,7 @@ install_python_wheel() {
         *)   die 1 "internal: unknown flavor $wheel_flavor in install_python_wheel" ;;
     esac
 
-    # Python ≥3.11 floor (CLAUDE.md PyO3 0.25 invariant).
+    # Python >=3.11 floor (matches wheel requires-python and abi3-py311).
     if command -v python3 >/dev/null 2>&1; then
         local py_major py_minor
         py_major=$(python3 -c 'import sys; print(sys.version_info.major)' 2>/dev/null || echo 0)

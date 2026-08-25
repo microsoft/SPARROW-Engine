@@ -4,8 +4,11 @@
 
 .DESCRIPTION
     Probes hardware once, then installs the matching flavor (CPU or GPU) via the
-    selected mode (-Pip, -Cli, -Docker). Mirrors sparrow-engine-install.sh exit codes
-    0..14 per docs/design/phase4.1-install-selector/final_design.md § 2.10.
+    selected mode (-Pip, -Cli, -Docker). Emits the same exit codes as
+    sparrow-engine-install.sh (see that script's --help for the authoritative list;
+    numbering per docs/design/phase4.1-install-selector/final_design.md § 2.10), with
+    one exception: code 9 (platform/flavor unsupported, e.g. GPU on macOS) is a
+    POSIX-installer-only code and is never emitted on Windows.
 
     Defense-in-depth (truncation safety): every executable statement after the
     parameter block is enclosed by one outer try/finally. A truncated tail
@@ -362,8 +365,8 @@ function Install-PipFlavor {
     Write-Step "Installing Python wheel ($ResolvedFlavor)"
     $pkg = if ($ResolvedFlavor -eq 'gpu') { 'sparrow-engine-gpu' } else { 'sparrow-engine' }
 
-    # Python >=3.11 floor (mirror sparrow-engine-install.sh:344-354 / CLAUDE.md
-    # PyO3 0.25 invariant). Probe sys.version_info via subprocess; FileVersion
+    # Python >=3.11 floor (matches wheel requires-python and abi3-py311).
+    # Probe sys.version_info via subprocess; FileVersion
     # on python.exe is unreliable across 5.1/7+ and Windows-Store Python.
     $pythonCmd = Get-Command -Name python  -ErrorAction SilentlyContinue
     if (-not $pythonCmd) { $pythonCmd = Get-Command -Name python3 -ErrorAction SilentlyContinue }
@@ -526,7 +529,7 @@ function Invoke-Main {
         Write-Host "       [-Reinstall|-Reprobe|-Uninstall] [-ForceRcOverwrite]"
         Write-Host "       [-ProbeOnly] [-DryRun] [-Yes] [-Version X.Y.Z] [-Retries N]"
         Write-Host ""
-        Write-Host "See docs/install.md for full reference."
+        Write-Host "See docs/user-manual.md (section 2, Installation) for full reference."
         return
     }
 

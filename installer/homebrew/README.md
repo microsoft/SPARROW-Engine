@@ -1,9 +1,25 @@
 # Homebrew tap — sparrow-engine
 
-This directory holds the source-of-truth Homebrew formulas for the
-`sparrow-engine` + `sparrow-engine-gpu` CLI binaries (RP-17). The
-formulas live here, not in a separate tap repo, so they version with
-the rest of the codebase.
+This directory holds the **source-of-truth TEMPLATES** for the
+`sparrow-engine` + `sparrow-engine-gpu` Homebrew formulas (RP-17). They
+live here — versioned with the rest of the codebase — but they are **not
+directly installable**: the publishable, checksummed formulas live in the
+**separate tap repo** (`microsoft/homebrew-sparrow-engine`), produced by
+substituting real release SHA256s into copies of these files.
+
+### Template policy (mechanically guarded)
+
+- **`version`** tracks the current package/release version (0.1.28 today).
+  It is bumped in lockstep with `sparrow-engine-cli/Cargo.toml` and guarded
+  by `.github/workflows/release.yml § check-version-consistency` +
+  `sparrow-engine/scripts/tests/test_installers.sh`, so it cannot silently
+  drift from the release version.
+- **`sha256`** fields are `REPLACE_WITH_*` placeholders. `brew` validates the
+  checksum before unpacking, so an unsubstituted template refuses to install —
+  the in-repo copy can never be mistaken for a shippable formula. The contract
+  test asserts the placeholders are still present in-repo.
+- Publishing = copy → substitute real SHA256s → commit to the tap repo (see
+  **Bootstrapping** below). Never commit real SHA256s into this directory.
 
 ## What ships
 
@@ -76,8 +92,11 @@ Full caveats block (with the 9 location list and the 7-package /
 
 ## Bootstrapping the tap repo (one-time, operator action — DONE 2026-05-27)
 
-The tap is live at https://github.com/microsoft/homebrew-sparrow-engine
-with both formulas pinned to the latest release (v0.1.23 as of 2026-07-15).
+The tap is published separately at
+https://github.com/microsoft/homebrew-sparrow-engine — its formulas carry the
+real release SHA256s and are what end users `brew install`. The in-repo files
+here are templates that track the release version (CI-guarded); the tap is
+refreshed per release by the procedure below.
 Procedure if cutting fresh:
 
 1. Cut the release: `git tag vX.Y.Z && git push origin vX.Y.Z` — CI runs
