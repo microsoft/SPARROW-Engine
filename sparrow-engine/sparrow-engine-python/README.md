@@ -55,6 +55,12 @@ the first inference call. `detect` / `classify` / `detect_audio` / `pipeline`
 each accept a file path, a directory, or a list of paths, and take an optional
 `progress_callback(index, total, filename)`.
 
+`detect` and `detect_audio` also accept an optional `model`: omit it (or pass
+`None`) to use the catalog default for the task, falling back to
+`MDV6-yolov10-e` (images) / `md-audiobirds-v1` (audio) — the same
+default the `spe detect` / `spe detect-audio` CLI uses when `--model` is
+omitted. `classify`, `embed`, and `pipeline` still require an explicit model.
+
 ## Documentation
 
 See the user manual (`docs/user-manual.md`) in the sparrow-engine repository for

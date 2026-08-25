@@ -1,4 +1,4 @@
-"""sparrow_engine: Camera trap animal detection powered by sparrow-engine-cpu."""
+"""sparrow_engine: Camera trap animal detection powered by sparrow-engine (CPU or GPU flavor)."""
 from __future__ import annotations
 
 import glob
@@ -364,6 +364,68 @@ def _resolve_inputs(
 
 
 # -------------------------------------------------------------------------
+# Default model-id resolution for the ``model``-optional detection commands.
+#
+# ``detect`` / ``detect_audio`` accept an omitted (``None``) model, mirroring
+# the ``spe detect`` / ``spe detect-audio`` CLI, which resolve a default when
+# ``--model`` is not supplied. Keeping the Python facade and the CLI in step
+# satisfies the Phase 2.5 functionality-consistency rule (the two front-ends
+# expose the same function set with the same conventions).
+#
+# ``ModelInfo.default`` marks the catalog default *for its model type* (from
+# the manifest ``[model].default``; see sparrow-engine-types). The resolver
+# therefore accepts only a default whose ``model_type`` belongs to the task's
+# family — an audio default is never substituted for an image ``detect()``,
+# nor vice versa. Each family tuple is ordered by preference: a standard
+# detector ahead of an overhead detector, an audio detector ahead of an audio
+# classifier.
+_DETECTION_MODEL_TYPES = ("detector", "overhead_detector")
+_AUDIO_MODEL_TYPES = ("audio_detector", "audio_classifier")
+
+# Stable per-task fallback ids — the canonical ids the CLI falls back to when
+# ``--model`` is omitted and no catalog default is resolved. The detector id
+# matches sparrow-engine-cli ``DEFAULT_DETECTOR_MODEL_ID`` (the tail of
+# ``select_detect_model_id``); the audio id matches ``cmd_detect_audio``'s
+# fallback. Both are current catalog ids. Used only as the last resort, when no
+# catalog default of the right type is installed.
+_DEFAULT_DETECT_MODEL = "MDV6-yolov10-e"
+_DEFAULT_AUDIO_MODEL = "md-audiobirds-v1"
+
+
+def _resolve_default_model(
+    model: Optional[str],
+    allowed_types: tuple[str, ...],
+    fallback_id: str,
+) -> str:
+    """Resolve the model id for a detection-family command.
+
+    Precedence:
+
+    1. An explicit ``model`` argument — used verbatim, never second-guessed.
+    2. The catalog default whose ``model_type`` is in ``allowed_types``
+       (``ModelInfo.default`` marks the default for its type). A default of
+       the wrong type is ignored, never substituted for this task.
+    3. ``fallback_id`` — the same stable id the CLI falls back to.
+
+    This only selects the id string; the engine call that follows still
+    raises the usual typed :class:`SparrowEngineError` (or a subclass) if the
+    id is unknown or the model cannot be loaded, so error behavior is
+    unchanged.
+    """
+    if model is not None:
+        return model
+    default_by_type = {
+        info.model_type: info.id
+        for info in _get_engine().list_models()
+        if info.default
+    }
+    for model_type in allowed_types:
+        if model_type in default_by_type:
+            return default_by_type[model_type]
+    return fallback_id
+
+
+# -------------------------------------------------------------------------
 # Public inference + utility functions
 # -------------------------------------------------------------------------
 
@@ -385,7 +447,7 @@ def init(device: str = "auto", model_dir: Optional[str] = None) -> None:
 
 def detect(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
-    model: str,
+    model: Optional[str] = None,
     threshold: Optional[float] = None,
     max_detections: Optional[int] = None,
     recursive: bool = False,
@@ -397,6 +459,12 @@ def detect(
     When ``recursive`` is True, directories are traversed recursively.
     Always returns ``list[DetectResult]``, even for a single image.
 
+    ``model`` is optional. When omitted (or ``None``) the engine's catalog
+    default detector is used, falling back to ``"MDV6-yolov10-e"``
+    when no detector is flagged default — the same model the ``spe detect``
+    CLI resolves when ``--model`` is omitted. Pass an explicit id to force a
+    specific detector.
+
     ``threshold`` defaults to ``None``, which defers to the manifest's
     ``[postprocessing] confidence_threshold`` (typically 0.2 for YOLO-family
     models). Pass an explicit float to override.
@@ -406,8 +474,11 @@ def detect(
     ``index`` is 0-based. Raising from the callback aborts the batch.
     """
     paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive)
+    model_id = _resolve_default_model(
+        model, _DETECTION_MODEL_TYPES, _DEFAULT_DETECT_MODEL
+    )
     return _get_engine().detect(
-        paths, model, threshold, max_detections, progress_callback
+        paths, model_id, threshold, max_detections, progress_callback
     )
 
 
@@ -573,7 +644,7 @@ def embed_aligned_with_meta(
 
 def detect_audio(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
-    model: str,
+    model: Optional[str] = None,
     threshold: Optional[float] = None,
     recursive: bool = False,
     stride_s: Optional[float] = None,
@@ -585,6 +656,12 @@ def detect_audio(
     ``input`` can be a file path, directory, or list of paths.
     When ``recursive`` is True, directories are traversed recursively.
     Always returns ``list[AudioResult]``, even for a single file.
+
+    ``model`` is optional. When omitted (or ``None``) the catalog default
+    audio model is used, falling back to ``"md-audiobirds-v1"`` when none is
+    flagged default — the same model the ``spe detect-audio`` CLI resolves
+    when ``--model`` is omitted. Pass an explicit id to force a specific audio
+    model.
 
     ``stride_s`` and ``segment_duration_s`` override the manifest defaults.
     Stride is always engine-controlled. Segment duration is honored by
@@ -598,9 +675,12 @@ def detect_audio(
     ``index`` is 0-based. Raising from the callback aborts the batch.
     """
     paths = _resolve_inputs(input, _AUDIO_EXTS, recursive=recursive)
+    model_id = _resolve_default_model(
+        model, _AUDIO_MODEL_TYPES, _DEFAULT_AUDIO_MODEL
+    )
     return _get_engine().detect_audio(
         paths,
-        model,
+        model_id,
         threshold,
         stride_s,
         segment_duration_s,
