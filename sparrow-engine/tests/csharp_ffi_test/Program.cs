@@ -91,10 +91,10 @@ unsafe class Program
         string configJson = $"{{\"device\": \"cpu\", \"model_dir\": \"{ModelDir}\"}}";
         byte* configPtr = ToUtf8(configJson);
 
-        void* engine = NativeMethods.sparrow_engine_new(configPtr);
+        void* engine = NativeMethods.sparrow_engine_engine_new(configPtr);
         Marshal.FreeHGlobal((IntPtr)configPtr);
 
-        Assert(engine != null, "sparrow_engine_new returns non-null");
+        Assert(engine != null, "sparrow_engine_engine_new returns non-null");
         if (engine == null)
         {
             string? err = GetLastError();
@@ -382,9 +382,9 @@ unsafe class Program
 
         // Invalid config JSON
         byte* badConfigPtr = ToUtf8("{invalid json}");
-        void* badEngine = NativeMethods.sparrow_engine_new(badConfigPtr);
+        void* badEngine = NativeMethods.sparrow_engine_engine_new(badConfigPtr);
         Marshal.FreeHGlobal((IntPtr)badConfigPtr);
-        Assert(badEngine == null, "sparrow_engine_new(bad JSON) returns null");
+        Assert(badEngine == null, "sparrow_engine_engine_new(bad JSON) returns null");
         {
             string? err = GetLastError();
             Assert(err != null && err.Contains("invalid config JSON"),
@@ -397,7 +397,7 @@ unsafe class Program
         NativeMethods.sparrow_engine_audio_result_free(null);
         NativeMethods.sparrow_engine_pipeline_result_free(null);
         NativeMethods.sparrow_engine_free_string(null);
-        NativeMethods.sparrow_engine_free(null);
+        NativeMethods.sparrow_engine_engine_free(null);
         Assert(true, "All _free(null) calls are no-ops (no crash)");
 
         // =====================================================================
@@ -407,13 +407,17 @@ unsafe class Program
 
         if (mdv6Model != null)
         {
-            Assert(Enum.GetUnderlyingType(typeof(SparrowEnginePixelFormat)) == typeof(uint),
-                "SparrowEnginePixelFormat underlying type is uint");
-            Assert((uint)SparrowEnginePixelFormat.Rgb == 0 &&
-                   (uint)SparrowEnginePixelFormat.Rgba == 1 &&
-                   (uint)SparrowEnginePixelFormat.Bgra == 2 &&
-                   (uint)SparrowEnginePixelFormat.Bgr == 3,
-                "SparrowEnginePixelFormat values match C ABI constants");
+            // SparrowEnginePixelFormat is a `uint32_t` typedef in the C ABI (see
+            // sparrow-engine/include/sparrow_engine.h), so csbindgen emits the
+            // sparrow_engine_detect_raw `format` parameter as a bare `uint`. The
+            // harness passes the documented format codes directly.
+            const uint PixelFormatRgb = 0;
+            const uint PixelFormatRgba = 1;
+            const uint PixelFormatBgra = 2;
+            const uint PixelFormatBgr = 3;
+            Assert(PixelFormatRgb == 0 && PixelFormatRgba == 1 &&
+                   PixelFormatBgra == 2 && PixelFormatBgr == 3,
+                "pixel-format constants match C ABI (0=RGB, 1=RGBA, 2=BGRA, 3=BGR)");
 
             // Simulate a 100x100 BGRA bitmap (what Bitmap.LockBits returns).
             const uint rawW = 100;
@@ -438,7 +442,7 @@ unsafe class Program
             {
                 SparrowEngineDetections* rawDetections = NativeMethods.sparrow_engine_detect_raw(
                     mdv6Model, rawPtr, rawW, rawH, rawStride,
-                    SparrowEnginePixelFormat.Bgra, null);
+                    PixelFormatBgra, null);
 
                 Assert(rawDetections != null, "sparrow_engine_detect_raw returns non-null");
 
@@ -463,7 +467,7 @@ unsafe class Program
                 rawOpts.max_detections = 5;
                 SparrowEngineDetections* rawDetections2 = NativeMethods.sparrow_engine_detect_raw(
                     mdv6Model, rawPtr, rawW, rawH, rawStride,
-                    SparrowEnginePixelFormat.Bgra, &rawOpts);
+                    PixelFormatBgra, &rawOpts);
 
                 Assert(rawDetections2 != null, "sparrow_engine_detect_raw with opts returns non-null");
                 if (rawDetections2 != null)
@@ -479,7 +483,7 @@ unsafe class Program
             {
                 SparrowEngineDetections* invalidFormatDetections = NativeMethods.sparrow_engine_detect_raw(
                     mdv6Model, rawPtr, rawW, rawH, rawStride,
-                    (SparrowEnginePixelFormat)999u, null);
+                    999u, null);
 
                 Assert(invalidFormatDetections == null, "sparrow_engine_detect_raw invalid pixel format returns null");
                 string? formatErr = GetLastError();
@@ -545,8 +549,8 @@ unsafe class Program
         if (mdv6Model != null) NativeMethods.sparrow_engine_unload_model(mdv6Model);
         Assert(true, "sparrow_engine_unload_model(mdv6) completed");
 
-        NativeMethods.sparrow_engine_free(engine);
-        Assert(true, "sparrow_engine_free completed");
+        NativeMethods.sparrow_engine_engine_free(engine);
+        Assert(true, "sparrow_engine_engine_free completed");
 
         // =====================================================================
         // Summary
