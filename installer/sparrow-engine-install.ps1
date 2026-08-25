@@ -365,8 +365,8 @@ function Install-PipFlavor {
     Write-Step "Installing Python wheel ($ResolvedFlavor)"
     $pkg = if ($ResolvedFlavor -eq 'gpu') { 'sparrow-engine-gpu' } else { 'sparrow-engine' }
 
-    # Python >=3.11 floor (mirror sparrow-engine-install.sh:344-354 / CLAUDE.md
-    # PyO3 0.25 invariant). Probe sys.version_info via subprocess; FileVersion
+    # Python >=3.11 floor (matches wheel requires-python and abi3-py311).
+    # Probe sys.version_info via subprocess; FileVersion
     # on python.exe is unreliable across 5.1/7+ and Windows-Store Python.
     $pythonCmd = Get-Command -Name python  -ErrorAction SilentlyContinue
     if (-not $pythonCmd) { $pythonCmd = Get-Command -Name python3 -ErrorAction SilentlyContinue }

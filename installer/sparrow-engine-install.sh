@@ -414,7 +414,7 @@ install_python_wheel() {
         *)   die 1 "internal: unknown flavor $wheel_flavor in install_python_wheel" ;;
     esac
 
-    # Python ≥3.11 floor (CLAUDE.md PyO3 0.25 invariant).
+    # Python >=3.11 floor (matches wheel requires-python and abi3-py311).
     if command -v python3 >/dev/null 2>&1; then
         local py_major py_minor
         py_major=$(python3 -c 'import sys; print(sys.version_info.major)' 2>/dev/null || echo 0)
