@@ -127,14 +127,14 @@ for the full API surface and GPU sidecar options.
 
 ### Docker image (server deployments)
 
-Sparrow Engine ships as a self-contained HTTP server in two Docker flavors. Both expose `/v1/detect`, `/v1/classify`, `/v1/detect_audio`, `/healthz`, `/openapi.json` on port 8080.
+Sparrow Engine ships as a self-contained HTTP server in two Docker flavors. Both expose the same HTTP API on port 8080 (`/v1/detect`, `/v1/classify`, `/v1/audio/detect`, `/v1/health`, `/healthz`, and more). See [§7 of the user manual](docs/user-manual.md#7-http-api-server--sparrow-engine-server) for the full route list.
 
 | Image | Size | GPU |
 |---|---|---|
 | `zhongqimiao/sparrow-engine-server:latest` | ~170 MB | CPU only |
 | `zhongqimiao/sparrow-engine-server-gpu:latest` | ~3.7 GB | CUDA 12 + cuDNN bundled; requires NVIDIA Container Toolkit on the host |
 
-Three install paths. **Option A** is the simplest; **B** + **C** remain for offline operators and the absolute-latest-source case.
+Two install paths. **Option A** is the simplest; **Option B** builds from source for the absolute-latest-source case.
 
 **Option A — `docker pull` from Docker Hub** (RP-35, 2026-06-05; published on every prod tag via `release.yml`):
 
@@ -155,19 +155,7 @@ Public repos (anonymous pull, no Docker Hub login required):
 
 Heads-up: anonymous Docker Hub pulls are rate-limited (100 pulls / 6 hr / source IP). For CI behind shared NAT, `docker login` with a free Docker Hub account lifts the limit to 200/6 hr.
 
-**Option B — download pre-built tarballs from Zenodo** (offline / air-gapped). Uses the sparrow companion repo's downloader script which knows the current Zenodo record + expected SHA-256 digests:
-
-```bash
-git clone https://github.com/Clamps251/sparrow.git
-cd sparrow
-./scripts/download_sparrow_engine_images.sh                 # CPU + GPU
-./scripts/download_sparrow_engine_images.sh --cpu-only       # CPU only (~43 MB compressed)
-./scripts/download_sparrow_engine_images.sh --gpu-only       # GPU only (~1.5 GB compressed)
-```
-
-The script verifies SHA-256 + `docker load`s + retags as `sparrow-engine-server[-gpu]:sparrow-combined`. **Caveat**: the Zenodo record is refreshed manually per release, not on every commit, so the published tarballs may lag the latest source by one or more releases.
-
-**Option C — build from source** (~10 min the first time; cached layers on subsequent builds; always reflects the current source tree):
+**Option B — build from source** (~10 min the first time; cached layers on subsequent builds; always reflects the current source tree):
 
 ```bash
 git clone https://github.com/microsoft/SPARROW-Engine.git
@@ -192,14 +180,15 @@ docker run -d --rm --name sparrow-engine-gpu -p 8080:8080 --gpus all \
   zhongqimiao/sparrow-engine-server-gpu:latest
 
 # Verify
-curl -fsS http://localhost:8080/healthz
-curl -fsS http://localhost:8080/openapi.json | jq '.paths | keys'
+curl -fsS http://localhost:8080/healthz            # liveness → {"alive":true}
+curl -fsS http://localhost:8080/v1/health | jq     # readiness + catalog size
+curl -fsS http://localhost:8080/v1/catalog | jq    # discovered models
 ```
 
 **Or use the bundled `docker-compose.yml`** (resource limits, healthcheck, log rotation, read-only filesystem all pre-configured):
 
 ```bash
-cd Pytorch-Wildlife/sparrow-engine/docker
+cd SPARROW-Engine/sparrow-engine/docker
 docker compose --profile cpu up -d        # CPU
 docker compose --profile gpu up -d        # GPU
 docker compose --profile cpu logs -f      # tail logs

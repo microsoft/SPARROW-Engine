@@ -1,9 +1,9 @@
 cff-version: 1.2.0
-title: PyTorch-Wildlife
-message: "If you use PyTorch-Wildlife, please cite it using the metadata from this file."
+title: SPARROW-Engine
+message: "If you use SPARROW-Engine, please cite it using the metadata from this file."
 type: software
-version: "1.3.0"
-date-released: "2026-05-14"
+version: "0.1.28"
+date-released: "2026-08-25"
 authors:
   - given-names: Andres
     family-names: Hernandez
@@ -25,10 +25,10 @@ identifiers:
   - type: url
     value: "https://arxiv.org/abs/1907.06772"
     description: "Efficient Pipeline for Camera Trap Image Review"
-repository-code: "https://github.com/microsoft/Pytorch-Wildlife"
-url: "https://microsoft.github.io/Pytorch-Wildlife/"
+repository-code: "https://github.com/microsoft/SPARROW-Engine"
+url: "https://github.com/microsoft/SPARROW-Engine"
 keywords:
-  - PyTorch-Wildlife
+  - Sparrow Engine
   - MegaDetector
   - camera traps
   - wildlife detection

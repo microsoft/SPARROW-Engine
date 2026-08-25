@@ -173,7 +173,7 @@ The following constraints are baked into the engine. If you onboard a new model,
 **What**: a layered probe + downloader that installs into `~/.sparrow-engine/` (Linux/macOS) or `%USERPROFILE%\.sparrow-engine\` (Windows).
 **How**: layer-1 detects NVIDIA hardware; layer-2 verifies cuDNN quality; the wrapper picks `cpu` or `gpu` flavor and fetches the matching artifact.
 
-**Cite**: `docs/install.md`, `installer/sparrow-engine-install.{sh,ps1}`.
+**Cite**: `installer/sparrow-engine-install.{sh,ps1}` + `installer/probe.{sh,ps1}` + `installer/probe_gpu_quality.{sh,ps1}`.
 
 ---
 
@@ -195,10 +195,10 @@ The following constraints are baked into the engine. If you onboard a new model,
 
 ```
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.23/installer/sparrow-engine-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.28/installer/sparrow-engine-install.sh | bash
 
 # Windows
-iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.23/installer/sparrow-engine-install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.28/installer/sparrow-engine-install.ps1 | iex
 ```
 
 Under the stdin-pipe form the wrapper detects that `$0` is the shell name and skips the on-disk lookup; it fetches `probe.sh` + `probe_gpu_quality.sh` from the matching `refs/tags/v<ver>/installer/` raw URL into `${XDG_CACHE_HOME:-~/.cache}/sparrow-engine/v<ver>/` (Linux/macOS) or `%LOCALAPPDATA%\sparrow-engine\cache\v<ver>\` (Windows) on first invocation. Override the helper URL via `SPARROW_ENGINE_HELPER_BASE` for internal mirrors.
@@ -256,7 +256,7 @@ Under the stdin-pipe form the wrapper detects that `$0` is the shell name and sk
 | pip install Python wheel | Notebook + script users (Python API only — no `spe` CLI binary; use the Homebrew, installer, or tarball rows above for the CLI) | `pip install sparrow-engine` (CPU) or `pip install sparrow-engine-gpu` |
 | Docker image | Server deployments | `docker pull zhongqimiao/sparrow-engine-server:latest` (CPU, ~61 MB compressed) or `docker pull zhongqimiao/sparrow-engine-server-gpu:latest` (GPU, ~2.2 GB compressed, requires NVIDIA Container Toolkit) — published on Docker Hub on every prod tag. Versioned tags `:vX.Y.Z` also available. See §2.8 for the full flow. |
 
-**Cite**: `docs/install.md § Per-consumer install paths` (lines 163-220); `sparrow-engine/scripts/build_all_flavors.sh`; `installer/homebrew/{sparrow-engine,sparrow-engine-gpu}.rb` + `installer/homebrew/README.md` (Homebrew tap source-of-truth).
+**Cite**: `sparrow-engine/scripts/build_all_flavors.sh`; `installer/homebrew/{sparrow-engine,sparrow-engine-gpu}.rb` + `installer/homebrew/README.md` (Homebrew tap source-of-truth).
 
 ---
 
@@ -323,7 +323,7 @@ python -c "import sparrow_engine; sparrow_engine.Engine(...)"
 | 11 | cuDNN < 9.10 — BLOCKING; see Gotchas §13.1 |
 | 12 | Cross-flavor install attempted without `--reprobe` |
 
-**Cite**: `docs/install.md § Error message catalog`.
+**Cite**: `installer/sparrow-engine-install.{sh,ps1}` (exit-code definitions).
 
 ---
 
@@ -344,7 +344,7 @@ ONLINE machine:                        OFFLINE machine:
 **What**: a documented manual path that copies a tarball or `docker save` archive onto the offline host.
 **How**: download once from a connected machine; transfer via USB; the wrapper accepts a local `file://` URL via `SPARROW_ENGINE_RELEASE_BASE`.
 
-**Cite**: `docs/install.md § Air-gapped / offline install`.
+**Cite**: `installer/sparrow-engine-install.{sh,ps1}` (`SPARROW_ENGINE_RELEASE_BASE` / `file://` handling).
 
 ---
 
@@ -359,7 +359,7 @@ Sparrow Engine ships as a self-contained HTTP server in two Docker flavors. Oper
 | `sparrow-engine-server:sparrow-combined` | ~43 MB | ~170 MB | CPU only |
 | `sparrow-engine-server-gpu:sparrow-combined` | ~1.5 GB | ~3.7 GB | CUDA 12 + cuDNN bundled; requires NVIDIA Container Toolkit on the host |
 
-Both flavors expose the same 15-route axum HTTP API on port 8080: `/v1/detect`, `/v1/detect/batch`, `/v1/classify`, `/v1/pipeline`, `/v1/detect_audio`, plus `/v1/catalog`, `/v1/models`, `/v1/manifest`, `/healthz`, `/v1/health`, `/openapi.json`, and the inference-log + drift endpoints from Phase 4. See §7 for the full request / response schemas.
+Both flavors expose the same axum HTTP API on port 8080 — **17 paths / 18 operations**: inference (`/v1/detect`, `/v1/detect/batch`, `/v1/embed`, `/v1/embed/batch`, `/v1/classify`, `/v1/pipeline`, `/v1/audio/detect`), management (`/v1/catalog`, `/v1/models`, `/v1/models/load`, `/v1/models/{id}`, `/v1/models/{id}/trt-warmup`, `/v1/pipelines`, `/v1/pipelines/load`, `/v1/pipelines/{id}`), and health (`/v1/health`, `/healthz`). The Phase 4 inference-log + drift hooks ride on the inference endpoints as `?store=` / `?halt_on_store_failure=` query params. See §7 for the full request / response schemas.
 
 #### Option A — `docker pull` from Docker Hub (recommended)
 
@@ -368,11 +368,11 @@ Simplest path. No build toolchain, no clones, no separate downloader. Published 
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest         # moving tag
-docker pull zhongqimiao/sparrow-engine-server:v0.1.23        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.28        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted; requires NVIDIA Container Toolkit on host)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.23
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.28
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
@@ -382,30 +382,24 @@ Public repos (anonymous pull, no Docker Hub login required):
 
 Heads-up: anonymous Docker Hub pulls are rate-limited (100 pulls / 6 hr / source IP). For CI behind shared NAT, run `docker login` with a free Docker Hub account to lift the limit to 200/6 hr.
 
-#### Option B — download pre-built tarballs from Zenodo (offline / air-gapped)
+#### Option B — offline via saved image archives (air-gapped)
 
-Fastest path. ~3 min on a decent link. No build toolchain needed. Uses sparrow companion repo's downloader script which knows the current Zenodo record + expected SHA-256 digests + handles the `docker load` + canonical retag step.
+No build toolchain and no internet on the target host. On a connected machine, pull the image (Option A) and export it to a tarball; transfer the tarball; load it on the offline host.
 
 ```bash
-git clone https://github.com/Clamps251/sparrow.git
-cd sparrow
-./scripts/download_sparrow_engine_images.sh                 # CPU + GPU (~1.55 GB compressed)
-./scripts/download_sparrow_engine_images.sh --cpu-only       # CPU only (~43 MB compressed)
-./scripts/download_sparrow_engine_images.sh --gpu-only       # GPU only (~1.5 GB compressed)
-./scripts/download_sparrow_engine_images.sh --help           # full flag list
+# On a connected host:
+docker pull zhongqimiao/sparrow-engine-server:v0.1.28
+docker save zhongqimiao/sparrow-engine-server:v0.1.28 | zstd -o sparrow-engine-server-v0.1.28.tar.zst
+
+# Transfer the archive (USB, internal mirror, …), then on the offline host:
+zstd -dc sparrow-engine-server-v0.1.28.tar.zst | docker load
 ```
 
-The script:
-1. Downloads `sparrow-engine-{cpu,gpu}-prior-pin-<sha>.tar.zst` from the pinned Zenodo record into `./.sparrow-engine-cache/`
-2. Verifies SHA-256 against the digests recorded in `sparrow-engine/sparrow-engine.version`
-3. `docker load`s each tarball
-4. Retags the loaded image as the canonical `sparrow-engine-server[-gpu]:sparrow-combined` so `docker-compose.yml` finds it
+Use the `sparrow-engine-server-gpu` image for the GPU flavor. See §2.7 for the full air-gapped flow (CLI + wheel + Docker together).
 
-**Pin caveat**: the Zenodo record is refreshed manually per release, not on every commit. The downloader script's hardcoded record reflects whatever sparrow's `sparrow-engine.version` was pinned to when the script last shipped. Check the current pin SHA against this repo's HEAD before trusting the tarballs include the latest fixes; if you need bleeding edge, use Option B.
+#### Option C — build from source
 
-#### Option B — build from source
-
-~10 min the first time; cached layers on subsequent builds. Always reflects the current source tree at HEAD. Recommended when you need fixes that post-date the latest Zenodo refresh.
+~10 min the first time; cached layers on subsequent builds. Always reflects the current source tree at HEAD. Recommended when you need fixes that post-date the latest published image.
 
 ```bash
 git clone https://github.com/microsoft/SPARROW-Engine.git
@@ -422,7 +416,7 @@ ORT version is centralized at `docker/.ort-version` (single source of truth; bot
 
 #### Run the server
 
-After either Option A or B. The container expects models mounted read-only at `/models` (see [Model zoo](#model-zoo) for the download path).
+After Option A, B, or C. The container expects models mounted read-only at `/models` (see [Model zoo](#model-zoo) for the download path).
 
 ```bash
 # CPU — minimal
@@ -438,8 +432,8 @@ docker run -d --rm --name sparrow-engine-gpu -p 8080:8080 --gpus all \
   sparrow-engine-server-gpu:sparrow-combined
 
 # Verify
-curl -fsS http://localhost:8080/healthz
-curl -fsS http://localhost:8080/openapi.json | jq '.paths | keys | length'  # 15
+curl -fsS http://localhost:8080/healthz                         # liveness → {"alive":true}
+curl -fsS http://localhost:8080/v1/health | jq                  # readiness + catalog_size + version
 curl -fsS -X POST -F "image=@test.jpg" "http://localhost:8080/v1/detect?model=MDV6-yolov10-e"
 ```
 
@@ -448,7 +442,7 @@ curl -fsS -X POST -F "image=@test.jpg" "http://localhost:8080/v1/detect?model=MD
 Includes Docker-Compose-best-practices defaults: resource limits (4 GB / 4 CPU for CPU, 8 GB / 4 CPU + GPU reservation for GPU), `init: true` for proper signal handling, `restart: unless-stopped`, `read_only: true` filesystem, `no-new-privileges: true`, JSON log rotation (50 MB × 5 files), 30s graceful stop.
 
 ```bash
-cd Pytorch-Wildlife/sparrow-engine/docker
+cd SPARROW-Engine/sparrow-engine/docker
 docker compose --profile cpu up -d                # CPU
 docker compose --profile gpu up -d                # GPU (requires nvidia-container-toolkit)
 docker compose --profile cpu logs -f              # tail logs
@@ -472,7 +466,7 @@ The Compose file mounts `${SPARROW_ENGINE_MODEL_DIR:-./models}` read-only into t
 - Server boot lifecycle + cold-start characteristics: §11
 - Sparrow Studio Web stack consumes these images via digest pin: `sparrow/sparrow-engine/sparrow-engine.version` + `sparrow/scripts/sync_sparrow_engine.sh` in the companion repo
 
-**Cite**: `sparrow-engine/docker/{Dockerfile.cpu,Dockerfile.gpu,docker-compose.yml,.ort-version}`; `sparrow/scripts/download_sparrow_engine_images.sh` + `sparrow/sparrow-engine/sparrow-engine.version`.
+**Cite**: `sparrow-engine/docker/{Dockerfile.cpu,Dockerfile.gpu,docker-compose.yml,.ort-version}`; `.github/workflows/release.yml` (Docker Hub publish).
 
 ---
 
@@ -511,7 +505,7 @@ The Compose file mounts `${SPARROW_ENGINE_MODEL_DIR:-./models}` read-only into t
 | cuDNN | ≥ 9.10 | 9.8 hits "No valid engine configs for ConvFwd_" on SpeciesNet (sm_89 RTX 6000 Ada). Fixed in 9.10. |
 | GPU memory | ~2 GB headroom | MegaDetector v6 fits in ~1.2 GB; pipeline (detect + classify) ~2 GB peak. |
 
-**Cite**: `docs/lessons.md § cuDNN 9.8 has a Conv engine bug`; `docs/install.md § Hardware requirements`.
+**Cite**: `docs/lessons.md § cuDNN 9.8 has a Conv engine bug`; `installer/probe_gpu_quality.{sh,ps1}` (cuDNN ≥ 9.10 gate).
 
 ---
 
@@ -699,7 +693,7 @@ $ spe detect IMG1.jpg IMG2.jpg \
 ```
 
 **Why**: find boxes (animals, vehicles, people) in camera-trap images.
-**What**: per-image list of `{bbox: [x,y,w,h] normalized [0,1], class, confidence}`; optional COCO/megadet/CSV export; optional bbox overlay.
+**What**: per-image list of `{bbox: {x_min,y_min,x_max,y_max} normalized [0,1], label, confidence}`; optional COCO/megadet/CSV export; optional bbox overlay.
 **How**: sparrow-engine loads the manifest, runs ORT, parses the in-graph NMS output, returns normalized boxes.
 
 | Flag | What |
@@ -779,7 +773,7 @@ $ spe pipeline IMG.jpg \
 ```
 
 **Why**: most camera-trap workflows are "find the animal, then identify the species".
-**What**: per-image list of `{bbox, detection_confidence, top_k: [{label, confidence}]}`.
+**What**: per-image list of `{bbox, label, confidence, classification: {label, confidence}}` — each detection carries one optional top classification.
 **How**: sparrow-engine runs the detector, crops each box (normalized → pixel coords using the original image dims), runs the classifier on each crop.
 
 **Adhoc form**: no separate pipeline manifest needed — pass `--detector` and `--classifier` IDs and sparrow-engine wires them at runtime.
@@ -803,7 +797,7 @@ $ spe pipeline IMG.jpg \
 | `spe device` | Print `cpu` / `cuda:N` (compile-time only; not a real GPU check — see §3.2). |
 | `spe init` | Initialize the engine without running inference (warms ORT for the next command). |
 | `spe hash <file>` | SHA-256 of one file. |
-| `spe day-night <image>` | Returns `{is_day: bool, brightness: f32}` using BT.709 weighting. |
+| `spe day-night <image>` | Print `classification=<day\|night>` and `brightness=<mean brightness>` for one image. |
 
 ---
 
@@ -890,42 +884,47 @@ TFLite classifier is onboarded (RP-42-FU-1).
 ```
 
 **Why**: scientists work in notebooks. A Python wheel removes the install friction of the CLI.
-**What**: a single `import sparrow_engine` exposing 15 functions, plus IDE-ready type stubs (`_core.pyi`).
-**How**: PyO3 0.25 builds the Rust → Python bridge; the GIL is released during inference (`py.allow_threads`).
+**What**: a single `import sparrow_engine` exposing 20 functions, plus IDE-ready type stubs (`_core.pyi`).
+**How**: PyO3 0.29 builds the Rust → Python bridge; the GIL is released during inference (`py.allow_threads`).
 
 **Plain words**: "GIL" (Global Interpreter Lock) is the Python rule that only one thread can run Python bytecode at a time. Releasing it during inference means other threads keep working.
 
 ---
 
-### 6.1 The 15 public functions
+### 6.1 The 20 public functions
 
 | Function | Returns |
 |----------|---------|
-| `init(device="auto", model_dir=None)` | None; pre-loads the engine. |
-| `detect(inputs, model=None, threshold=None, max_detections=None, progress_callback=None)` | `list[DetectResult]` |
-| `classify(inputs, model, top_k=None, progress_callback=None)` | `list[ClassifyResult]` |
-| `detect_audio(inputs, model=None, threshold=None, raw_segments=False, progress_callback=None)` | `list[AudioResult]` |
-| `pipeline(inputs, detector, classifier, threshold=None, top_k=None, progress_callback=None)` | `list[PipelineResult]` |
+| `init(device="auto", model_dir=None)` | `None`; explicitly initializes the engine (optional — auto-inits on first call). |
+| `detect(input, model=None, threshold=None, max_detections=None, recursive=False, progress_callback=None)` | `list[DetectResult]`. `model` optional (CLI-aligned default `MDV6-yolov10-e`). |
+| `classify(input, model, top_k=5, recursive=False, progress_callback=None)` | `list[ClassifyResult]`. `model` **required**. |
+| `detect_audio(input, model=None, threshold=None, recursive=False, stride_s=None, segment_duration_s=None, progress_callback=None)` | `list[AudioResult]`. `model` optional (CLI-aligned default `md-audiobirds-v1`). |
+| `pipeline(input, detector, classifier, threshold=None, top_k=5, recursive=False, progress_callback=None)` | `list[PipelineResult]`. `detector` + `classifier` **required**. |
+| `embed(input, model, *, recursive=False, progress_callback=None)` | `np.ndarray` (`[dim]` single / `[N, dim]` many, float32; fails closed). `model` **required**. |
+| `embed_with_meta(input, model, *, recursive=False, progress_callback=None)` | `EmbedResult` or `list[EmbedResult]` (keeps identity metadata). |
+| `embed_aligned(input, model, *, recursive=False, progress_callback=None)` | `list[Optional[np.ndarray]]` — one slot per input, `None` per failed file. |
+| `embed_aligned_with_meta(input, model, *, recursive=False, progress_callback=None)` | `list[Optional[EmbedResult]]` — identity-preserving aligned variant. |
 | `list_models()` | `list[ModelInfo]` |
+| `list_models_extended()` | `list[ModelInfo]` (with encoder metadata when present) |
 | `model_info(model_id)` | `ModelInfo` |
 | `active_device()` | `str` (`"cpu"`, `"cuda:0"`, …) |
 | `hash_file(path)` | `str` (lowercase hex SHA-256) |
-| `day_night(path)` | `dict` with `is_day`, `brightness` |
-| `verify_model(model_id)` | `dict` with `ok`, `expected`, `actual` |
+| `day_night(path)` | `dict`: `{"classification": "day"\|"night", "mean_brightness": float}` |
+| `verify_model(model_id, model_dir=None)` | `dict` with `"status"` (`"ok"`, `"no_checksum"`, `"size_mismatch"`, `"checksum_mismatch"`) |
 | `summarize(results)` | `dict` of detection statistics |
-| `visualize(results, output_dir, ...)` | None; writes annotated PNGs for image detect / classify / pipeline results. |
-| `visualize_audio(results, output_dir, ...)` | None; writes mel-spectrogram PNGs with detection windows for `detect_audio` results. |
-| `export(results, format, output)` | None; writes consolidated batch output |
+| `visualize(items, output_dir=None, show_labels=False)` | `list[bytes]` (encoded image bytes; also writes to `output_dir` if set) |
+| `visualize_audio(items, output_dir=None, smooth=False, show_windows=False, show_ranges=True)` | `list[list[bytes]]` (per input → per-layer PNG bytes; also writes if `output_dir` set) |
+| `export(items, format, output=None, model_id=None)` | `str` (formatted content; also writes to `output` if set; `model_id` required for `megadet`) |
 
 Plus one public attribute: `sparrow_engine.__version__` (`str`) — the installed wheel's version, single-sourced from PyPI metadata via `importlib.metadata.version(...)`. Resolves the GPU distribution name first, then the CPU name, then falls back to `"unknown"` on a broken install. Lets a tester confirm the wheel they just installed without grepping `pip show`.
 
-**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py:212-247` (`__all__`); per-function defs in the same file; `__version__` resolver at `__init__.py:16-29`.
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py` (`__all__` + per-function defs); `_core.pyi` (types); `__version__` resolver via `importlib.metadata`.
 
 ---
 
 ### 6.2 Inputs — flexible at every call
 
-`detect`, `classify`, `detect_audio`, and `pipeline` accept any of:
+`detect`, `classify`, `embed`, `detect_audio`, and `pipeline` accept any of:
 
 ```
 Path-like               → sparrow_engine.detect("img.jpg", ...)           
@@ -937,22 +936,22 @@ Mixed                   → sparrow_engine.detect(["img.jpg", "/dir/"], ...)
 
 **Why**: lets you script the same way you'd hand someone a folder.
 **What**: a single input parameter that handles single files, lists, and folders.
-**How**: `_resolve_inputs()` (see `__init__.py:92-125`) walks any directory entries; non-image / non-audio files are skipped silently.
+**How**: `_resolve_inputs()` walks any directory entries; non-image / non-audio files are skipped silently.
 
 ---
 
 ### 6.3 Progress callback
 
 ```python
-def on_progress(filename: str, index: int, total: int) -> None: 
+def on_progress(index: int, total: int, filename: str) -> None:
     print(f"[{index}/{total}] {filename}")                      
 
 sparrow_engine.detect("/photos/", progress_callback=on_progress)
 ```
 
 **Why**: notebook UIs need a hook to draw progress bars; the CLI uses indicatif, Python needs its own.
-**What**: optional kwarg on the 4 batch methods.
-**How**: invoked once per input file (after that file completes).
+**What**: optional kwarg on the batch inference functions (`detect`, `classify`, the `embed` family, `detect_audio`, `pipeline`).
+**How**: invoked once per input file after its inference attempt resolves, with `(index, total, filename)` — `index` is 0-based. Raising from the callback aborts the batch.
 
 ---
 
@@ -1028,7 +1027,7 @@ for path, r in items[:3]:
 
 | Parameter | Default | Typical use |
 |---|---|---|
-| `model` | (required) | Model ID from the local registry. For MDv6: `"MDV6-yolov10-e"`. |
+| `model` | optional (default `MDV6-yolov10-e`) | Detector ID from the local registry; omit to use the CLI-aligned default. |
 | `threshold` | `None` (manifest default = 0.20 for MDv6) | Raise to 0.30+ to cut false positives; lower to recall more borderline boxes. |
 | `max_detections` | manifest default (300 for MDv6) | Hard cap per image after NMS. |
 | `recursive` | `False` | Pass a directory + `True` to walk subfolders. |
@@ -1042,7 +1041,7 @@ for path, r in items[:3]:
 
 If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/models/MDV6-yolov10-e/` next to its TOML manifest. The Python wheel does not auto-download models; manifests are bundled but ONNX weights must be staged manually (see §2.3 "What lands on disk" and `sparrow-engine/tools/examples/megadetector-v6.toml`).
 
-**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py:327` (`detect`), `:509` (`visualize`), `:566` (`export`); `sparrow-engine/sparrow-engine-python/python/sparrow_engine/_core.pyi:21-28` (`DetectResult`); `sparrow-engine/sparrow-engine-python/src/lib.rs:1557` (export format whitelist); `sparrow-engine/tools/examples/megadetector-v6.toml` (model + threshold defaults).
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py` (`detect`, `visualize`, `export`); `_core.pyi` (`DetectResult`); `sparrow-engine/sparrow-engine-python/src/lib.rs` (export format whitelist); `sparrow-engine/tools/examples/megadetector-v6.toml` (model + threshold defaults).
 
 ---
 
@@ -1051,26 +1050,26 @@ If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/mo
 ### Section overview
 
 ```
-                      sparrow-engine-server (axum, 15 routes)                        
-                                  │                                                  
-       ┌──────────────────────────┼─────────────────────────────┐                    
-       │ Inference (5)            │ Management (8)              │ Health (2)         
-       │                          │                             │                    
-       │ POST /v1/detect          │ GET    /v1/catalog          │ GET /v1/health     
-       │ POST /v1/detect/batch    │ GET    /v1/models           │ GET /healthz       
-       │ POST /v1/classify        │ POST   /v1/models/load      │                    
-       │ POST /v1/audio/detect    │ DELETE /v1/models/{id}      │                    
-       │ POST /v1/pipeline        │ GET    /v1/pipelines        │                    
-       │                          │ POST   /v1/pipelines        │                    
-       │                          │ POST   /v1/pipelines/load   │                    
-       │                          │ DELETE /v1/pipelines/{id}   │                    
-       └──────────────────────────┴─────────────────────────────┘                    
+                 sparrow-engine-server (axum HTTP API — 17 paths / 18 operations)
 
-       Per-request query params (Phase 4):  ?store=true · ?halt_on_store_failure=true
+  Inference (7)                    Management (8 paths / 9 ops)          Health (2)
+  -------------                    ----------------------------          ----------
+  POST /v1/detect                  GET    /v1/catalog        (open)      GET /v1/health
+  POST /v1/detect/batch            GET    /v1/models                     GET /healthz
+  POST /v1/embed                   POST   /v1/models/load
+  POST /v1/embed/batch             DELETE /v1/models/{id}
+  POST /v1/classify                POST   /v1/models/{id}/trt-warmup
+  POST /v1/pipeline                GET    /v1/pipelines
+  POST /v1/audio/detect            POST   /v1/pipelines
+                                   POST   /v1/pipelines/load
+                                   DELETE /v1/pipelines/{id}
+
+  Per-request query params (Phase 4):  ?store=true / ?halt_on_store_failure=true
+  All management routes except /v1/catalog require a bearer token when enforced (see 7.8).
 ```
 
 **Why**: a network-callable surface for Sparrow Studio Web and any HTTP consumer.
-**What**: 15-endpoint REST API, JSON in/out, configurable through `SPARROW_ENGINE_*` env vars.
+**What**: 17-path / 18-operation REST API; JSON responses (inference requests are `multipart/form-data`), configurable through `SPARROW_ENGINE_*` env vars.
 **How**: axum + tower-http; one ORT engine per process; an inference log sink + drift metrics fold in via Phase 4.
 
 **Cite**: `sparrow-engine/sparrow-engine-server/src/router.rs`.
@@ -1095,6 +1094,8 @@ If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/mo
 | `SPARROW_ENGINE_IDLE_UNLOAD_SEC` | `1800` (30 min) | Idle-reaper threshold; set to `0` to disable. |
 | `SPARROW_ENGINE_IDLE_UNLOAD_KEEP_LAST_N` | `1` | Keep the N most-recently-used even if idle. |
 | `SPARROW_ENGINE_PRELOAD` | unset | Comma-separated model IDs to eagerly load at boot. Unknown IDs fail boot. |
+| `SPARROW_ENGINE_MANAGEMENT_TOKEN` | unset | Bearer token for `/v1/models*` + `/v1/pipelines*` (see §7.8). |
+| `SPARROW_ENGINE_MANAGEMENT_AUTH` | `auto` | `auto` (enforce when a token is set, else fail closed off-loopback) or `disabled`. |
 
 **Cite**: `sparrow-engine/sparrow-engine-server/src/config.rs`.
 
@@ -1118,19 +1119,110 @@ $ sparrow-engine-server --unknown     # exit 2, clap error message
 
 ---
 
-### 7.3 Inference endpoints (5)
+### 7.3 Inference endpoints (7)
 
-| Endpoint | Body | Response |
-|----------|------|----------|
-| `POST /v1/detect?model=<id>` | multipart image OR JSON `{image_b64}` | `{detections: [{bbox:[x,y,w,h], class, confidence}, ...], inference_ms}` |
-| `POST /v1/detect/batch?model=<id>` | JSON `{images: [b64, ...]}` | `{results: [...same-as-detect...], inference_ms}` |
-| `POST /v1/classify?model=<id>&top_k=N` | multipart image | `{predictions: [{label, confidence}, ...], inference_ms}` |
-| `POST /v1/audio/detect?model=<id>&threshold=<f>` | multipart WAV | `{ranges: [...], inference_ms}` (or per-window with `raw_segments=true`) |
-| `POST /v1/pipeline?detector=<id>&classifier=<id>` (Shape X) OR `?pipeline=<id>` (Shape Y) | multipart image | `{results: [{bbox, detection_confidence, top_k: [...]}], inference_ms}` |
+All inference requests are `multipart/form-data` (there is no JSON-body / base64
+path). All responses are JSON. Every endpoint also accepts the Phase 4
+`?store=` / `?halt_on_store_failure=` query params (§7.4).
 
-**Plain words**: "Shape X" = adhoc detector+classifier passed as query params; "Shape Y" = a named pipeline alias previously registered via `POST /v1/pipelines`.
+| Endpoint | Query params | Multipart field(s) | Response |
+|----------|--------------|--------------------|----------|
+| `POST /v1/detect` | `model` (req), `threshold`, `max_detections` | `image` | `DetectResponse` |
+| `POST /v1/detect/batch` | `model` (req), `threshold`, `max_detections`, `batch_size` | `images` (repeated) | `BatchDetectResponse` |
+| `POST /v1/embed` | `model` (req) | `image` | `EmbedResponse` |
+| `POST /v1/embed/batch` | `model` (req) | `images` (repeated) | `EmbedBatchResponse` |
+| `POST /v1/classify` | `model` (req), `top_k` | `image` | `ClassifyResponse` |
+| `POST /v1/pipeline` | `pipeline` OR `detector`+`classifier` (req); `threshold`, `max_detections`, `top_k` | `image` | `PipelineResponse` |
+| `POST /v1/audio/detect` | `model` (req), `threshold`, `segment_duration`, `stride` | `audio` | `AudioDetectResponse` |
 
-**Cite**: `sparrow-engine/sparrow-engine-server/src/router.rs:24-32`; `sparrow-engine/sparrow-engine-server/src/handlers/*.rs`.
+`POST /v1/pipeline` selects EITHER a named alias (`?pipeline=<id>`, registered
+via `POST /v1/pipelines`) OR an ad-hoc pair (`?detector=<id>&classifier=<id>`) —
+never both.
+
+**Example — detection**
+
+```bash
+curl -X POST -F "image=@photo.jpg" \
+  "http://localhost:8080/v1/detect?model=megadetector-v6&threshold=0.2"
+```
+```json
+{
+  "model_id": "megadetector-v6",
+  "image_size": [1920, 1080],
+  "processing_time_ms": 13.4,
+  "detections": [
+    {"label": "animal", "label_id": 0, "confidence": 0.97,
+     "bbox": {"x_min": 0.31, "y_min": 0.42, "x_max": 0.58, "y_max": 0.79}}
+  ]
+}
+```
+
+`bbox` is an object with normalized `[0,1]` `x_min/y_min/x_max/y_max` (not an
+`[x,y,w,h]` array). `POST /v1/detect/batch` wraps per-image results:
+`{"model_id", "count", "processing_time_ms", "results": [{"index", "image_size", "detections": [...]}]}`.
+
+**Example — classify**
+
+```json
+{
+  "model_id": "SpeciesNet-Crop",
+  "image_size": [640, 640],
+  "processing_time_ms": 5.1,
+  "classifications": [{"label": "deer", "label_id": 12, "confidence": 0.88}]
+}
+```
+
+**Example — pipeline** (detect → classify; each detection carries an optional `classification`)
+
+```json
+{
+  "pipeline_id": "adhoc:MDV6-yolov10-e+SpeciesNet-Crop",
+  "image_size": [1920, 1080],
+  "processing_time_ms": 21.7,
+  "detections": [
+    {"label": "animal", "label_id": 0, "confidence": 0.96,
+     "bbox": {"x_min": 0.31, "y_min": 0.42, "x_max": 0.58, "y_max": 0.79},
+     "classification": {"label": "deer", "label_id": 12, "confidence": 0.81}}
+  ]
+}
+```
+
+**Example — audio** (`classes` is present only for multi-class segments)
+
+```json
+{
+  "model_id": "md-audiobirds-v1",
+  "duration_s": 60.0,
+  "sample_rate": 48000,
+  "processing_time_ms": 8.5,
+  "segments": [
+    {"start_time_s": 3.0, "end_time_s": 6.0, "confidence": 0.93,
+     "classes": [{"class_idx": 0, "label": "sparrow", "probability": 0.71}]}
+  ]
+}
+```
+
+**Example — embed** (identity metadata travels with the vector)
+
+```json
+{
+  "embed_schema_version": "1.0",
+  "model_id": "bioclip-2-v1",
+  "embedding_version": "bioclip-2-space-1",
+  "model_hash": "…",
+  "embedding_dim": 768,
+  "normalized": true,
+  "metric": "cosine",
+  "image_size": [224, 224],
+  "processing_time_ms": 4.0,
+  "embedding": [0.013, -0.041]
+}
+```
+
+`POST /v1/embed/batch` returns the identity fields plus `"count"`,
+`"processing_time_ms"`, and `"results": [{"index", "image_size", "processing_time_ms", "embedding"}]`.
+
+**Cite**: `sparrow-engine/sparrow-engine-server/src/router.rs`; `sparrow-engine/sparrow-engine-server/src/response.rs` (response structs); `sparrow-engine/sparrow-engine-server/src/handlers/*.rs`.
 
 ---
 
@@ -1160,10 +1252,11 @@ POST /v1/detect?model=<id>&store=true&halt_on_store_failure=false
 GET /v1/catalog            → all discovered models + pipelines + loaded state        
 GET /v1/models             → only currently-loaded ORT sessions                      
 POST /v1/models/load       → load by id (idempotent: get_or_load)                    
-DELETE /v1/models/{id}     → unload one model                                        
+DELETE /v1/models/{id}     → unload one model
+POST /v1/models/{id}/trt-warmup → kick a TensorRT warm-up (202 started / 200 already-ready)
 
 GET /v1/pipelines          → list registered alias pipelines                         
-POST /v1/pipelines         → create named alias (idempotent; ?replace=true overrides)
+POST /v1/pipelines         → create named alias — JSON body {id, detector, classifier, replace?, persist?}
 POST /v1/pipelines/load    → load all component models of an existing alias          
 DELETE /v1/pipelines/{id}  → remove an alias                                         
 ```
@@ -1201,10 +1294,44 @@ loop every clamp(SPARROW_ENGINE_IDLE_UNLOAD_SEC, 1, 60) seconds:
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /v1/health` | `{status: "ready" \| "no_models"}` — `ready` requires at least one loaded model. |
-| `GET /healthz` | `{status: "alive"}` — process liveness; passes even with zero loaded models. |
+| `GET /v1/health` | `{status, models_loaded, pipelines_loaded, catalog_size, version}`. `status` is `"ready"` when the discovered catalog is non-empty (`catalog_size > 0`) and `"no_models"` when it is empty. Lazy boot means models load on demand, so `ready` does **not** require a loaded model — `models_loaded` may be `0`. |
+| `GET /healthz` | `{"alive": true}` — process liveness; passes even with an empty catalog. |
 
 **Cite**: `sparrow-engine/sparrow-engine-server/src/handlers/health.rs`.
+
+---
+
+### 7.8 Management API authorization
+
+The management routes (`/v1/models*`, `/v1/pipelines*`) can load/unload models
+and create/delete pipeline aliases. `/v1/catalog` is read-only and stays **open**;
+Sparrow Studio and its workers poll it without credentials.
+
+| Variable | Effect |
+|----------|--------|
+| `SPARROW_ENGINE_MANAGEMENT_TOKEN` | Bearer token required on the management routes. Empty/unset = no token. |
+| `SPARROW_ENGINE_MANAGEMENT_AUTH` | `auto` (default) or `disabled`. |
+
+The effective policy resolves from the mode, the token, and the bind address:
+
+| Mode | Token | Bind | Result |
+|------|-------|------|--------|
+| `auto` | set | any | Enforce — `Authorization: Bearer <token>` required (scheme case-insensitive). |
+| `auto` | unset | loopback (`127.0.0.1` / `::1`) | Open — local-dev convenience. |
+| `auto` | unset | non-loopback (`0.0.0.0`, a routable IP) | **Deny-all** — every management request gets `401`, failing closed so a deployment that forgot the token does not silently expose an open control plane. |
+| `disabled` | — | — | Open — explicit opt-out for trusted networks. |
+
+Because the container default bind is `0.0.0.0:8080`, a served deployment with no
+token configured resolves to deny-all. Set `SPARROW_ENGINE_MANAGEMENT_TOKEN`, or
+set `SPARROW_ENGINE_MANAGEMENT_AUTH=disabled` to accept an open control plane.
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"model_id":"megadetector-v6"}' \
+  http://localhost:8080/v1/models/load
+```
+
+**Cite**: `sparrow-engine/sparrow-engine-server/src/auth.rs`; `sparrow-engine/sparrow-engine-server/src/config.rs` (`resolve_management_auth`).
 
 ---
 
