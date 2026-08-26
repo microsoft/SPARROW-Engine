@@ -221,7 +221,13 @@ pub struct AudioSegmentResponse {
 
 impl From<AudioSegment> for AudioSegmentResponse {
     fn from(s: AudioSegment) -> Self {
-        let classes = if s.classes.len() > 1 {
+        Self::from_segment(s, false)
+    }
+}
+
+impl AudioSegmentResponse {
+    pub fn from_segment(s: AudioSegment, include_single_class: bool) -> Self {
+        let classes = if !s.classes.is_empty() && (include_single_class || s.classes.len() > 1) {
             Some(
                 s.classes
                     .iter()
@@ -295,6 +301,20 @@ mod tests {
         .unwrap();
 
         assert!(!value.as_object().unwrap().contains_key("classes"));
+    }
+
+    #[test]
+    fn audio_segment_json_includes_single_class_for_multi_label_path() {
+        let value = serde_json::to_value(AudioSegmentResponse::from_segment(
+            segment(vec![audio_class(2, "whistle", 0.9)]),
+            true,
+        ))
+        .unwrap();
+
+        let classes = value["classes"].as_array().unwrap();
+        assert_eq!(classes.len(), 1);
+        assert_eq!(classes[0]["class_idx"], 2);
+        assert_eq!(classes[0]["label"], "whistle");
     }
 
     #[test]

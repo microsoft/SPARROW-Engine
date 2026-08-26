@@ -127,6 +127,11 @@ pub fn merge_segments(segments: &[AudioSegment], gap_s: f32) -> Vec<AudioRange> 
     merge_segments_with_class(segments, gap_s, |_| None)
 }
 
+/// Merge thresholded multi-label segments independently for every class.
+pub fn merge_segments_multilabel(segments: &[AudioSegment], gap_s: f32) -> Vec<AudioRange> {
+    sparrow_engine_core::audio_postprocess::merge_segments_multilabel(segments, gap_s)
+}
+
 /// Like [`merge_segments`] but with a caller-supplied class mapper.
 pub fn merge_segments_with_class<F>(
     segments: &[AudioSegment],

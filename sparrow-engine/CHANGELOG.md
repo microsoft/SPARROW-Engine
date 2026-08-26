@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `multi_label` raw-audio postprocessing on CPU and GPU. Manifests
+  declare whether the graph emits logits or probabilities, a per-class
+  threshold, a result cap, and an optional fixed sub-frame axis. HTTP, CLI,
+  Python, and FFI v2 preserve the existing `AudioClass` vectors.
+
+### Fixed
+
+- Resize-plus-center-crop preprocessing now uses torchvision's ties-to-even
+  center offset instead of integer floor. Odd resize/crop differences no
+  longer shift the crop by one pixel on CPU or GPU. GPU bicubic
+  resize-plus-crop uses the shared CPU reference filter before tensor upload,
+  preventing model-amplified CPU/GPU score divergence.
+
 ## v0.1.28
 
 ### Added

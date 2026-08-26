@@ -351,6 +351,24 @@ fn warn_trt_mode_enabled_contradiction(mode: TrtMode, enabled: bool) {
     );
 }
 
+/// Activation policy for independent multi-label class outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiLabelActivation {
+    /// Apply an independent sigmoid to every class logit.
+    Sigmoid,
+    /// The model already emits independent probabilities in `[0, 1]`.
+    None,
+}
+
+impl MultiLabelActivation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sigmoid => "sigmoid",
+            Self::None => "none",
+        }
+    }
+}
+
 /// Postprocessing method: how raw model output becomes detections/classifications.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PostprocessMethod {
@@ -385,6 +403,13 @@ pub enum PostprocessMethod {
     Softmax,
     /// Sigmoid activation for binary audio detection.
     Sigmoid { confidence_threshold: f32 },
+    /// Thresholded independent class probabilities for raw-audio classifiers.
+    MultiLabel {
+        confidence_threshold: f32,
+        activation: MultiLabelActivation,
+        max_classes: usize,
+        frames_per_window: usize,
+    },
     /// Embedding vector output for image encoders.
     Embedding { normalize: bool },
 }
@@ -435,6 +460,7 @@ impl PostprocessMethod {
             PostprocessMethod::RetinaNetSoftNms { .. } => "retinanet_soft_nms",
             PostprocessMethod::Softmax => "softmax",
             PostprocessMethod::Sigmoid { .. } => "sigmoid",
+            PostprocessMethod::MultiLabel { .. } => "multi_label",
             PostprocessMethod::Embedding { .. } => "embedding",
         }
     }
@@ -881,6 +907,9 @@ struct RawInference {
 struct RawPostprocessing {
     method: String,
     confidence_threshold: Option<f32>,
+    activation: Option<String>,
+    max_classes: Option<usize>,
+    frames_per_window: Option<usize>,
     iou_threshold: Option<f32>,
     candidate_threshold: Option<f32>,
     sigma: Option<f32>,
@@ -1506,6 +1535,55 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 confidence_threshold,
             }
         }
+        "multi_label" => {
+            let confidence_threshold =
+                raw.postprocessing.confidence_threshold.ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(
+                        "multi_label requires 'confidence_threshold' field".to_string(),
+                    )
+                })?;
+            if !confidence_threshold.is_finite() || !(0.0..=1.0).contains(&confidence_threshold) {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "multi_label confidence_threshold must be finite and in [0.0, 1.0], got {confidence_threshold}"
+                )));
+            }
+            let activation = match raw.postprocessing.activation.as_deref() {
+                Some("sigmoid") => MultiLabelActivation::Sigmoid,
+                Some("none") => MultiLabelActivation::None,
+                Some(other) => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "multi_label activation must be 'sigmoid' or 'none', got '{other}'"
+                    )));
+                }
+                None => {
+                    return Err(SparrowEngineError::InvalidManifest(
+                        "multi_label requires 'activation' field ('sigmoid' or 'none')".to_string(),
+                    ));
+                }
+            };
+            let max_classes = raw.postprocessing.max_classes.ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "multi_label requires 'max_classes' field".to_string(),
+                )
+            })?;
+            if max_classes == 0 {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "multi_label max_classes must be >= 1".to_string(),
+                ));
+            }
+            let frames_per_window = raw.postprocessing.frames_per_window.unwrap_or(1);
+            if frames_per_window == 0 {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "multi_label frames_per_window must be >= 1".to_string(),
+                ));
+            }
+            PostprocessMethod::MultiLabel {
+                confidence_threshold,
+                activation,
+                max_classes,
+                frames_per_window,
+            }
+        }
         "embedding" => PostprocessMethod::Embedding {
             normalize: raw.postprocessing.normalize.unwrap_or(true),
         },
@@ -1520,7 +1598,8 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         match (&preprocess_method, &postprocess_method) {
             (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Sigmoid { .. })
             | (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Softmax)
-            | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax) => {}
+            | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax)
+            | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::MultiLabel { .. }) => {}
             (_, PostprocessMethod::Embedding { .. }) => {
                 return Err(SparrowEngineError::InvalidManifest(
                     "audio encoders are not yet supported".to_string(),
@@ -1531,6 +1610,44 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                     "unsupported audio preprocess/postprocess combination: preprocessing method '{}' with postprocessing method '{}'",
                     raw.preprocessing.method,
                     raw.postprocessing.method
+                )));
+            }
+        }
+    }
+
+    if matches!(postprocess_method, PostprocessMethod::MultiLabel { .. })
+        && !matches!(preprocess_method, PreprocessMethod::RawAudio { .. })
+    {
+        return Err(SparrowEngineError::InvalidManifest(
+            "multi_label postprocessing currently requires raw_audio preprocessing".to_string(),
+        ));
+    }
+
+    if let (
+        PreprocessMethod::RawAudio { window_samples, .. },
+        PostprocessMethod::MultiLabel {
+            frames_per_window, ..
+        },
+    ) = (&preprocess_method, &postprocess_method)
+    {
+        if *frames_per_window > *window_samples as usize {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "multi_label frames_per_window ({frames_per_window}) must not exceed raw_audio window_samples ({window_samples})"
+            )));
+        }
+        if *frames_per_window > 1 {
+            let InferenceStrategy::SlidingWindow {
+                segment_duration_s,
+                segment_stride_s,
+            } = inference_strategy
+            else {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "multi_label frame outputs require sliding_window inference".to_string(),
+                ));
+            };
+            if (segment_duration_s - segment_stride_s).abs() > 1e-6 {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "multi_label frames_per_window > 1 requires non-overlapping windows: segment_stride_s ({segment_stride_s}) must equal segment_duration_s ({segment_duration_s})"
                 )));
             }
         }
@@ -1555,6 +1672,12 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             "{} image classifier requires [labels]",
             postprocess_method.as_str()
         )));
+    }
+
+    if matches!(postprocess_method, PostprocessMethod::MultiLabel { .. }) && label_file.is_none() {
+        return Err(SparrowEngineError::InvalidManifest(
+            "multi_label audio classifiers require [labels]".to_string(),
+        ));
     }
 
     // -- Validate tile dimensions when tiled --
@@ -4115,6 +4238,162 @@ format = "one_per_line"
             }
         );
         assert_eq!(manifest.postprocess_method, PostprocessMethod::Softmax);
+    }
+
+    #[test]
+    fn test_load_raw_audio_multi_label_manifest() {
+        let toml = make_raw_audio_toml(&[
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12\nframes_per_window = 4",
+            ),
+        ]);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        assert_eq!(
+            manifest.postprocess_method,
+            PostprocessMethod::MultiLabel {
+                confidence_threshold: 0.25,
+                activation: MultiLabelActivation::None,
+                max_classes: 12,
+                frames_per_window: 4,
+            }
+        );
+        assert_eq!(
+            crate::model_type::derive_model_type(
+                &manifest.preprocess_method,
+                &manifest.postprocess_method,
+                manifest.subtype,
+            ),
+            crate::types::ModelType::AudioClassifier,
+        );
+    }
+
+    #[test]
+    fn test_multi_label_defaults_to_one_frame_per_window() {
+        let toml = make_raw_audio_toml(&[
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"sigmoid\"\nmax_classes = 5",
+            ),
+        ]);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        assert!(matches!(
+            manifest.postprocess_method,
+            PostprocessMethod::MultiLabel {
+                activation: MultiLabelActivation::Sigmoid,
+                frames_per_window: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_multi_label_rejects_missing_or_invalid_fields() {
+        for (post_extra, expected) in [
+            (
+                "activation = \"none\"\nmax_classes = 12",
+                "confidence_threshold",
+            ),
+            (
+                "confidence_threshold = 0.25\nmax_classes = 12",
+                "activation",
+            ),
+            (
+                "confidence_threshold = 0.25\nactivation = \"softmax\"\nmax_classes = 12",
+                "activation",
+            ),
+            (
+                "confidence_threshold = 0.25\nactivation = \"none\"",
+                "max_classes",
+            ),
+            (
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 0",
+                "max_classes",
+            ),
+            (
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12\nframes_per_window = 0",
+                "frames_per_window",
+            ),
+        ] {
+            let toml = make_raw_audio_toml(&[
+                ("postmethod", r#""multi_label""#),
+                ("post_extra", post_extra),
+            ]);
+            let dir = write_temp_file("manifest.toml", &toml);
+            let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?} in {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_label_requires_labels() {
+        let toml = make_raw_audio_toml(&[
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12",
+            ),
+        ]);
+        let toml = remove_labels_section(&toml);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("require [labels]"));
+    }
+
+    #[test]
+    fn test_multi_label_rejects_non_raw_audio_preprocessing() {
+        let toml = make_model_toml(&[
+            ("method", r#""resize""#),
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12",
+            ),
+        ]);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("requires raw_audio"));
+    }
+
+    #[test]
+    fn test_multi_label_frame_outputs_require_non_overlapping_windows() {
+        let toml = make_raw_audio_toml(&[
+            (
+                "inference_extra",
+                "segment_duration_s = 5.0\nsegment_stride_s = 2.5",
+            ),
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12\nframes_per_window = 4",
+            ),
+        ]);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("non-overlapping windows"));
+    }
+
+    #[test]
+    fn test_multi_label_frames_must_not_exceed_window_samples() {
+        let toml = make_raw_audio_toml(&[
+            ("postmethod", r#""multi_label""#),
+            (
+                "post_extra",
+                "confidence_threshold = 0.25\nactivation = \"none\"\nmax_classes = 12\nframes_per_window = 160001",
+            ),
+        ]);
+        let dir = write_temp_file("manifest.toml", &toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("must not exceed"));
     }
 
     #[test]

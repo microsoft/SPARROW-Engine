@@ -2072,6 +2072,17 @@ fn audio_visualize_output_filter_threshold(
     manifest_threshold.map(|threshold| cli_threshold.unwrap_or(threshold))
 }
 
+fn audio_merge_gap_s(
+    manifest_window_s: f32,
+    effective_stride_s: f32,
+    frames_per_window: Option<usize>,
+) -> f32 {
+    frames_per_window
+        .map(|frames| (manifest_window_s / frames as f32).min(effective_stride_s))
+        .unwrap_or(effective_stride_s)
+        + 1e-3
+}
+
 fn cmd_detect_audio(
     device_str: &str,
     model_dir: &Option<PathBuf>,
@@ -2114,20 +2125,28 @@ fn cmd_detect_audio_with_engine(
     let model_id = args.model.as_deref().unwrap_or("md-audiobirds-v1");
     let handle = engine.get_or_load_model(model_id)?;
     let audio_config = handle.audio_preprocess_config();
+    let multi_label_frames = match &handle.manifest().postprocess_method {
+        engine_dispatch::manifest::PostprocessMethod::MultiLabel {
+            frames_per_window, ..
+        } => Some(*frames_per_window),
+        _ => None,
+    };
+    let is_multi_label = multi_label_frames.is_some();
 
     // Resolve window + stride from the manifest, then apply CLI overrides.
     // The manifest provides defaults; `--stride` / `--segment-duration`
     // override them at runtime. Falls back to MD_AudioBirds defaults if the
     // model doesn't expose sliding-window params (e.g., a future single-shot
-    // audio model). The merge-gap is `stride + 1ms` so strictly-adjacent
-    // windows merge while a true silence gap ≥ stride splits the range.
+    // audio model). Binary/softmax paths merge at the window stride.
+    // Multi-label frame outputs merge at the emitted sub-frame duration so
+    // below-threshold frames remain real gaps.
     let (manifest_window_s, manifest_stride_s) = handle.audio_window_stride().unwrap_or((
         MD_AUDIOBIRDS_DEFAULT_WINDOW_S,
         MD_AUDIOBIRDS_DEFAULT_STRIDE_S,
     ));
     let window_s = args.segment_duration_s.unwrap_or(manifest_window_s);
     let stride_s = args.stride.unwrap_or(manifest_stride_s);
-    let merge_gap_s = stride_s + 1e-3;
+    let merge_gap_s = audio_merge_gap_s(manifest_window_s, stride_s, multi_label_frames);
 
     // When --visualize is set for thresholded sigmoid detectors, layers 02
     // (segments) and 03 (heatmap) need the full per-window confidence
@@ -2136,10 +2155,14 @@ fn cmd_detect_audio_with_engine(
     // threshold (CLI override > manifest default). Thresholdless softmax
     // classifiers such as Perch 2 have no production threshold to restore, so
     // visualization must not add a CLI-only 0.5 output filter.
-    let output_filter_threshold = audio_visualize_output_filter_threshold(
-        args.threshold,
-        handle.audio_confidence_threshold(),
-    );
+    let output_filter_threshold = matches!(
+        &handle.manifest().postprocess_method,
+        engine_dispatch::manifest::PostprocessMethod::Sigmoid { .. }
+    )
+    .then(|| {
+        audio_visualize_output_filter_threshold(args.threshold, handle.audio_confidence_threshold())
+    })
+    .flatten();
     let inference_threshold = if args.visualize && output_filter_threshold.is_some() {
         Some(0.0)
     } else {
@@ -2165,7 +2188,14 @@ fn cmd_detect_audio_with_engine(
     // the pre-Phase-3.5 3-column schema.
     if args.print && matches!(args.format, OutputFormat::Csv) {
         if args.raw_segments {
-            writeln!(out, "file,model_id,idx,start_time_s,end_time_s,confidence")?;
+            if is_multi_label {
+                writeln!(
+                    out,
+                    "file,model_id,segment_idx,class_rank,start_time_s,end_time_s,confidence,class_idx,class,probability"
+                )?;
+            } else {
+                writeln!(out, "file,model_id,idx,start_time_s,end_time_s,confidence")?;
+            }
         } else {
             writeln!(
                 out,
@@ -2212,9 +2242,12 @@ fn cmd_detect_audio_with_engine(
                         file,
                         model_id,
                         output_view,
-                        &args.format,
-                        args.raw_segments,
-                        merge_gap_s,
+                        AudioOutputOptions {
+                            format: &args.format,
+                            raw_segments: args.raw_segments,
+                            merge_gap_s,
+                            is_multi_label,
+                        },
                     )?;
                 }
                 if args.visualize {
@@ -2232,6 +2265,20 @@ fn cmd_detect_audio_with_engine(
                     const VIZ_MERGE_THRESHOLD: f32 = 0.9;
                     let ranges_owned = if args.raw_segments {
                         None
+                    } else if is_multi_label {
+                        let threshold = handle
+                            .audio_confidence_threshold()
+                            .unwrap_or(VIZ_MERGE_THRESHOLD);
+                        let high_confidence: Vec<_> = result
+                            .segments
+                            .iter()
+                            .filter(|segment| segment.confidence >= threshold)
+                            .cloned()
+                            .collect();
+                        Some(detect_audio::merge_segments_multilabel(
+                            &high_confidence,
+                            merge_gap_s,
+                        ))
                     } else {
                         let slots = engine_dispatch::viz::segments_to_overlap_mean_slots(
                             &result.segments,
@@ -2292,19 +2339,39 @@ fn cmd_detect_audio_with_engine(
     Ok(())
 }
 
+struct AudioOutputOptions<'a> {
+    format: &'a OutputFormat,
+    raw_segments: bool,
+    merge_gap_s: f32,
+    is_multi_label: bool,
+}
+
 fn write_audio_output(
     out: &mut impl Write,
     file: &Path,
     model_id: &str,
     result: &AudioDetectResult,
-    format: &OutputFormat,
-    raw_segments: bool,
-    merge_gap_s: f32,
+    options: AudioOutputOptions<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if raw_segments {
-        write_audio_output_raw(out, file, model_id, result, format)
+    if options.raw_segments {
+        write_audio_output_raw(
+            out,
+            file,
+            model_id,
+            result,
+            options.format,
+            options.is_multi_label,
+        )
     } else {
-        write_audio_output_merged(out, file, model_id, result, format, merge_gap_s)
+        write_audio_output_merged(
+            out,
+            file,
+            model_id,
+            result,
+            options.format,
+            options.merge_gap_s,
+            options.is_multi_label,
+        )
     }
 }
 
@@ -2315,6 +2382,7 @@ fn write_audio_output_raw(
     model_id: &str,
     result: &AudioDetectResult,
     format: &OutputFormat,
+    is_multi_label: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match format {
         OutputFormat::Json => {
@@ -2330,16 +2398,17 @@ fn write_audio_output_raw(
                         start_time_s: s.start_time_s,
                         end_time_s: s.end_time_s,
                         confidence: s.confidence,
-                        classes: (s.classes.len() > 1).then(|| {
-                            s.classes
-                                .iter()
-                                .map(|c| AudioClassOutput {
-                                    class_idx: c.class_idx,
-                                    label: c.label.clone(),
-                                    probability: c.probability,
-                                })
-                                .collect()
-                        }),
+                        classes: (!s.classes.is_empty() && (is_multi_label || s.classes.len() > 1))
+                            .then(|| {
+                                s.classes
+                                    .iter()
+                                    .map(|c| AudioClassOutput {
+                                        class_idx: c.class_idx,
+                                        label: c.label.clone(),
+                                        probability: c.probability,
+                                    })
+                                    .collect()
+                            }),
                     })
                     .collect(),
             };
@@ -2348,17 +2417,43 @@ fn write_audio_output_raw(
         }
         OutputFormat::Csv => {
             let file_str = engine_dispatch::export::csv_escape(&file.display().to_string());
-            for (idx, s) in result.segments.iter().enumerate() {
-                writeln!(
-                    out,
-                    "{},{},{},{:.6},{:.6},{:.6}",
-                    file_str,
-                    engine_dispatch::export::csv_escape(model_id),
-                    idx,
-                    s.start_time_s,
-                    s.end_time_s,
-                    s.confidence,
-                )?;
+            if is_multi_label {
+                for (segment_idx, segment) in result.segments.iter().enumerate() {
+                    for (class_rank, class) in segment.classes.iter().enumerate() {
+                        let label = class
+                            .label
+                            .as_deref()
+                            .map(engine_dispatch::export::csv_escape)
+                            .unwrap_or_default();
+                        writeln!(
+                            out,
+                            "{},{},{},{},{:.6},{:.6},{:.6},{},{},{:.6}",
+                            file_str,
+                            engine_dispatch::export::csv_escape(model_id),
+                            segment_idx,
+                            class_rank,
+                            segment.start_time_s,
+                            segment.end_time_s,
+                            segment.confidence,
+                            class.class_idx,
+                            label,
+                            class.probability,
+                        )?;
+                    }
+                }
+            } else {
+                for (idx, s) in result.segments.iter().enumerate() {
+                    writeln!(
+                        out,
+                        "{},{},{},{:.6},{:.6},{:.6}",
+                        file_str,
+                        engine_dispatch::export::csv_escape(model_id),
+                        idx,
+                        s.start_time_s,
+                        s.end_time_s,
+                        s.confidence,
+                    )?;
+                }
             }
         }
     }
@@ -2373,10 +2468,15 @@ fn write_audio_output_merged(
     result: &AudioDetectResult,
     format: &OutputFormat,
     merge_gap_s: f32,
+    is_multi_label: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ranges = detect_audio::merge_segments_with_class(&result.segments, merge_gap_s, |s| {
-        s.classes.first().and_then(|c| c.label.clone())
-    });
+    let ranges = if is_multi_label {
+        detect_audio::merge_segments_multilabel(&result.segments, merge_gap_s)
+    } else {
+        detect_audio::merge_segments_with_class(&result.segments, merge_gap_s, |s| {
+            s.classes.first().and_then(|c| c.label.clone())
+        })
+    };
     match format {
         OutputFormat::Json => {
             let output = AudioDetectMergedOutput {
@@ -3115,6 +3215,13 @@ mod tests {
     }
 
     #[test]
+    fn audio_merge_gap_uses_multilabel_subframe_duration() {
+        assert!((audio_merge_gap_s(1.0, 1.0, Some(4)) - 0.251).abs() < 1e-6);
+        assert!((audio_merge_gap_s(5.0, 1.0, Some(1)) - 1.001).abs() < 1e-6);
+        assert!((audio_merge_gap_s(1.0, 0.3, None) - 0.301).abs() < 1e-6);
+    }
+
+    #[test]
     fn validate_pipeline_ids_rejects_known_incompatible_pair() {
         let available = vec![
             model_info("owl-t", ModelType::OverheadDetector),
@@ -3847,9 +3954,12 @@ mod tests {
             Path::new("bird.wav"),
             "md-audiobirds-v1",
             &result,
-            &OutputFormat::Json,
-            /* raw_segments = */ false,
-            0.31,
+            AudioOutputOptions {
+                format: &OutputFormat::Json,
+                raw_segments: false,
+                merge_gap_s: 0.31,
+                is_multi_label: false,
+            },
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -3881,9 +3991,12 @@ mod tests {
             Path::new("bird.wav"),
             "md-audiobirds-v1",
             &result,
-            &OutputFormat::Json,
-            /* raw_segments = */ true,
-            0.31,
+            AudioOutputOptions {
+                format: &OutputFormat::Json,
+                raw_segments: true,
+                merge_gap_s: 0.31,
+                is_multi_label: false,
+            },
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -3921,6 +4034,7 @@ mod tests {
             "perch-v2",
             &result,
             &OutputFormat::Json,
+            false,
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -3969,6 +4083,7 @@ mod tests {
             &different_top1,
             &OutputFormat::Json,
             0.31,
+            false,
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -4008,6 +4123,7 @@ mod tests {
             &same_top1,
             &OutputFormat::Json,
             0.31,
+            false,
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -4023,6 +4139,68 @@ mod tests {
     }
 
     #[test]
+    fn audio_multilabel_raw_outputs_preserve_single_class_and_secondary_ranges() {
+        let result = fake_audio_result(vec![
+            seg_with_classes(
+                0.0,
+                0.25,
+                vec![
+                    audio_class(1, "upcall", 0.9),
+                    audio_class(3, "gunshot", 0.8),
+                ],
+            ),
+            seg_with_classes(0.25, 0.5, vec![audio_class(1, "upcall", 0.85)]),
+        ]);
+
+        let mut raw_json = Vec::new();
+        write_audio_output_raw(
+            &mut raw_json,
+            Path::new("whale.wav"),
+            "google-multispecies-whale",
+            &result,
+            &OutputFormat::Json,
+            true,
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&raw_json).unwrap();
+        assert_eq!(
+            parsed["segments"][1]["classes"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(parsed["segments"][1]["classes"][0]["label"], "upcall");
+
+        let mut merged_json = Vec::new();
+        write_audio_output_merged(
+            &mut merged_json,
+            Path::new("whale.wav"),
+            "google-multispecies-whale",
+            &result,
+            &OutputFormat::Json,
+            0.251,
+            true,
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&merged_json).unwrap();
+        let ranges = parsed["ranges"].as_array().unwrap();
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0]["class"], "upcall");
+        assert_eq!(ranges[0]["end_time_s"], 0.5);
+        assert_eq!(ranges[1]["class"], "gunshot");
+
+        let mut raw_csv = Vec::new();
+        write_audio_output_raw(
+            &mut raw_csv,
+            Path::new("whale.wav"),
+            "google-multispecies-whale",
+            &result,
+            &OutputFormat::Csv,
+            true,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(raw_csv).unwrap().lines().count(), 3);
+    }
+
+    #[test]
     fn audio_csv_default_uses_merged_schema() {
         let result = fake_audio_result(vec![
             seg(0.0, 1.0, 0.9),
@@ -4035,9 +4213,12 @@ mod tests {
             Path::new("bird.wav"),
             "md-audiobirds-v1",
             &result,
-            &OutputFormat::Csv,
-            false,
-            0.31,
+            AudioOutputOptions {
+                format: &OutputFormat::Csv,
+                raw_segments: false,
+                merge_gap_s: 0.31,
+                is_multi_label: false,
+            },
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -4062,9 +4243,12 @@ mod tests {
             Path::new("bird.wav"),
             "md-audiobirds-v1",
             &result,
-            &OutputFormat::Csv,
-            true,
-            0.31,
+            AudioOutputOptions {
+                format: &OutputFormat::Csv,
+                raw_segments: true,
+                merge_gap_s: 0.31,
+                is_multi_label: false,
+            },
         )
         .unwrap();
         let output = String::from_utf8(buf).unwrap();

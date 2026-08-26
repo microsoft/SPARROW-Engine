@@ -3,6 +3,7 @@
 //! Phase 3.8 Phase A: stateless modules. ZERO ORT/CUDA/nvjpeg deps.
 //! Engine + ORT integration lives in sparrow-engine-cpu.
 
+pub mod audio_postprocess;
 pub mod catalog;
 pub mod daynight;
 pub mod export;

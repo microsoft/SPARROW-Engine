@@ -38,10 +38,12 @@ use ndarray::ArrayViewD;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::TensorRef;
+use sparrow_engine_core::audio_postprocess;
 use sparrow_engine_core::preprocess_audio;
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{
-    InferenceStrategy, ModelManifest, PostprocessMethod, Precision, PreprocessMethod,
+    InferenceStrategy, ModelManifest, MultiLabelActivation, PostprocessMethod, Precision,
+    PreprocessMethod,
 };
 use sparrow_engine_types::types::{
     AudioClass, AudioDetectOpts, AudioDetectResult, AudioInput, AudioSegment,
@@ -56,6 +58,50 @@ const DEFAULT_AUDIO_CLASSIFIER_TOP_K: usize = 5;
 /// Default batch size for raw-audio ORT inference. Trades memory for
 /// throughput; same value as the CPU path.
 const DEFAULT_BATCH_SIZE: usize = 16;
+
+#[derive(Debug, Clone, Copy)]
+enum RawAudioPostprocess {
+    Softmax,
+    MultiLabel {
+        activation: MultiLabelActivation,
+        max_classes: usize,
+        frames_per_window: usize,
+    },
+}
+
+impl RawAudioPostprocess {
+    fn expected_frames(self) -> Option<usize> {
+        match self {
+            Self::Softmax => None,
+            Self::MultiLabel {
+                frames_per_window, ..
+            } => Some(frames_per_window),
+        }
+    }
+}
+
+fn raw_audio_class_count(
+    shape: &[usize],
+    expected_frames_per_window: Option<usize>,
+) -> Result<usize> {
+    match (shape, expected_frames_per_window) {
+        ([1, classes], None) | ([1, classes], Some(1)) if *classes > 0 => {
+            Ok(*classes)
+        }
+        ([1, 1, classes], None) if *classes > 0 => Ok(*classes),
+        ([1, frames, classes], Some(expected_frames))
+            if *frames == expected_frames && *classes > 0 =>
+        {
+            Ok(*classes)
+        }
+        (_, None) => Err(SparrowEngineError::Ort(format!(
+            "raw-audio probe output has shape {shape:?}; expected [1, num_classes] or [1, 1, num_classes]"
+        ))),
+        (_, Some(expected_frames)) => Err(SparrowEngineError::Ort(format!(
+            "multi-label raw-audio probe output has shape {shape:?}; expected [1, num_classes] for frames_per_window=1 or [1, {expected_frames}, num_classes]"
+        ))),
+    }
+}
 
 /// Per-loaded raw-audio model (CUDA-EP ORT session + manifest-derived params).
 pub struct RawAudioModel {
@@ -85,6 +131,7 @@ pub struct RawAudioModel {
     /// (emits one segment per window regardless), but the value is held
     /// here for parity with the mel path + future API consistency.
     threshold: f32,
+    postprocess: RawAudioPostprocess,
     /// RP-27 Part 2 opt-in: when true, pass orig_sample_rate as a second
     /// ONNX input alongside the audio tensor. Forwarded from the manifest.
     pass_orig_sample_rate: bool,
@@ -150,11 +197,27 @@ impl RawAudioModel {
         // sparrow-engine-types/src/manifest.rs:902) is unit-thresholded
         // (multi-class — every window emits the top-K regardless), so
         // the per-window threshold is not meaningful; we record 0.0.
-        let threshold = match &manifest.postprocess_method {
-            PostprocessMethod::Sigmoid {
+        let (threshold, postprocess) = match &manifest.postprocess_method {
+            PostprocessMethod::Softmax => (0.0, RawAudioPostprocess::Softmax),
+            PostprocessMethod::MultiLabel {
                 confidence_threshold,
-            } => *confidence_threshold,
-            _ => 0.0,
+                activation,
+                max_classes,
+                frames_per_window,
+            } => (
+                *confidence_threshold,
+                RawAudioPostprocess::MultiLabel {
+                    activation: *activation,
+                    max_classes: *max_classes,
+                    frames_per_window: *frames_per_window,
+                },
+            ),
+            other => {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "RawAudioModel supports only softmax or multi_label postprocess, got {}",
+                    other.as_str()
+                )));
+            }
         };
 
         // 4. Resolve ONNX path with FP32/FP16 split (same convention as
@@ -264,16 +327,8 @@ impl RawAudioModel {
             let probe_view: ArrayViewD<'_, f32> = probe_outputs[logits_output_idx]
                 .try_extract_array::<f32>()
                 .map_err(|e| SparrowEngineError::Ort(format!("probe extract: {e}")))?;
-            // Last axis = class dimension. Shape is [batch, classes] or
-            // [batch, 1, classes]; we want the product / batch.
-            let total = probe_view.len();
-            if total == 0 {
-                return Err(SparrowEngineError::Ort(
-                    "raw-audio probe: logits output has zero elements".to_string(),
-                ));
-            }
-            // batch was 1, so total == num_classes (no need to divide).
-            let n = total;
+            let shape = probe_view.shape();
+            let n = raw_audio_class_count(shape, postprocess.expected_frames())?;
             drop(probe_outputs);
             // Move session back out — re-wrap in Mutex below.
             // (We held it by value during the probe to avoid an extra
@@ -281,6 +336,13 @@ impl RawAudioModel {
             let _ = probe_session;
             n
         };
+        if let RawAudioPostprocess::MultiLabel { max_classes, .. } = postprocess {
+            if max_classes > num_classes {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "multi_label max_classes ({max_classes}) exceeds model class count ({num_classes})"
+                )));
+            }
+        }
 
         // Re-open the session for the persistent Mutex. The probe consumed
         // `session` by-value, so rebuild from disk. This pays the
@@ -323,6 +385,7 @@ impl RawAudioModel {
             segment_samples,
             stride_samples,
             threshold,
+            postprocess,
             pass_orig_sample_rate,
         })
     }
@@ -399,9 +462,30 @@ impl RawAudioModel {
                 );
             }
         }
-        let _ = opts.confidence_threshold.unwrap_or(self.threshold); // threshold unused for raw path.
+        let threshold = opts.confidence_threshold.unwrap_or(self.threshold);
+        if matches!(self.postprocess, RawAudioPostprocess::MultiLabel { .. })
+            && (!threshold.is_finite() || !(0.0..=1.0).contains(&threshold))
+        {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "multi-label confidence threshold must be finite and in [0, 1], got {threshold}"
+            )));
+        }
 
         let top_k = DEFAULT_AUDIO_CLASSIFIER_TOP_K.min(self.num_classes).max(1);
+        let frames_per_window = self.postprocess.expected_frames().unwrap_or(1);
+        if frames_per_window > 1 && stride_samples != segment_samples {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "multi-label frame outputs require non-overlapping windows; runtime stride resolves to {stride_samples} samples but window length is {segment_samples}"
+            )));
+        }
+
+        if labels.len() != self.num_classes {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "labels count ({}) does not match classifier output dim ({})",
+                labels.len(),
+                self.num_classes
+            )));
+        }
 
         let offsets = preprocess_audio::compute_segment_offsets(
             total_samples,
@@ -409,7 +493,15 @@ impl RawAudioModel {
             stride_samples,
         );
 
-        let mut segments = Vec::with_capacity(offsets.len());
+        let segment_capacity = offsets
+            .len()
+            .checked_mul(frames_per_window)
+            .ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "audio window count × frames_per_window overflowed usize".to_string(),
+                )
+            })?;
+        let mut segments = Vec::with_capacity(segment_capacity);
 
         for batch_offsets in offsets.chunks(DEFAULT_BATCH_SIZE) {
             let batch_len = batch_offsets.len();
@@ -478,15 +570,24 @@ impl RawAudioModel {
             let output_view: ArrayViewD<'_, f32> = outputs[self.logits_output_idx]
                 .try_extract_array::<f32>()
                 .map_err(|e| SparrowEngineError::Ort(format!("output extract: {e}")))?;
-            let expected = batch_len * self.num_classes;
+            let expected = batch_len
+                .checked_mul(frames_per_window)
+                .and_then(|count| count.checked_mul(self.num_classes))
+                .ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(
+                        "audio batch × frames_per_window × class count overflowed usize"
+                            .to_string(),
+                    )
+                })?;
             if output_view.len() != expected {
                 let view_shape = output_view.shape().to_vec();
                 return Err(SparrowEngineError::Ort(format!(
                     "raw-audio classifier returned {} elements (shape {:?}) for batch of {} \
-                     segments × {} classes; expected exactly {}",
+                     segments × {} frames × {} classes; expected exactly {}",
                     output_view.len(),
                     view_shape,
                     batch_len,
+                    frames_per_window,
                     self.num_classes,
                     expected
                 )));
@@ -500,37 +601,85 @@ impl RawAudioModel {
                 ));
             }
 
-            // ----- postprocess: softmax + top-K --------------------------
+            // ----- postprocess -------------------------------------------
             for (i, &seg_offset) in batch_offsets.iter().enumerate() {
-                let window_logits = &logits[i * self.num_classes..(i + 1) * self.num_classes];
-                let probs = softmax(window_logits);
-                let top = top_k_indices(&probs, top_k);
-                let classes: Vec<AudioClass> = top
-                    .into_iter()
-                    .map(|(idx, p)| AudioClass {
-                        class_idx: idx as u32,
-                        label: labels.get(idx).cloned(),
-                        probability: p,
-                    })
-                    .collect();
-                let top1_prob = classes.first().map(|c| c.probability).unwrap_or(0.0);
-
-                let (start_s, end_s) = preprocess_audio::segment_time_range(
-                    seg_offset,
-                    segment_samples,
-                    total_samples,
-                    self.sample_rate,
-                );
-                let seg = AudioSegment {
-                    start_time_s: start_s,
-                    end_time_s: end_s,
-                    confidence: top1_prob,
-                    classes,
-                };
-                if let Some(ref mut cb) = on_segment {
-                    cb(&seg);
+                match self.postprocess {
+                    RawAudioPostprocess::Softmax => {
+                        let window_logits =
+                            &logits[i * self.num_classes..(i + 1) * self.num_classes];
+                        let probs = softmax(window_logits);
+                        let top = top_k_indices(&probs, top_k);
+                        let classes: Vec<AudioClass> = top
+                            .into_iter()
+                            .map(|(idx, p)| AudioClass {
+                                class_idx: idx as u32,
+                                label: labels.get(idx).cloned(),
+                                probability: p,
+                            })
+                            .collect();
+                        let confidence = classes.first().map(|c| c.probability).unwrap_or(0.0);
+                        let (start_time_s, end_time_s) = preprocess_audio::segment_time_range(
+                            seg_offset,
+                            segment_samples,
+                            total_samples,
+                            self.sample_rate,
+                        );
+                        let segment = AudioSegment {
+                            start_time_s,
+                            end_time_s,
+                            confidence,
+                            classes,
+                        };
+                        if let Some(ref mut callback) = on_segment {
+                            callback(&segment);
+                        }
+                        segments.push(segment);
+                    }
+                    RawAudioPostprocess::MultiLabel {
+                        activation,
+                        max_classes,
+                        frames_per_window,
+                    } => {
+                        for frame_index in 0..frames_per_window {
+                            let row_index = i * frames_per_window + frame_index;
+                            let values = &logits
+                                [row_index * self.num_classes..(row_index + 1) * self.num_classes];
+                            let classes = audio_postprocess::multi_label_classes(
+                                values,
+                                activation,
+                                threshold,
+                                max_classes,
+                                labels,
+                            )?;
+                            if classes.is_empty() {
+                                continue;
+                            }
+                            let Some((start_time_s, end_time_s)) =
+                                audio_postprocess::audio_frame_time_range(
+                                    seg_offset,
+                                    frame_index,
+                                    frames_per_window,
+                                    segment_samples,
+                                    total_samples,
+                                    self.sample_rate,
+                                )
+                            else {
+                                continue;
+                            };
+                            let confidence = classes[0].probability;
+                            let segment = AudioSegment {
+                                start_time_s,
+                                end_time_s,
+                                confidence,
+                                classes,
+                            };
+                            if let Some(ref mut callback) = on_segment {
+                                callback(&segment);
+                            }
+                            segments.push(segment);
+                        }
+                    }
                 }
-                segments.push(seg);
             }
         }
 
@@ -570,4 +719,23 @@ fn top_k_indices(probs: &[f32], k: usize) -> Vec<(usize, f32)> {
     });
     indexed.truncate(k);
     indexed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn softmax_probe_preserves_rank_two_and_singleton_rank_three() {
+        assert_eq!(raw_audio_class_count(&[1, 12], None).unwrap(), 12);
+        assert_eq!(raw_audio_class_count(&[1, 1, 12], None).unwrap(), 12);
+        assert!(raw_audio_class_count(&[1, 2, 12], None).is_err());
+    }
+
+    #[test]
+    fn multilabel_probe_enforces_declared_frame_axis() {
+        assert_eq!(raw_audio_class_count(&[1, 12], Some(1)).unwrap(), 12);
+        assert_eq!(raw_audio_class_count(&[1, 4, 12], Some(4)).unwrap(), 12);
+        assert!(raw_audio_class_count(&[1, 5, 12], Some(4)).is_err());
+    }
 }

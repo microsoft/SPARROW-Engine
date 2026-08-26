@@ -36,7 +36,8 @@ pub fn derive_model_type(
         // classifier; it must be matched BEFORE the generic `(_, Softmax)` fallback
         // so a mel-input audio classifier is not mistyped as an image `Classifier`.
         (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Softmax)
-        | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax) => {
+        | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax)
+        | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::MultiLabel { .. }) => {
             ModelType::AudioClassifier
         }
         (_, PostprocessMethod::Softmax) => ModelType::Classifier,
@@ -72,7 +73,7 @@ pub fn derive_model_type(
 #[cfg(test)]
 mod phase_a_r1_model_type_tests {
     use super::*;
-    use crate::manifest::{PostprocessMethod, PreprocessMethod};
+    use crate::manifest::{MultiLabelActivation, PostprocessMethod, PreprocessMethod};
     use crate::types::{ModelSubtype, ModelType};
 
     /// Canonical placeholder MelSpectrogram constructor. All fields are required
@@ -118,6 +119,15 @@ mod phase_a_r1_model_type_tests {
 
     fn embedding() -> PostprocessMethod {
         PostprocessMethod::Embedding { normalize: true }
+    }
+
+    fn multi_label() -> PostprocessMethod {
+        PostprocessMethod::MultiLabel {
+            confidence_threshold: 0.25,
+            activation: MultiLabelActivation::None,
+            max_classes: 12,
+            frames_per_window: 1,
+        }
     }
 
     #[test]
@@ -319,7 +329,7 @@ mod phase_a_r1_model_type_tests {
 
     #[test]
     fn cartesian_full_matrix_no_panic_and_no_unknown_variants() {
-        // Exhaustive cartesian: 4 preprocess × 6 postprocess × 2 subtype = 48 combos.
+        // Exhaustive cartesian: 4 preprocess × 8 postprocess × 2 subtype = 64 combos.
         // The point of this test is twofold:
         //   1) every combo derives without panicking,
         //   2) every result is one of the 5 known ModelType variants (sanity for refactor regressions).
@@ -339,6 +349,7 @@ mod phase_a_r1_model_type_tests {
             sigmoid(),
             embedding(),
             PostprocessMethod::RtDetrTopk { topk: Some(300) },
+            multi_label(),
         ];
         let subtypes: [ModelSubtype; 2] = [ModelSubtype::Standard, ModelSubtype::Overhead];
 
@@ -361,7 +372,7 @@ mod phase_a_r1_model_type_tests {
                 }
             }
         }
-        assert_eq!(combo_count, 4 * 7 * 2);
+        assert_eq!(combo_count, 4 * 8 * 2);
     }
 
     #[test]
@@ -383,6 +394,19 @@ mod phase_a_r1_model_type_tests {
             ),
             ModelType::AudioClassifier,
             "Overhead hint must be ignored for RawAudio + Softmax"
+        );
+    }
+
+    #[test]
+    fn audio_classifier_when_raw_audio_plus_multi_label() {
+        assert_eq!(
+            derive_model_type(&raw_audio(), &multi_label(), ModelSubtype::Standard),
+            ModelType::AudioClassifier,
+        );
+        assert_eq!(
+            derive_model_type(&raw_audio(), &multi_label(), ModelSubtype::Overhead),
+            ModelType::AudioClassifier,
+            "Overhead hint must be ignored for RawAudio + MultiLabel"
         );
     }
 

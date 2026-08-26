@@ -154,9 +154,9 @@ pub enum AudioInput {
 // ---------------------------------------------------------------------------
 
 /// A single classification slot inside an `AudioSegment`. Phase 4.2+ unified
-/// audio model: every audio segment carries a top-K list of `AudioClass`
-/// entries (K=1 for binary detectors like MD_AudioBirds_V1, K≥1 for
-/// multi-class classifiers like Perch 2).
+/// audio model: every audio segment carries a class list (K=1 for binary
+/// detectors, top-K for softmax classifiers, and thresholded independent
+/// classes for multi-label classifiers).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioClass {
     /// Index into `manifest.labels` (0-based).
@@ -164,8 +164,8 @@ pub struct AudioClass {
     /// Resolved label string from `labels.txt`. `None` when the model has no
     /// labels file (e.g. legacy binary detectors that pre-date label files).
     pub label: Option<String>,
-    /// Softmax probability (for classifiers) or sigmoid confidence (for
-    /// binary detectors). Always in `[0, 1]`.
+    /// Softmax probability, sigmoid confidence, or validated in-graph
+    /// probability. Always in `[0, 1]`.
     pub probability: f32,
 }
 
@@ -173,16 +173,16 @@ pub struct AudioClass {
 ///
 /// `confidence` is the top-class probability and is preserved for backward
 /// compatibility with all existing readers; it equals `classes[0].probability`
-/// when `classes` is non-empty. `classes` carries the full top-K list (sorted
-/// descending by probability) for multi-class classifiers; for binary
-/// detectors `classes` is a 1-entry vec or empty (when no labels file is
-/// present).
+/// when `classes` is non-empty. `classes` is sorted by descending probability.
+/// It carries top-K entries for softmax classifiers and every above-threshold
+/// entry up to the manifest cap for multi-label classifiers. Binary detectors
+/// carry one entry or none when no labels file is present.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioSegment {
     pub start_time_s: f32,
     pub end_time_s: f32,
     pub confidence: f32,
-    /// Top-K class candidates for this segment, sorted by probability desc.
+    /// Class candidates for this segment, sorted by probability descending.
     /// Empty for legacy binary detectors with no labels file.
     pub classes: Vec<AudioClass>,
 }

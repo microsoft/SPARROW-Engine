@@ -36,7 +36,9 @@ pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
     }
     if matches!(
         manifest.postprocess_method,
-        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+        PostprocessMethod::Softmax
+            | PostprocessMethod::Sigmoid { .. }
+            | PostprocessMethod::MultiLabel { .. }
     ) {
         return Err(SparrowEngineError::NotADetector {
             id: manifest.id.clone(),
@@ -819,12 +821,12 @@ fn dispatch_postprocess(
             // This branch is unreachable because we check for Softmax at entry.
             unreachable!("Softmax models are rejected at the start of detect()");
         }
-        PostprocessMethod::Sigmoid { .. } | PostprocessMethod::Embedding { .. } => {
-            Err(SparrowEngineError::NotADetector {
-                id: manifest.id.clone(),
-                method: manifest.postprocess_method.as_str().to_string(),
-            })
-        }
+        PostprocessMethod::Sigmoid { .. }
+        | PostprocessMethod::MultiLabel { .. }
+        | PostprocessMethod::Embedding { .. } => Err(SparrowEngineError::NotADetector {
+            id: manifest.id.clone(),
+            method: manifest.postprocess_method.as_str().to_string(),
+        }),
     }
 }
 

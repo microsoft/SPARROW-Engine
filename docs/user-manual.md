@@ -746,13 +746,13 @@ $ spe detect-audio recordings/*.wav \
 ```
 
 **Why**: detect birds (or other audio classes) in WAV recordings.
-**What**: by default, **merged time ranges** `{start_time_s, end_time_s, max_confidence, class}`. With `--raw-segments`, one row per sliding window.
-**How**: sparrow-engine decodes WAV (hound), computes mel spectrogram, runs the model with stride, applies sigmoid, merges consecutive above-threshold windows.
+**What**: by default, **merged time ranges** `{start_time_s, end_time_s, max_confidence, class}`. Multi-label models merge each class independently, so secondary labels are not discarded. With `--raw-segments`, JSON includes every above-threshold class; multi-label CSV emits one row per segment/class pair.
+**How**: sparrow-engine decodes WAV, runs either the engine mel front end or a raw-audio ONNX graph, then applies the manifest's binary sigmoid, multi-class softmax, or thresholded multi-label policy.
 
 | Flag | What |
 |------|------|
 | `--model <id>` | Audio model. Catalog includes `md-audiobirds-v1` (default binary bird detector), `perch-v2` (14795-class bird species classifier), `orca-detector-dclde2026-v5` (DCLDE 2026 Stage 1 orca screener), `orca-ecotype-dclde2026-v1` (DCLDE 2026 Stage 2 ecotype classifier). |
-| `--threshold <f>` | Per-window sigmoid threshold (manifest default 0.9). |
+| `--threshold <f>` | Binary-detection or per-class multi-label threshold. Softmax classifiers ignore it. |
 | `--raw-segments` | Emit pre-merge per-window rows. |
 | `--visualize --output-dir <dir>` | Render spectrogram + confidence heatmap PNGs. |
 | `--smooth` | Apply Gaussian blur to the heatmap visualization. |
@@ -1570,11 +1570,37 @@ empty    = 0.48
 | `megadet_v5a` | YOLOv5 raw rows `[N, 5+C]`; sparrow-engine does cxcywh→xyxy + class-aware NMS in Rust. | `MDV5a` (legacy) |
 | `retinanet_soft_nms` | RetinaNet `[N,6]` candidates; class-aware Gaussian Soft-NMS, original-score restoration, then class-agnostic hard suppression. | DuckNet |
 | `softmax` | Single-image softmax → top-k. | SpeciesNet-Crop |
-| `sigmoid_window` | Per-window sigmoid (audio sliding-window). | md-audiobirds-v1 |
+| `sigmoid` | Per-window binary sigmoid with a confidence threshold. | md-audiobirds-v1 |
+| `multi_label` | Independent per-class probabilities for raw-audio models. `activation = "sigmoid"` applies sigmoid to logits; `activation = "none"` validates in-graph probabilities. `max_classes` bounds each segment and `frames_per_window` optionally splits one window into fixed sub-frames. | Multi-label audio classifiers |
 | `tiled_dual_heatmap` | Two-output heatmap (animal mask + class). HerdNet. | HerdNet |
 | `tiled_single_heatmap` | One-output heatmap (binary). OWL-T. | OWL-T |
 
 **Cite**: `sparrow-engine/sparrow-engine-types/src/manifest.rs::PostprocessMethod`.
+
+Raw-audio multi-label manifests use:
+
+```toml
+[preprocessing]
+method = "raw_audio"
+sample_rate = 24000
+window_samples = 120000
+
+[inference]
+strategy = "sliding_window"
+segment_duration_s = 5.0
+segment_stride_s = 5.0
+
+[postprocessing]
+method = "multi_label"
+confidence_threshold = 0.5
+activation = "none"       # model already emits probabilities
+max_classes = 12
+frames_per_window = 1     # defaults to 1
+```
+
+When `frames_per_window > 1`, stride must equal window duration so overlapping
+windows cannot duplicate sub-frame predictions. The ONNX output must be
+`[batch, classes]` for one frame or `[batch, frames, classes]`.
 
 ---
 

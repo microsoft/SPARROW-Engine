@@ -41,7 +41,9 @@ pub(crate) fn validate_vision_detector(manifest: &ModelManifest) -> Result<()> {
     }
     if matches!(
         manifest.postprocess_method,
-        PostprocessMethod::Softmax | PostprocessMethod::Sigmoid { .. }
+        PostprocessMethod::Softmax
+            | PostprocessMethod::Sigmoid { .. }
+            | PostprocessMethod::MultiLabel { .. }
     ) {
         return Err(SparrowEngineError::NotADetector {
             id: manifest.id.clone(),

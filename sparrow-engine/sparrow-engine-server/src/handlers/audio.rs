@@ -8,6 +8,7 @@ use axum::extract::{Multipart, Query, State};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::engine_dispatch::manifest::PostprocessMethod;
 use crate::engine_dispatch::{
     detect_audio, AudioDetectOpts, AudioInput, AudioSegment, SparrowEngineError,
 };
@@ -75,7 +76,7 @@ pub async fn audio_detect(
     let engine = std::sync::Arc::clone(&state.engine);
     let model_id_for_load = params.model.clone();
     let want_manifest_meta = params.store;
-    let (result, drift_reference, provenance) = super::run_blocking(move || {
+    let (result, drift_reference, provenance, is_multi_label) = super::run_blocking(move || {
         let _permit = permit;
         // Phase 4.2 lazy-load: resolve (or load on demand) inside the blocking
         // pool so the async runtime stays responsive.
@@ -83,10 +84,15 @@ pub async fn audio_detect(
         // Write audio to a temp file on the blocking pool for sparrow-engine-cpu
         // (AudioInput::FilePath), keeping the file alive through inference.
         let mut tmp = tempfile::NamedTempFile::new().map_err(SparrowEngineError::Io)?;
-        tmp.write_all(&audio_bytes).map_err(SparrowEngineError::Io)?;
+        tmp.write_all(&audio_bytes)
+            .map_err(SparrowEngineError::Io)?;
         let audio_input = AudioInput::FilePath(tmp.path().to_path_buf());
         let _keep = tmp;
         let result = detect_audio::detect_audio(&handle, &audio_input, &opts)?;
+        let is_multi_label = matches!(
+            &handle.manifest().postprocess_method,
+            PostprocessMethod::MultiLabel { .. }
+        );
         let (drift_ref, prov) = if want_manifest_meta {
             (
                 handle.manifest().drift_reference.clone(),
@@ -95,17 +101,37 @@ pub async fn audio_detect(
         } else {
             (None, None)
         };
-        Ok((result, drift_ref, prov))
+        Ok((result, drift_ref, prov, is_multi_label))
     })
     .await?;
 
     let store_metrics = params.store.then(|| {
-        let confidences: Vec<f32> = result.segments.iter().map(|s| s.confidence).collect();
-        let labels: Vec<String> = result
-            .segments
-            .iter()
-            .map(|s| drift_label_for_audio_segment(s, &model_id))
-            .collect();
+        let (confidences, labels): (Vec<f32>, Vec<String>) = if is_multi_label {
+            result
+                .segments
+                .iter()
+                .flat_map(|segment| {
+                    segment.classes.iter().map(|class| {
+                        (
+                            class.probability,
+                            class
+                                .label
+                                .clone()
+                                .unwrap_or_else(|| format!("class_{}", class.class_idx)),
+                        )
+                    })
+                })
+                .unzip()
+        } else {
+            (
+                result.segments.iter().map(|s| s.confidence).collect(),
+                result
+                    .segments
+                    .iter()
+                    .map(|s| drift_label_for_audio_segment(s, &model_id))
+                    .collect(),
+            )
+        };
         (confidences, labels)
     });
 
@@ -117,7 +143,7 @@ pub async fn audio_detect(
         segments: result
             .segments
             .into_iter()
-            .map(AudioSegmentResponse::from)
+            .map(|segment| AudioSegmentResponse::from_segment(segment, is_multi_label))
             .collect(),
     };
 

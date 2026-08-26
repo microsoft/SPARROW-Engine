@@ -1,0 +1,25 @@
+[model]
+id = "multilabel-raw-tiny"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "raw_audio"
+sample_rate = 4800
+window_samples = 4800
+
+[inference]
+strategy = "sliding_window"
+segment_duration_s = 1.0
+segment_stride_s = 1.0
+
+[postprocessing]
+method = "multi_label"
+confidence_threshold = 0.6
+activation = "none"
+max_classes = 2
+frames_per_window = 4
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"

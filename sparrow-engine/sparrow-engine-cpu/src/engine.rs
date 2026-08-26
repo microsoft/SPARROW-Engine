@@ -1080,7 +1080,7 @@ fn select_validation_output_index(
         (preprocess, method),
         (
             PreprocessMethod::RawAudio { .. },
-            PostprocessMethod::Softmax
+            PostprocessMethod::Softmax | PostprocessMethod::MultiLabel { .. }
         )
     ) {
         return output_names
@@ -1089,7 +1089,7 @@ fn select_validation_output_index(
             .ok_or_else(|| SparrowEngineError::OutputShapeMismatch {
                 id: model_id.to_string(),
                 shape: format!(
-                    "multi-output RawAudio+Softmax missing required output named 'label'; outputs [{}]",
+                    "multi-output RawAudio classifier missing required output named 'label'; outputs [{}]",
                     output_names.join(", ")
                 ),
                 method: method.as_str().to_string(),
@@ -1226,6 +1226,35 @@ fn validate_output_dims(
         PostprocessMethod::Sigmoid { .. } => {
             // Expected: [1, 1] or [batch, 1] (binary output). Accept rank 1 or 2.
             if shape.is_empty() || shape.len() > 2 {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: shape_str,
+                    method: method_str,
+                });
+            }
+        }
+        PostprocessMethod::MultiLabel {
+            frames_per_window,
+            max_classes,
+            ..
+        } => {
+            let valid = match shape {
+                [batch, classes] if *frames_per_window == 1 => {
+                    (*batch == 1 || *batch == -1)
+                        && (*classes == -1
+                            || usize::try_from(*classes).is_ok_and(|count| count >= *max_classes))
+                }
+                [batch, frames, classes] => {
+                    (*batch == 1 || *batch == -1)
+                        && (*frames == -1
+                            || usize::try_from(*frames)
+                                .is_ok_and(|count| count == *frames_per_window))
+                        && (*classes == -1
+                            || usize::try_from(*classes).is_ok_and(|count| count >= *max_classes))
+                }
+                _ => false,
+            };
+            if !valid {
                 return Err(SparrowEngineError::OutputShapeMismatch {
                     id: model_id.to_string(),
                     shape: shape_str,
@@ -1462,6 +1491,15 @@ mod tests {
         }
     }
 
+    fn multi_label(frames_per_window: usize) -> PostprocessMethod {
+        PostprocessMethod::MultiLabel {
+            confidence_threshold: 0.5,
+            activation: crate::manifest::MultiLabelActivation::None,
+            max_classes: 12,
+            frames_per_window,
+        }
+    }
+
     #[test]
     #[serial]
     fn select_validation_output_index_keeps_single_output_raw_softmax() {
@@ -1489,6 +1527,32 @@ mod tests {
             )
             .unwrap(),
             3
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn select_validation_output_index_uses_label_for_multi_output_raw_multilabel() {
+        assert_eq!(
+            select_validation_output_index(
+                &["embedding", "label"],
+                &raw_audio_preprocess(),
+                &multi_label(1),
+                "multi-label",
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn multi_label_output_shape_matches_declared_frame_axis() {
+        assert!(validate_output_dims(&[-1, 12], "whale", &multi_label(1), None,).is_ok());
+        assert!(validate_output_dims(&[-1, 4, 12], "frames", &multi_label(4), None,).is_ok());
+        assert!(validate_output_dims(&[-1, 12], "wrong-rank", &multi_label(4), None,).is_err());
+        assert!(
+            validate_output_dims(&[-1, 4, 11], "too-few-classes", &multi_label(4), None,).is_err()
         );
     }
 
