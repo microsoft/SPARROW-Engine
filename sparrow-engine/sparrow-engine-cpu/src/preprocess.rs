@@ -7,7 +7,7 @@
 use image::RgbImage;
 use ndarray::Array4;
 
-use sparrow_engine_core::preprocess::{checked_tensor_len_3hw, min_max_side_dims};
+use sparrow_engine_core::preprocess::{checked_tensor_len_3hw, min_max_side_dims, resize_crop_rgb};
 use sparrow_engine_types::ImageInput;
 
 use crate::error::{Result, SparrowEngineError};
@@ -423,21 +423,6 @@ fn triangle_weights(src_len: u32, dst_len: u32) -> Vec<Vec<(u32, f32)>> {
 // Resize + center-crop (ONB-1 center-crop classifiers)
 // ---------------------------------------------------------------------------
 
-/// torchvision `Resize(s)` shorter-side dimensions: the shorter side becomes
-/// EXACTLY `s`, the longer side is `int(s * long / short)` — **truncated, not
-/// rounded** — matching torchvision / PIL / timm / open_clip. Rounding produced
-/// a 1-px resize mismatch on some aspect ratios that misaligned the downstream
-/// center-crop (BioCLIP2 ONB-5 parity: worst-image cosine 0.972 -> 0.9994).
-/// Mirrored bit-for-bit by the GPU `resize_crop` kernel + CPU-fallback paths.
-fn shorter_side_dims(w: u32, h: u32, s: u32) -> (u32, u32) {
-    let new_long = (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
-    if w <= h {
-        (s.max(1), new_long)
-    } else {
-        (new_long, s.max(1))
-    }
-}
-
 /// Resize + center-crop pipeline: optional center-square crop -> resize (per
 /// `resize_mode` + `interp`) -> optional center-crop to `input_size`.
 ///
@@ -453,54 +438,8 @@ fn resize_crop(
     rc: &ResizeCropConfig,
     interp: Interpolation,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
-    // 1. optional center-square crop (Ultralytics / alita)
-    let base: RgbImage = if rc.pre_crop_square {
-        let m = img.width().min(img.height());
-        let x = (img.width() - m) / 2;
-        let y = (img.height() - m) / 2;
-        image::imageops::crop_imm(img, x, y, m, m).to_image()
-    } else {
-        img.clone()
-    };
-
-    // 2. resize
-    let (rw, rh) = match rc.resize_mode {
-        ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
-        ResizeMode::ShorterSide => {
-            shorter_side_dims(base.width(), base.height(), rc.resize_size[0])
-        }
-    };
-    let resized = resize_image(&base, rw, rh, interp)?;
-
-    // 3. optional center-crop to input_size
-    let (target_w, target_h) = (input_size[0], input_size[1]);
-    let final_img: RgbImage = if rc.center_crop {
-        if resized.width() < target_w || resized.height() < target_h {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "resize_crop: resized {}x{} is smaller than center_crop target {}x{}",
-                resized.width(),
-                resized.height(),
-                target_w,
-                target_h
-            )));
-        }
-        let x = (resized.width() - target_w) / 2;
-        let y = (resized.height() - target_h) / 2;
-        image::imageops::crop_imm(&resized, x, y, target_w, target_h).to_image()
-    } else {
-        resized
-    };
-
-    if final_img.width() != target_w || final_img.height() != target_h {
-        return Err(SparrowEngineError::InvalidManifest(format!(
-            "resize_crop produced {}x{} but model input_size is {}x{} \
-             (set center_crop=true, or resize_size to match input_size)",
-            final_img.width(),
-            final_img.height(),
-            target_w,
-            target_h
-        )));
-    }
+    let final_img = resize_crop_rgb(img, input_size, rc, interp)?;
+    let [target_w, target_h] = input_size;
 
     // Raw f32 canvas (normalization happens in build_tensor), matching resize_direct.
     let total = checked_tensor_len_3hw(target_h, target_w)?;
@@ -804,19 +743,62 @@ mod tests {
     }
 
     #[test]
+    fn test_resize_crop_uses_torchvision_ties_to_even_offset() {
+        let img = RgbImage::from_fn(8, 5, |x, y| {
+            image::Rgb([(x * 20) as u8, (y * 30) as u8, (x + y) as u8])
+        });
+        let rc = ResizeCropConfig {
+            pre_crop_square: false,
+            resize_size: [4, 4],
+            resize_mode: ResizeMode::ShorterSide,
+            center_crop: true,
+        };
+        let (canvas, _, _, _) = resize_crop(&img, [3, 3], &rc, Interpolation::Bilinear).unwrap();
+
+        let resized = image::imageops::resize(&img, 6, 4, image::imageops::FilterType::Triangle);
+        let expected = image::imageops::crop_imm(&resized, 2, 0, 3, 3).to_image();
+        let expected_values: Vec<f32> = expected
+            .pixels()
+            .flat_map(|pixel| pixel.0.map(f32::from))
+            .collect();
+        assert_eq!(canvas, expected_values);
+    }
+
+    #[test]
     fn test_shorter_side_dims_truncates_like_torchvision() {
         // torchvision Resize(s) truncates the long side: int(s*long/short), NOT round.
         // 800x600 shorter=600 -> 224: long = int(224*800/600) = 298 (round would give 299).
-        assert_eq!(shorter_side_dims(800, 600, 224), (298, 224));
-        assert_eq!(shorter_side_dims(600, 800, 224), (224, 298));
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(800, 600, 224),
+            (298, 224)
+        );
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(600, 800, 224),
+            (224, 298)
+        );
         // 1024x768 -> 298x224; 1280x960 -> 298x224 (the ONB-5 parity outliers).
-        assert_eq!(shorter_side_dims(1024, 768, 224), (298, 224));
-        assert_eq!(shorter_side_dims(1280, 960, 224), (298, 224));
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(1024, 768, 224),
+            (298, 224)
+        );
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(1280, 960, 224),
+            (298, 224)
+        );
         // exact ratios stay exact; square stays square.
-        assert_eq!(shorter_side_dims(200, 100, 64), (128, 64));
-        assert_eq!(shorter_side_dims(500, 500, 224), (224, 224));
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(200, 100, 64),
+            (128, 64)
+        );
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(500, 500, 224),
+            (224, 224)
+        );
         // shorter side is EXACTLY s even when s*long/short would round the short side down.
-        assert_eq!(shorter_side_dims(600, 600, 224), (224, 224));
+        assert_eq!(
+            sparrow_engine_core::preprocess::torchvision_shorter_side_dims(600, 600, 224),
+            (224, 224)
+        );
     }
 
     #[test]

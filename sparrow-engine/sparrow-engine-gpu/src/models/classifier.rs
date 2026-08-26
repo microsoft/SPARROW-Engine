@@ -70,6 +70,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::{Shape, TensorRef, TensorRefMut};
 use sparrow_engine_core::postprocess;
+use sparrow_engine_core::preprocess::{checked_tensor_len_3hw, decode_to_rgb, resize_crop_rgb};
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{
     self, ChannelOrder, Interpolation, Layout, ModelManifest, Normalization, PostprocessMethod,
@@ -318,6 +319,7 @@ fn decode_via_cpu_fallback(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<Gpu
             "decoded image has zero width or height".into(),
         ));
     }
+
     let buf = rgb.into_raw();
     let dev = stream
         .clone_htod(buf.as_slice())
@@ -330,6 +332,42 @@ fn decode_via_cpu_fallback(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<Gpu
         width: w,
         height: h,
     })
+}
+
+fn resize_crop_host_nchw(
+    image: &ImageInput,
+    input_size: [u32; 2],
+    config: &manifest::ResizeCropConfig,
+    interpolation: Interpolation,
+    channel_order: ChannelOrder,
+    stats: NormalizeStats,
+) -> Result<Vec<f32>> {
+    let decoded = decode_to_rgb(image)?;
+    let resized = resize_crop_rgb(&decoded, input_size, config, interpolation)?;
+    let [width, height] = input_size;
+    let plane = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| {
+            SparrowEngineError::ImageDecode(format!(
+                "resize_crop plane size overflows usize: {width}x{height}"
+            ))
+        })?;
+    let mut output = vec![0.0f32; checked_tensor_len_3hw(height, width)?];
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = resized.get_pixel(x, y);
+            for channel in 0..3usize {
+                let source_channel = match channel_order {
+                    ChannelOrder::Rgb => channel,
+                    ChannelOrder::Bgr => 2 - channel,
+                };
+                let value = pixel[source_channel] as f32 / 255.0;
+                output[channel * plane + y as usize * width as usize + x as usize] =
+                    (value - stats.mean[channel]) / stats.std[channel];
+            }
+        }
+    }
+    Ok(output)
 }
 
 /// EXIF orientation pre-check on raw JPEG bytes. Returns `true` only when
@@ -666,10 +704,10 @@ impl ClassifierModel {
     ///   Amazon Camera Trap v2 (`imagenet`) both use this path; the
     ///   `manifest.normalization` field selects the per-channel mean/std
     ///   passed to the kernel via `NormalizeStats`.
-    /// - `ResizeCrop` → [`resize_crop_gpu`] (ENG-RESIZE Phase 2): optional
-    ///   pre-crop-square → conv resize (interpolation) → center-crop →
-    ///   normalize + NCHW, matching `sparrow-engine-cpu`'s `resize_crop`
-    ///   (awc135, the YOLOv8-cls trio, nz-species, queensland).
+    /// - `ResizeCrop` → [`resize_crop_gpu`] for bilinear/Lanczos/cv2 filters.
+    ///   Bicubic uses the shared CPU reference resize/crop and uploads the
+    ///   normalized NCHW tensor; small CUDA-filter differences were amplified
+    ///   by DINOv2 classifiers despite matching labels.
     /// - `Letterbox` → rejected: letterbox is YOLO-family preprocess, not
     ///   classifier preprocess. Misconfiguration.
     /// - `MelSpectrogram` → already rejected at `load` time.
@@ -805,18 +843,36 @@ impl ClassifierModel {
                         self.manifest.id
                     ))
                 })?;
-                resize_crop_gpu(
-                    &stream,
-                    resize_crop,
-                    &gpu_img,
-                    rc,
-                    [target_w, target_h],
-                    channel_order,
-                    stats,
-                    self.manifest
-                        .interpolation
-                        .unwrap_or(Interpolation::Bilinear),
-                )?
+                let interpolation = self
+                    .manifest
+                    .interpolation
+                    .unwrap_or(Interpolation::Bilinear);
+                if interpolation == Interpolation::Bicubic {
+                    let host = resize_crop_host_nchw(
+                        image,
+                        [target_w, target_h],
+                        rc,
+                        interpolation,
+                        channel_order,
+                        stats,
+                    )?;
+                    stream.clone_htod(&host).map_err(|error| {
+                        SparrowEngineError::Ort(format!(
+                            "bicubic resize_crop host-to-device upload: {error}"
+                        ))
+                    })?
+                } else {
+                    resize_crop_gpu(
+                        &stream,
+                        resize_crop,
+                        &gpu_img,
+                        rc,
+                        [target_w, target_h],
+                        channel_order,
+                        stats,
+                        interpolation,
+                    )?
+                }
             }
             PreprocessMethod::Letterbox => {
                 // Defense-in-depth: load() rejects this at manifest validation

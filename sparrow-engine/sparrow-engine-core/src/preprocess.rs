@@ -17,6 +17,7 @@
 
 use image::{ImageReader, RgbImage};
 
+use sparrow_engine_types::manifest::{Interpolation, ResizeCropConfig, ResizeMode};
 use sparrow_engine_types::{ImageInput, PixelFormat, Result, SparrowEngineError};
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,155 @@ pub fn min_max_side_dims(w: u32, h: u32, min_side: u32, max_side: u32) -> (u32, 
     }
 }
 
+/// Center-crop offset used by torchvision and PIL transforms.
+///
+/// `torchvision.transforms.functional.center_crop` rounds half-pixel offsets
+/// with Python's ties-to-even rule. Integer floor division shifts every crop
+/// whose resize-minus-crop difference is `3 mod 4` by one pixel.
+pub fn torchvision_center_crop_offset(source: u32, target: u32) -> Option<u32> {
+    let difference = source.checked_sub(target)?;
+    let floor_half = difference / 2;
+    let round_up = difference % 2 == 1 && floor_half % 2 == 1;
+    Some(floor_half + u32::from(round_up))
+}
+
+/// torchvision `Resize(size)` dimensions for a scalar shorter-side target.
+pub fn torchvision_shorter_side_dims(w: u32, h: u32, size: u32) -> (u32, u32) {
+    let new_long = (((size as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
+    if w <= h {
+        (size.max(1), new_long)
+    } else {
+        (new_long, size.max(1))
+    }
+}
+
+/// Apply the manifest `resize_crop` geometry with the CPU reference filters.
+pub fn resize_crop_rgb(
+    image: &RgbImage,
+    input_size: [u32; 2],
+    config: &ResizeCropConfig,
+    interpolation: Interpolation,
+) -> Result<RgbImage> {
+    if image.width() == 0 || image.height() == 0 {
+        return Err(SparrowEngineError::ImageDecode(
+            "resize_crop requires a non-empty source image".to_string(),
+        ));
+    }
+    if input_size[0] == 0 || input_size[1] == 0 {
+        return Err(SparrowEngineError::InvalidManifest(
+            "resize_crop input_size dimensions must be > 0".to_string(),
+        ));
+    }
+    let base = if config.pre_crop_square {
+        let side = image.width().min(image.height());
+        let x = (image.width() - side) / 2;
+        let y = (image.height() - side) / 2;
+        image::imageops::crop_imm(image, x, y, side, side).to_image()
+    } else {
+        image.clone()
+    };
+
+    let (resize_width, resize_height) = match config.resize_mode {
+        ResizeMode::Exact => (config.resize_size[0], config.resize_size[1]),
+        ResizeMode::ShorterSide => {
+            torchvision_shorter_side_dims(base.width(), base.height(), config.resize_size[0])
+        }
+    };
+    if resize_width == 0 || resize_height == 0 {
+        return Err(SparrowEngineError::InvalidManifest(
+            "resize_crop resize_size dimensions must be > 0".to_string(),
+        ));
+    }
+    let resized = match interpolation {
+        Interpolation::Bilinear => image::imageops::resize(
+            &base,
+            resize_width,
+            resize_height,
+            image::imageops::FilterType::Triangle,
+        ),
+        Interpolation::Bicubic => image::imageops::resize(
+            &base,
+            resize_width,
+            resize_height,
+            image::imageops::FilterType::CatmullRom,
+        ),
+        Interpolation::Lanczos => image::imageops::resize(
+            &base,
+            resize_width,
+            resize_height,
+            image::imageops::FilterType::Lanczos3,
+        ),
+        Interpolation::Cv2Bilinear => resize_cv2_bilinear(&base, resize_width, resize_height),
+    };
+
+    let [target_width, target_height] = input_size;
+    let output = if config.center_crop {
+        let x = torchvision_center_crop_offset(resized.width(), target_width).ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "resize_crop: resized width {} is smaller than center-crop target {target_width}",
+                resized.width()
+            ))
+        })?;
+        let y = torchvision_center_crop_offset(resized.height(), target_height)
+            .ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(format!(
+                    "resize_crop: resized height {} is smaller than center-crop target {target_height}",
+                    resized.height()
+                ))
+            })?;
+        image::imageops::crop_imm(&resized, x, y, target_width, target_height).to_image()
+    } else {
+        resized
+    };
+
+    if output.width() != target_width || output.height() != target_height {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "resize_crop produced {}x{} but model input_size is {target_width}x{target_height} \
+             (set center_crop=true, or resize_size to match input_size)",
+            output.width(),
+            output.height()
+        )));
+    }
+    Ok(output)
+}
+
+fn resize_cv2_bilinear(image: &RgbImage, new_width: u32, new_height: u32) -> RgbImage {
+    let source_width = image.width();
+    let source_height = image.height();
+    let scale_x = source_width as f32 / new_width as f32;
+    let scale_y = source_height as f32 / new_height as f32;
+
+    RgbImage::from_fn(new_width, new_height, |output_x, output_y| {
+        let source_x = (output_x as f32 + 0.5) * scale_x - 0.5;
+        let source_y = (output_y as f32 + 0.5) * scale_y - 0.5;
+        let x0_float = source_x.floor();
+        let y0_float = source_y.floor();
+        let fraction_x = source_x - x0_float;
+        let fraction_y = source_y - y0_float;
+
+        let x0 = (x0_float as i32).clamp(0, source_width as i32 - 1) as u32;
+        let y0 = (y0_float as i32).clamp(0, source_height as i32 - 1) as u32;
+        let x1 = (x0_float as i32 + 1).clamp(0, source_width as i32 - 1) as u32;
+        let y1 = (y0_float as i32 + 1).clamp(0, source_height as i32 - 1) as u32;
+        let top_left = image.get_pixel(x0, y0);
+        let top_right = image.get_pixel(x1, y0);
+        let bottom_left = image.get_pixel(x0, y1);
+        let bottom_right = image.get_pixel(x1, y1);
+
+        let mut output = [0u8; 3];
+        for channel in 0..3 {
+            let top = top_left[channel] as f32 * (1.0 - fraction_x)
+                + top_right[channel] as f32 * fraction_x;
+            let bottom = bottom_left[channel] as f32 * (1.0 - fraction_x)
+                + bottom_right[channel] as f32 * fraction_x;
+            output[channel] = (top * (1.0 - fraction_y) + bottom * fraction_y)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+        image::Rgb(output)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Raw-buffer helpers
 // ---------------------------------------------------------------------------
@@ -159,6 +309,22 @@ fn bytes_per_pixel(format: PixelFormat) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn center_crop_offset_matches_python_round_ties_to_even() {
+        assert_eq!(torchvision_center_crop_offset(518, 518), Some(0));
+        assert_eq!(torchvision_center_crop_offset(519, 518), Some(0));
+        assert_eq!(torchvision_center_crop_offset(521, 518), Some(2));
+        assert_eq!(torchvision_center_crop_offset(523, 518), Some(2));
+        assert_eq!(torchvision_center_crop_offset(517, 518), None);
+    }
+
+    #[test]
+    fn shorter_side_dimensions_truncate_like_torchvision() {
+        assert_eq!(torchvision_shorter_side_dims(800, 600, 224), (298, 224));
+        assert_eq!(torchvision_shorter_side_dims(600, 800, 224), (224, 298));
+        assert_eq!(torchvision_shorter_side_dims(500, 500, 224), (224, 224));
+    }
 
     // -----------------------------------------------------------------------
     // Low-level decode_raw / bytes_per_pixel tests (moved from sparrow-engine-cpu).

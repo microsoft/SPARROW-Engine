@@ -11,7 +11,9 @@
 
 use std::sync::Arc;
 
-use sparrow_engine_core::preprocess::checked_tensor_len_3hw;
+use sparrow_engine_core::preprocess::{
+    checked_tensor_len_3hw, torchvision_center_crop_offset, torchvision_shorter_side_dims,
+};
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{ChannelOrder, Interpolation, ResizeCropConfig, ResizeMode};
 
@@ -78,19 +80,7 @@ fn resolve_geometry(
     // 2. Resize target (rw, rh).
     let (rw, rh) = match rc.resize_mode {
         ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
-        ResizeMode::ShorterSide => {
-            // torchvision Resize(s): shorter side EXACTLY s, longer side truncated
-            // int(s * long / short) — matches PIL/timm/open_clip (see the CPU
-            // preprocess note; BioCLIP2 ONB-5 parity fix).
-            let s = rc.resize_size[0];
-            let (w, h) = (crop_w, crop_h);
-            let new_long = (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
-            if w <= h {
-                (s.max(1), new_long)
-            } else {
-                (new_long, s.max(1))
-            }
-        }
+        ResizeMode::ShorterSide => torchvision_shorter_side_dims(crop_w, crop_h, rc.resize_size[0]),
     };
 
     // 3. Optional center-crop to input_size (exact pixel slice).
@@ -100,7 +90,18 @@ fn resolve_geometry(
                 "resize_crop: resized {rw}x{rh} is smaller than center_crop target {tgt_w}x{tgt_h}"
             )));
         }
-        ((rw - tgt_w) / 2, (rh - tgt_h) / 2)
+        (
+            torchvision_center_crop_offset(rw, tgt_w).ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "resize_crop center-crop width became invalid after bounds check".to_string(),
+                )
+            })?,
+            torchvision_center_crop_offset(rh, tgt_h).ok_or_else(|| {
+                SparrowEngineError::InvalidManifest(
+                    "resize_crop center-crop height became invalid after bounds check".to_string(),
+                )
+            })?,
+        )
     } else {
         if rw != tgt_w || rh != tgt_h {
             return Err(SparrowEngineError::InvalidManifest(format!(
@@ -260,24 +261,15 @@ mod tests {
         let (rw, rh) = match rc.resize_mode {
             ResizeMode::Exact => (rc.resize_size[0], rc.resize_size[1]),
             ResizeMode::ShorterSide => {
-                // torchvision Resize(s): shorter side EXACTLY s, longer side
-                // truncated int(s * long / short) — matches PIL/timm/open_clip
-                // (BioCLIP2 ONB-5 parity fix; mirrors CPU preprocess + kernel path).
-                let s = rc.resize_size[0];
-                let (w, h) = (base.width(), base.height());
-                let new_long =
-                    (((s as f32) * (w.max(h) as f32) / (w.min(h) as f32)) as u32).max(1);
-                if w <= h {
-                    (s.max(1), new_long)
-                } else {
-                    (new_long, s.max(1))
-                }
+                torchvision_shorter_side_dims(base.width(), base.height(), rc.resize_size[0])
             }
         };
         let resized = image::imageops::resize(&base, rw, rh, filter);
         let final_img: RgbImage = if rc.center_crop {
-            let x = (resized.width() - tw) / 2;
-            let y = (resized.height() - th) / 2;
+            let x = torchvision_center_crop_offset(resized.width(), tw)
+                .expect("resized width checked by test geometry");
+            let y = torchvision_center_crop_offset(resized.height(), th)
+                .expect("resized height checked by test geometry");
             image::imageops::crop_imm(&resized, x, y, tw, th).to_image()
         } else {
             resized
@@ -378,6 +370,24 @@ mod tests {
             [20, 20],
             Interpolation::Bicubic,
             image::imageops::FilterType::CatmullRom,
+        );
+    }
+
+    #[test]
+    fn resize_crop_gpu_uses_torchvision_ties_to_even_offset() {
+        run_case(
+            "shorter_side_odd_crop_offset",
+            8,
+            5,
+            ResizeCropConfig {
+                pre_crop_square: false,
+                resize_size: [4, 0],
+                resize_mode: ResizeMode::ShorterSide,
+                center_crop: true,
+            },
+            [3, 3],
+            Interpolation::Bilinear,
+            image::imageops::FilterType::Triangle,
         );
     }
 
