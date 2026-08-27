@@ -154,6 +154,7 @@ pub fn resize_crop_rgb(
         ));
     }
     let resized = match interpolation {
+        Interpolation::Nearest => resize_torch_nearest(&base, resize_width, resize_height)?,
         Interpolation::Bilinear => image::imageops::resize(
             &base,
             resize_width,
@@ -204,6 +205,27 @@ pub fn resize_crop_rgb(
         )));
     }
     Ok(output)
+}
+
+/// Resize with PyTorch tensor `interpolate(mode="nearest")` index mapping.
+///
+/// Torchvision's tensor path selects
+/// `floor(output_index * float32(source / target))`; preserving the float32
+/// scale also preserves its boundary rounding. `image::FilterType::Nearest`
+/// uses a different center convention.
+pub fn resize_torch_nearest(image: &RgbImage, new_width: u32, new_height: u32) -> Result<RgbImage> {
+    if image.width() == 0 || image.height() == 0 || new_width == 0 || new_height == 0 {
+        return Err(SparrowEngineError::ImageDecode(
+            "nearest resize requires non-zero source and target dimensions".to_string(),
+        ));
+    }
+    let scale_x = image.width() as f32 / new_width as f32;
+    let scale_y = image.height() as f32 / new_height as f32;
+    Ok(RgbImage::from_fn(new_width, new_height, |x, y| {
+        let source_x = ((x as f32 * scale_x).floor() as u32).min(image.width() - 1);
+        let source_y = ((y as f32 * scale_y).floor() as u32).min(image.height() - 1);
+        *image.get_pixel(source_x, source_y)
+    }))
 }
 
 fn resize_cv2_bilinear(image: &RgbImage, new_width: u32, new_height: u32) -> RgbImage {
@@ -324,6 +346,27 @@ mod tests {
         assert_eq!(torchvision_shorter_side_dims(800, 600, 224), (298, 224));
         assert_eq!(torchvision_shorter_side_dims(600, 800, 224), (224, 298));
         assert_eq!(torchvision_shorter_side_dims(500, 500, 224), (224, 224));
+    }
+
+    #[test]
+    fn nearest_resize_uses_torch_tensor_floor_mapping() {
+        let mut image = RgbImage::new(3, 1);
+        image.put_pixel(0, 0, image::Rgb([10, 0, 0]));
+        image.put_pixel(1, 0, image::Rgb([20, 0, 0]));
+        image.put_pixel(2, 0, image::Rgb([30, 0, 0]));
+        let resized = resize_torch_nearest(&image, 5, 1).unwrap();
+        assert_eq!(
+            resized.pixels().map(|pixel| pixel[0]).collect::<Vec<_>>(),
+            vec![10, 10, 20, 20, 30]
+        );
+
+        let rows = RgbImage::from_fn(1, 62, |_, y| image::Rgb([y as u8, 0, 0]));
+        let resized_rows = resize_torch_nearest(&rows, 1, 224).unwrap();
+        assert_eq!(
+            resized_rows.get_pixel(0, 112)[0],
+            30,
+            "PyTorch float32 scale maps the exact half boundary just below row 31"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -1530,12 +1530,17 @@ precision = "fp16"                                 # "fp16" or "fp32"; default f
 strategy  = "single"                               # "single" or "tiled" (HerdNet, OWL-T)                
 # cudnn_search_mode = "exhaustive"                 # (planned, P3.8-8) — not in current schema           
 
+[inference.trt]
+mode        = "on_demand"                          # "off", "on_demand", or "always"
+cuda_tf32   = true                                 # false forces full-mantissa CUDA FP32 math
+
 [preprocessing]                                                                                          
 input_size      = [1280, 1280]                                                                           
 layout          = "nchw"                           # mandatory; NHWC rejected                            
 channel_order   = "bgr"                            # "rgb" (default) or "bgr"                            
 method          = "letterbox"                      # "letterbox" or "resize"                             
 normalization   = "unit"                           # "unit" (/255) or "imagenet"                         
+interpolation   = "bilinear"                       # also "nearest", "bicubic", "lanczos", "cv2_bilinear"
 pad_value       = 0.447                                                                                  
 
 [postprocessing]                                                                                         

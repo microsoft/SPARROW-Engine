@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare whether the graph emits logits or probabilities, a per-class
   threshold, a result cap, and an optional fixed sub-frame axis. HTTP, CLI,
   Python, and FFI v2 preserve the existing `AudioClass` vectors.
+- Added PyTorch tensor-compatible nearest-neighbor image resizing on CPU and
+  GPU. `[inference.trt].cuda_tf32 = false` lets parity-sensitive FP32 models
+  disable TensorFloat-32 CUDA convolution math without changing other models.
 
 ### Fixed
 

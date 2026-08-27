@@ -153,6 +153,12 @@ pub fn resize_crop_gpu(
         ChannelOrder::Bgr => 1,
     };
     let interp_flag: i32 = match interp {
+        Interpolation::Nearest => {
+            return Err(SparrowEngineError::InvalidManifest(
+                "nearest classifier resize_crop is routed through the shared host reference path"
+                    .to_string(),
+            ));
+        }
         Interpolation::Bilinear => 0,
         Interpolation::Bicubic => 1,
         Interpolation::Lanczos => 2,

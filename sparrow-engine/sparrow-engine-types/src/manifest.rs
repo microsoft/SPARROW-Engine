@@ -119,6 +119,9 @@ pub enum ChannelOrder {
 /// preserves behaviour for manifests without the field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Interpolation {
+    /// Nearest-neighbor resize. Required by models trained on replicated
+    /// low-resolution crop pixels (for example DeepForest CropModel).
+    Nearest,
     /// Bilinear (PIL/torchvision default) -> `image` crate `Triangle`.
     #[default]
     Bilinear,
@@ -250,6 +253,11 @@ pub struct TrtConfig {
     /// False = SM-specific engine; true = SM-portable hardware-compatible mode.
     #[serde(default)]
     pub engine_hw_compatible: bool,
+    /// Allow TensorFloat-32 convolution math in the CUDA execution provider.
+    /// Defaults to true to preserve existing GPU behavior. Models whose
+    /// validated FP32 parity requires full mantissa precision can opt out.
+    #[serde(default = "default_cuda_tf32")]
+    pub cuda_tf32: bool,
     /// Minimum dynamic-shape profile dimensions, keyed by ONNX input tensor name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_min: Option<BTreeMap<String, Vec<i64>>>,
@@ -287,6 +295,7 @@ impl TrtConfig {
             precision: TrtPrecision::default(),
             builder_optimization_level: default_trt_builder_optimization_level(),
             engine_hw_compatible: false,
+            cuda_tf32: true,
             profile_min: None,
             profile_opt: None,
             profile_max: None,
@@ -1873,13 +1882,14 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     // the image-crate CatmullRom filter in the CPU preprocessor.
     let interpolation = match raw.preprocessing.interpolation.as_deref() {
         None => None,
+        Some("nearest") => Some(Interpolation::Nearest),
         Some("bilinear") => Some(Interpolation::Bilinear),
         Some("bicubic") => Some(Interpolation::Bicubic),
         Some("lanczos") => Some(Interpolation::Lanczos),
         Some("cv2_bilinear") => Some(Interpolation::Cv2Bilinear),
         Some(other) => {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "Unknown interpolation: '{other}' (expected 'bilinear', 'bicubic', 'lanczos', or 'cv2_bilinear')"
+                "Unknown interpolation: '{other}' (expected 'nearest', 'bilinear', 'bicubic', 'lanczos', or 'cv2_bilinear')"
             )))
         }
     };
@@ -2076,6 +2086,10 @@ fn default_trt_builder_optimization_level() -> u8 {
 }
 
 fn default_trt_enabled() -> bool {
+    true
+}
+
+const fn default_cuda_tf32() -> bool {
     true
 }
 
@@ -2673,6 +2687,7 @@ enabled = true
 precision = "fp16"
 builder_optimization_level = 3
 engine_hw_compatible = false
+cuda_tf32 = false
 
 [profile_min]
 audio = [1, 1, 224, 90]
@@ -2693,6 +2708,7 @@ audio = [1, 1, 224, 90]
         assert_eq!(trt.precision, TrtPrecision::Fp16);
         assert_eq!(trt.builder_optimization_level, 3);
         assert!(!trt.engine_hw_compatible);
+        assert!(!trt.cuda_tf32);
         assert_eq!(
             trt.profile_min
                 .as_ref()
@@ -2705,6 +2721,7 @@ audio = [1, 1, 224, 90]
     fn trt_effective_mode_matches_back_compat_table() {
         let mode_set: TrtConfig = toml::from_str("enabled = true\nmode = \"always\"\n").unwrap();
         assert_eq!(mode_set.effective_mode(), TrtMode::Always);
+        assert!(mode_set.cuda_tf32);
 
         let contradiction: TrtConfig =
             toml::from_str("enabled = false\nmode = \"on_demand\"\n").unwrap();
@@ -3657,6 +3674,10 @@ format = "one_per_line"
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "bicubic""#));
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
         assert_eq!(m.interpolation, Some(Interpolation::Bicubic));
+        // Nearest is required by crop classifiers trained on pixel replication.
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "nearest""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::Nearest));
         // Explicit bilinear -> Some(Bilinear).
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "bilinear""#));
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
@@ -3670,7 +3691,7 @@ format = "one_per_line"
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
         assert_eq!(m.interpolation, Some(Interpolation::Cv2Bilinear));
         // Invalid -> InvalidManifest error.
-        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "nearest""#));
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "box""#));
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
         assert!(matches!(err, SparrowEngineError::InvalidManifest(_)));
         assert!(err.to_string().contains("interpolation"));

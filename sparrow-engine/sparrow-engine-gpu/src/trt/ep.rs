@@ -276,7 +276,8 @@ impl<'a> TrtEpBuilder<'a> {
                     );
                 }
                 TrtProviderKind::Cuda => {
-                    providers.push(self.build_cuda_provider().error_on_failure())
+                    let use_tf32 = effective_trt.is_none_or(|config| config.cuda_tf32);
+                    providers.push(self.build_cuda_provider(use_tf32).error_on_failure())
                 }
                 TrtProviderKind::Cpu => providers.push(ort::ep::CPU::default().build()),
             }
@@ -284,8 +285,10 @@ impl<'a> TrtEpBuilder<'a> {
         Ok(providers)
     }
 
-    fn build_cuda_provider(&self) -> ExecutionProviderDispatch {
-        let mut cuda = ort::ep::CUDA::default().with_device_id(self.cuda.device_id);
+    fn build_cuda_provider(&self, use_tf32: bool) -> ExecutionProviderDispatch {
+        let mut cuda = ort::ep::CUDA::default()
+            .with_device_id(self.cuda.device_id)
+            .with_tf32(use_tf32);
         if let Some(search) = self.cuda.conv_algorithm_search.clone() {
             cuda = cuda.with_conv_algorithm_search(search);
         }
@@ -556,6 +559,7 @@ mod tests {
             precision: TrtPrecision::Fp16,
             builder_optimization_level: 3,
             engine_hw_compatible: false,
+            cuda_tf32: true,
             profile_min: None,
             profile_opt: None,
             profile_max: None,

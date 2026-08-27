@@ -87,7 +87,7 @@ pub fn letterbox_gpu(
     let cv2_flag: i32 = match interp {
         Interpolation::Bilinear => 0,
         Interpolation::Cv2Bilinear => 1,
-        Interpolation::Bicubic | Interpolation::Lanczos => {
+        Interpolation::Nearest | Interpolation::Bicubic | Interpolation::Lanczos => {
             return Err(SparrowEngineError::InvalidManifest(format!(
                 "GPU letterbox supports interpolation 'bilinear' or 'cv2_bilinear', got {interp:?}"
             )));

@@ -1670,6 +1670,7 @@ mod tests {
             precision: TrtPrecision::Fp16,
             builder_optimization_level: 3,
             engine_hw_compatible: false,
+            cuda_tf32: true,
             profile_min: None,
             profile_opt: None,
             profile_max: None,

@@ -70,7 +70,9 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::{Shape, TensorRef, TensorRefMut};
 use sparrow_engine_core::postprocess;
-use sparrow_engine_core::preprocess::{checked_tensor_len_3hw, decode_to_rgb, resize_crop_rgb};
+use sparrow_engine_core::preprocess::{
+    checked_tensor_len_3hw, decode_to_rgb, resize_crop_rgb, resize_torch_nearest,
+};
 use sparrow_engine_types::error::{Result, SparrowEngineError};
 use sparrow_engine_types::manifest::{
     self, ChannelOrder, Interpolation, Layout, ModelManifest, Normalization, PostprocessMethod,
@@ -344,6 +346,34 @@ fn resize_crop_host_nchw(
 ) -> Result<Vec<f32>> {
     let decoded = decode_to_rgb(image)?;
     let resized = resize_crop_rgb(&decoded, input_size, config, interpolation)?;
+    rgb_to_host_nchw(&resized, input_size, channel_order, stats)
+}
+
+fn resize_host_nchw(
+    image: &ImageInput,
+    input_size: [u32; 2],
+    interpolation: Interpolation,
+    channel_order: ChannelOrder,
+    stats: NormalizeStats,
+) -> Result<Vec<f32>> {
+    let decoded = decode_to_rgb(image)?;
+    let resized = match interpolation {
+        Interpolation::Nearest => resize_torch_nearest(&decoded, input_size[0], input_size[1])?,
+        other => {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "host classifier resize is not configured for {other:?}"
+            )));
+        }
+    };
+    rgb_to_host_nchw(&resized, input_size, channel_order, stats)
+}
+
+fn rgb_to_host_nchw(
+    resized: &image::RgbImage,
+    input_size: [u32; 2],
+    channel_order: ChannelOrder,
+    stats: NormalizeStats,
+) -> Result<Vec<f32>> {
     let [width, height] = input_size;
     let plane = (width as usize)
         .checked_mul(height as usize)
@@ -698,16 +728,13 @@ impl ClassifierModel {
     /// → ORT CUDA EP (zero-copy via `TensorRefMut::from_raw`) → CPU softmax.
     ///
     /// Preprocess dispatch on `manifest.preprocess_method`:
-    /// - `Resize` → [`resize_gpu`] (separable-conv resize honouring the
-    ///   manifest `interpolation`, no aspect preservation; matches
-    ///   `sparrow-engine-cpu`'s `resize_direct`). SpeciesNet (`unit`) and
-    ///   Amazon Camera Trap v2 (`imagenet`) both use this path; the
-    ///   `manifest.normalization` field selects the per-channel mean/std
-    ///   passed to the kernel via `NormalizeStats`.
+    /// - `Resize` → [`resize_gpu`] for convolution filters. Nearest-neighbor
+    ///   uses the shared host reference resize and uploads normalized NCHW,
+    ///   preserving block replication for small crown crops.
     /// - `ResizeCrop` → [`resize_crop_gpu`] for bilinear/Lanczos/cv2 filters.
-    ///   Bicubic uses the shared CPU reference resize/crop and uploads the
-    ///   normalized NCHW tensor; small CUDA-filter differences were amplified
-    ///   by DINOv2 classifiers despite matching labels.
+    ///   Nearest and bicubic use the shared CPU reference resize/crop and
+    ///   upload the normalized NCHW tensor; small CUDA-filter differences were
+    ///   amplified by DINOv2 classifiers despite matching labels.
     /// - `Letterbox` → rejected: letterbox is YOLO-family preprocess, not
     ///   classifier preprocess. Misconfiguration.
     /// - `MelSpectrogram` → already rejected at `load` time.
@@ -819,18 +846,37 @@ impl ClassifierModel {
         // — bit-exact identity vs the pre-Amazon `/255`-only kernel.
         // Amazon CTV2 takes the same path with `NormalizeStats::IMAGENET`.
         let dev_tensor: CudaSlice<f32> = match self.manifest.preprocess_method {
-            PreprocessMethod::Resize => resize_gpu(
-                &stream,
-                resize,
-                &gpu_img,
-                target_w,
-                target_h,
-                channel_order,
-                stats,
-                self.manifest
+            PreprocessMethod::Resize => {
+                let interpolation = self
+                    .manifest
                     .interpolation
-                    .unwrap_or(Interpolation::Bilinear),
-            )?,
+                    .unwrap_or(Interpolation::Bilinear);
+                if interpolation == Interpolation::Nearest {
+                    let host = resize_host_nchw(
+                        image,
+                        [target_w, target_h],
+                        interpolation,
+                        channel_order,
+                        stats,
+                    )?;
+                    stream.clone_htod(&host).map_err(|error| {
+                        SparrowEngineError::Ort(format!(
+                            "nearest resize host-to-device upload: {error}"
+                        ))
+                    })?
+                } else {
+                    resize_gpu(
+                        &stream,
+                        resize,
+                        &gpu_img,
+                        target_w,
+                        target_h,
+                        channel_order,
+                        stats,
+                        interpolation,
+                    )?
+                }
+            }
             PreprocessMethod::ResizeCrop => {
                 // ENG-RESIZE Phase 2: fused pre-crop-square -> conv resize
                 // (interpolation) -> center-crop -> normalize + NCHW. Mirrors
@@ -847,7 +893,10 @@ impl ClassifierModel {
                     .manifest
                     .interpolation
                     .unwrap_or(Interpolation::Bilinear);
-                if interpolation == Interpolation::Bicubic {
+                if matches!(
+                    interpolation,
+                    Interpolation::Nearest | Interpolation::Bicubic
+                ) {
                     let host = resize_crop_host_nchw(
                         image,
                         [target_w, target_h],
@@ -1202,6 +1251,33 @@ mod tests {
             drift_reference: None,
             catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
         }
+    }
+
+    #[test]
+    fn nearest_host_resize_replicates_pixels_in_nchw_order() {
+        let input = ImageInput::Raw {
+            data: vec![255, 0, 0, 0, 0, 255],
+            width: 2,
+            height: 1,
+            stride: 6,
+            format: sparrow_engine_types::PixelFormat::Rgb,
+        };
+        let tensor = resize_host_nchw(
+            &input,
+            [4, 1],
+            Interpolation::Nearest,
+            ChannelOrder::Rgb,
+            NormalizeStats::UNIT,
+        )
+        .unwrap();
+        assert_eq!(
+            tensor,
+            vec![
+                1.0, 1.0, 0.0, 0.0, // R
+                0.0, 0.0, 0.0, 0.0, // G
+                0.0, 0.0, 1.0, 1.0, // B
+            ]
+        );
     }
 
     fn cuda_or_skip(test_name: &str) -> Option<Arc<CudaContext>> {

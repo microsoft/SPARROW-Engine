@@ -241,6 +241,7 @@ fn letterbox(
 /// - `Bicubic`  -> `CatmullRom` (matches PIL BICUBIC to ~0.11/255)
 fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
     match interp {
+        Interpolation::Nearest => image::imageops::FilterType::Nearest,
         Interpolation::Bilinear => image::imageops::FilterType::Triangle,
         Interpolation::Bicubic => image::imageops::FilterType::CatmullRom,
         Interpolation::Lanczos => image::imageops::FilterType::Lanczos3,
@@ -252,6 +253,9 @@ fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
 
 fn resize_image(img: &RgbImage, new_w: u32, new_h: u32, interp: Interpolation) -> Result<RgbImage> {
     match interp {
+        Interpolation::Nearest => {
+            sparrow_engine_core::preprocess::resize_torch_nearest(img, new_w, new_h)
+        }
         Interpolation::Cv2Bilinear => Ok(resize_cv2_bilinear(img, new_w, new_h)),
         Interpolation::Bilinear | Interpolation::Bicubic | Interpolation::Lanczos => {
             resize_pil(img, new_w, new_h, interp_filter(interp))
@@ -647,6 +651,10 @@ mod tests {
     #[test]
     fn test_interp_filter_mapping() {
         use image::imageops::FilterType;
+        assert!(matches!(
+            interp_filter(Interpolation::Nearest),
+            FilterType::Nearest
+        ));
         assert!(matches!(
             interp_filter(Interpolation::Bilinear),
             FilterType::Triangle
