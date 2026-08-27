@@ -4155,8 +4155,8 @@ mod tests {
         let mut raw_json = Vec::new();
         write_audio_output_raw(
             &mut raw_json,
-            Path::new("whale.wav"),
-            "google-multispecies-whale",
+            Path::new("fixture.wav"),
+            "multilabel-raw-tiny",
             &result,
             &OutputFormat::Json,
             true,
@@ -4172,8 +4172,8 @@ mod tests {
         let mut merged_json = Vec::new();
         write_audio_output_merged(
             &mut merged_json,
-            Path::new("whale.wav"),
-            "google-multispecies-whale",
+            Path::new("fixture.wav"),
+            "multilabel-raw-tiny",
             &result,
             &OutputFormat::Json,
             0.251,
@@ -4190,8 +4190,8 @@ mod tests {
         let mut raw_csv = Vec::new();
         write_audio_output_raw(
             &mut raw_csv,
-            Path::new("whale.wav"),
-            "google-multispecies-whale",
+            Path::new("fixture.wav"),
+            "multilabel-raw-tiny",
             &result,
             &OutputFormat::Csv,
             true,
