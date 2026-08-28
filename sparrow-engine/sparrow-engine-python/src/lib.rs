@@ -42,7 +42,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use numpy::PyArray1;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 // PyO3 0.29 removed the crate-root `PyObject` alias (dropped from the prelude
@@ -175,7 +175,7 @@ fn validate_pipeline_ids_from_available(
 // ---------------------------------------------------------------------------
 
 /// Axis-aligned bounding box in normalized [0,1] coordinates.
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct BBox {
     #[pyo3(get)]
@@ -209,7 +209,7 @@ impl BBox {
 }
 
 /// A single detection (bbox + label + confidence).
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct Detection {
     #[pyo3(get)]
@@ -265,7 +265,7 @@ impl DetectResult {
 }
 
 /// A single classification prediction.
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct Classification {
     #[pyo3(get)]
@@ -365,13 +365,64 @@ impl EmbedResult {
 }
 
 /// A detection with an optional classification (from pipeline).
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
+pub struct PipelineCropRegion {
+    #[pyo3(get)]
+    pub bbox: BBox,
+    #[pyo3(get)]
+    pub width_px: u32,
+    #[pyo3(get)]
+    pub height_px: u32,
+    #[pyo3(get)]
+    pub coordinate_source: String,
+}
+
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
+pub struct PipelineFailure {
+    #[pyo3(get)]
+    pub stage: String,
+    #[pyo3(get)]
+    pub code: String,
+    #[pyo3(get)]
+    pub model_id: Option<String>,
+    #[pyo3(get)]
+    pub message: String,
+}
+
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
+pub struct PipelineStageProvenance {
+    #[pyo3(get)]
+    pub model_id: String,
+    #[pyo3(get)]
+    pub model_version: Option<String>,
+    #[pyo3(get)]
+    pub model_hash: Option<String>,
+}
+
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
+pub struct PipelineProvenance {
+    #[pyo3(get)]
+    pub detector: PipelineStageProvenance,
+    #[pyo3(get)]
+    pub classifier: Option<PipelineStageProvenance>,
+}
+
+/// A detection with an optional classification (from pipeline).
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct PipelineDetection {
     #[pyo3(get)]
     pub detection: Detection,
     #[pyo3(get)]
     pub classification: Option<Classification>,
+    #[pyo3(get)]
+    pub crop: Option<PipelineCropRegion>,
+    #[pyo3(get)]
+    pub failure: Option<PipelineFailure>,
 }
 
 #[pymethods]
@@ -401,6 +452,8 @@ pub struct PipelineResult {
     pub processing_time_ms: f32,
     #[pyo3(get)]
     pub detections: Vec<PipelineDetection>,
+    #[pyo3(get)]
+    pub stage_provenance: PipelineProvenance,
     model_type: ModelType,
 }
 
@@ -421,7 +474,7 @@ impl PipelineResult {
 }
 
 /// A single class entry within an AudioSegment's top-K classification output.
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct AudioClass {
     #[pyo3(get)]
@@ -449,7 +502,7 @@ impl AudioClass {
 }
 
 /// A single detected audio segment.
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct AudioSegment {
     #[pyo3(get)]
@@ -509,7 +562,7 @@ impl AudioResult {
 }
 
 /// Model metadata (id, type, default status).
-#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct ModelInfo {
     #[pyo3(get)]
@@ -581,6 +634,43 @@ fn convert_classification(c: &sparrow_engine::Classification) -> Classification 
         label: c.label.clone(),
         label_id: c.label_id,
         confidence: c.confidence,
+    }
+}
+
+fn convert_pipeline_crop(crop: &sparrow_engine::PipelineCropRegion) -> PipelineCropRegion {
+    PipelineCropRegion {
+        bbox: convert_bbox(&crop.bbox),
+        width_px: crop.width_px,
+        height_px: crop.height_px,
+        coordinate_source: crop.coordinate_source.as_str().to_string(),
+    }
+}
+
+fn convert_pipeline_failure(failure: &sparrow_engine::PipelineFailure) -> PipelineFailure {
+    PipelineFailure {
+        stage: failure.stage.as_str().to_string(),
+        code: failure.kind.as_str().to_string(),
+        model_id: failure.model_id.clone(),
+        message: failure.message.clone(),
+    }
+}
+
+fn convert_pipeline_stage(
+    stage: &sparrow_engine::PipelineStageProvenance,
+) -> PipelineStageProvenance {
+    PipelineStageProvenance {
+        model_id: stage.model_id.clone(),
+        model_version: stage.model_version.clone(),
+        model_hash: stage.model_hash.clone(),
+    }
+}
+
+fn convert_pipeline_provenance(
+    provenance: &sparrow_engine::PipelineProvenance,
+) -> PipelineProvenance {
+    PipelineProvenance {
+        detector: convert_pipeline_stage(&provenance.detector),
+        classifier: provenance.classifier.as_ref().map(convert_pipeline_stage),
     }
 }
 
@@ -662,17 +752,17 @@ fn py_embed_result(py: Python<'_>, r: sparrow_engine::EmbedResult) -> EmbedResul
 // ---------------------------------------------------------------------------
 
 fn pydetection_to_native(d: &Detection) -> sparrow_engine::Detection {
-    sparrow_engine::Detection {
-        bbox: sparrow_engine::BBox {
+    sparrow_engine::Detection::new(
+        sparrow_engine::BBox {
             x_min: d.bbox.x_min,
             y_min: d.bbox.y_min,
             x_max: d.bbox.x_max,
             y_max: d.bbox.y_max,
         },
-        label: d.label.clone(),
-        label_id: d.label_id,
-        confidence: d.confidence,
-    }
+        d.label.clone(),
+        d.label_id,
+        d.confidence,
+    )
 }
 
 fn pyclassification_to_native(c: &Classification) -> sparrow_engine::Classification {
@@ -737,14 +827,30 @@ fn pypipeline_to_native(r: &PipelineResult) -> sparrow_engine::PipelineResult {
         detections: r
             .detections
             .iter()
-            .map(|pd| sparrow_engine::PipelineDetection {
-                detection: pydetection_to_native(&pd.detection),
-                classification: pd.classification.as_ref().map(pyclassification_to_native),
+            .map(|pd| {
+                sparrow_engine::PipelineDetection::new(
+                    pydetection_to_native(&pd.detection),
+                    pd.classification.as_ref().map(pyclassification_to_native),
+                )
             })
             .collect(),
         image_width: r.image_size.0,
         image_height: r.image_size.1,
         processing_time_ms: r.processing_time_ms,
+        stage_provenance: sparrow_engine::PipelineProvenance {
+            detector: sparrow_engine::PipelineStageProvenance {
+                model_id: r.stage_provenance.detector.model_id.clone(),
+                model_version: r.stage_provenance.detector.model_version.clone(),
+                model_hash: r.stage_provenance.detector.model_hash.clone(),
+            },
+            classifier: r.stage_provenance.classifier.as_ref().map(|stage| {
+                sparrow_engine::PipelineStageProvenance {
+                    model_id: stage.model_id.clone(),
+                    model_version: stage.model_version.clone(),
+                    model_hash: stage.model_hash.clone(),
+                }
+            }),
+        },
     }
 }
 
@@ -1271,33 +1377,70 @@ impl PyEngine {
         })
     }
 
-    /// Run ad-hoc detect+classify pipeline on a list of image paths.
+    /// Run a named or ad-hoc detect+classify pipeline on a list of image paths.
     // Clippy's `too_many_arguments` default is 7; the `#[pyo3(signature = ...)]`
     // on this method intentionally exposes each Python kwarg as a separate
     // Rust argument so the Python-visible signature stays
-    // `pipeline(paths, detector, classifier, threshold=None, top_k=None,
-    // progress_callback=None)`. Packing the trailing kwargs into a struct
+    // `pipeline(paths, detector=None, classifier=None, threshold=None,
+    // top_k=None, progress_callback=None, pipeline_id=None)`. Packing the trailing kwargs into a struct
     // would break the Python contract; the lint is silenced at this boundary.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (paths, detector, classifier, threshold=None, top_k=None, progress_callback=None))]
+    #[pyo3(signature = (paths, detector=None, classifier=None, threshold=None, top_k=None, progress_callback=None, pipeline_id=None))]
     fn pipeline(
         &self,
         py: Python<'_>,
         paths: Vec<String>,
-        detector: &str,
-        classifier: &str,
+        detector: Option<&str>,
+        classifier: Option<&str>,
         threshold: Option<f32>,
         top_k: Option<u32>,
         progress_callback: Option<PyObject>,
+        pipeline_id: Option<&str>,
     ) -> PyResult<Vec<PipelineResult>> {
         let engine = &self.engine;
-        let det_id = detector.to_owned();
-        let cls_id = classifier.to_owned();
+        let (named_pipeline, det_id, cls_id): (Option<String>, String, Option<String>) =
+            match (pipeline_id, detector, classifier) {
+                (Some(pipeline_id), None, None) => {
+                    engine.load_pipeline_by_id(pipeline_id).map_err(to_pyerr)?;
+                    let manifest = engine.get_pipeline(pipeline_id).map_err(to_pyerr)?;
+                    let detector_id = manifest
+                        .steps
+                        .iter()
+                        .find(|step| step.role == sparrow_engine::manifest::PipelineRole::Detector)
+                        .map(|step| step.model.clone())
+                        .ok_or_else(|| {
+                            PyValueError::new_err("named pipeline has no detector step")
+                        })?;
+                    let classifier_id = manifest
+                        .steps
+                        .iter()
+                        .find(|step| {
+                            step.role == sparrow_engine::manifest::PipelineRole::Classifier
+                        })
+                        .map(|step| step.model.clone());
+                    for step in &manifest.steps {
+                        let handle = engine.get_or_load_model(&step.model).map_err(to_pyerr)?;
+                        drop(handle);
+                    }
+                    (Some(pipeline_id.to_string()), detector_id, classifier_id)
+                }
+                (None, Some(detector), Some(classifier)) => {
+                    validate_pipeline_ids(engine, detector, classifier).map_err(to_pyerr)?;
+                    let classifier_handle =
+                        engine.get_or_load_model(classifier).map_err(to_pyerr)?;
+                    drop(classifier_handle);
+                    (None, detector.to_string(), Some(classifier.to_string()))
+                }
+                _ => {
+                    return Err(PyValueError::new_err(
+                        "specify either pipeline_id or both detector and classifier",
+                    ));
+                }
+            };
         let d_opts = DetectOpts {
             confidence_threshold: threshold,
             max_detections: None,
         };
-        validate_pipeline_ids(engine, &det_id, &cls_id).map_err(to_pyerr)?;
 
         let c_opts = ClassifyOpts { top_k };
         let total = paths.len();
@@ -1305,14 +1448,30 @@ impl PyEngine {
         py.detach(move || {
             let detector_handle = engine.get_or_load_model(&det_id).map_err(to_pyerr)?;
             let detector_model_type = detector_handle.model_type();
-            let _classifier_handle = engine.get_or_load_model(&cls_id).map_err(to_pyerr)?;
             let mut results = Vec::with_capacity(paths.len());
             let mut errors = 0usize;
             for (i, path) in paths.iter().enumerate() {
                 let input = ImageInput::FilePath(PathBuf::from(path));
-                match sparrow_engine::pipeline::run_pipeline_adhoc(
-                    engine, &input, &det_id, &cls_id, &d_opts, &c_opts,
-                ) {
+                let pipeline_result = match &named_pipeline {
+                    Some(pipeline_id) => sparrow_engine::pipeline::run_pipeline(
+                        engine,
+                        pipeline_id,
+                        &input,
+                        &d_opts,
+                        &c_opts,
+                    ),
+                    None => sparrow_engine::pipeline::run_pipeline_adhoc(
+                        engine,
+                        &input,
+                        &det_id,
+                        cls_id
+                            .as_deref()
+                            .ok_or_else(|| PyValueError::new_err("classifier missing"))?,
+                        &d_opts,
+                        &c_opts,
+                    ),
+                };
+                match pipeline_result {
                     Ok(r) => {
                         results.push(PipelineResult {
                             pipeline_id: r.pipeline_id.clone(),
@@ -1327,8 +1486,16 @@ impl PyEngine {
                                         .classification
                                         .as_ref()
                                         .map(convert_classification),
+                                    crop: pd.crop.as_ref().map(convert_pipeline_crop),
+                                    failure: pd
+                                        .failure
+                                        .as_ref()
+                                        .map(convert_pipeline_failure),
                                 })
                                 .collect(),
+                            stage_provenance: convert_pipeline_provenance(
+                                &r.stage_provenance,
+                            ),
                             model_type: detector_model_type,
                         });
                     }
@@ -2093,6 +2260,10 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Classification>()?;
     m.add_class::<ClassifyResult>()?;
     m.add_class::<EmbedResult>()?;
+    m.add_class::<PipelineCropRegion>()?;
+    m.add_class::<PipelineFailure>()?;
+    m.add_class::<PipelineStageProvenance>()?;
+    m.add_class::<PipelineProvenance>()?;
     m.add_class::<PipelineDetection>()?;
     m.add_class::<PipelineResult>()?;
     m.add_class::<AudioClass>()?;
@@ -2345,17 +2516,17 @@ mod tests {
 
     #[test]
     fn convert_detection_maps_all_fields() {
-        let src = sparrow_engine::Detection {
-            bbox: sparrow_engine::BBox {
+        let src = sparrow_engine::Detection::new(
+            sparrow_engine::BBox {
                 x_min: 0.0,
                 y_min: 0.1,
                 x_max: 0.5,
                 y_max: 0.6,
             },
-            label: "animal".to_owned(),
-            label_id: 1,
-            confidence: 0.95,
-        };
+            "animal".to_owned(),
+            1,
+            0.95,
+        );
         let dst = convert_detection(&src);
         assert_eq!(dst.label, "animal");
         assert_eq!(dst.label_id, 1);
@@ -2843,6 +3014,14 @@ mod tests {
             image_size: (32, 32),
             processing_time_ms: 0.0,
             detections: Vec::new(),
+            stage_provenance: PipelineProvenance {
+                detector: PipelineStageProvenance {
+                    model_id: "owl-t".to_string(),
+                    model_version: None,
+                    model_hash: None,
+                },
+                classifier: None,
+            },
             model_type: ModelType::OverheadDetector,
         };
         let opts = visualize_render_opts(pipeline_visualization_model_type(&result), false);

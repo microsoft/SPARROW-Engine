@@ -174,7 +174,8 @@ pub fn try_yolo_e2e(
             continue;
         }
 
-        let bbox = denormalize_and_normalize(row[0], row[1], row[2], row[3], meta);
+        let (bbox, source_pixel_box) =
+            denormalize_and_normalize(row[0], row[1], row[2], row[3], meta);
         if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
             return Err(SparrowEngineError::Ort(
                 "yolo_e2e output contains degenerate normalized boxes".to_string(),
@@ -190,12 +191,10 @@ pub fn try_yolo_e2e(
         let class_id = row[5] as u32;
         let label = label_for_id(labels, class_id);
 
-        detections.push(Detection {
-            bbox,
-            label,
-            label_id: class_id,
-            confidence,
-        });
+        detections.push(
+            Detection::new(bbox, label, class_id, confidence)
+                .with_source_pixel_box(source_pixel_box),
+        );
     }
 
     // Sort descending by confidence for deterministic cap behavior.
@@ -292,12 +291,7 @@ pub fn try_rtdetr_topk_with_limit(
         let class_id = row[5] as u32;
         let label = label_for_id(labels, class_id);
 
-        detections.push(Detection {
-            bbox,
-            label,
-            label_id: class_id,
-            confidence,
-        });
+        detections.push(Detection::new(bbox, label, class_id, confidence));
     }
 
     detections.sort_by(|a, b| {
@@ -493,12 +487,12 @@ pub fn try_retinanet_soft_nms(
                     "retinanet_soft_nms output contains degenerate normalized boxes".to_string(),
                 ));
             }
-            Ok(Detection {
+            Ok(Detection::new(
                 bbox,
-                label: label_for_id(labels, candidate.label_id),
-                label_id: candidate.label_id,
-                confidence: candidate.original_score,
-            })
+                label_for_id(labels, candidate.label_id),
+                candidate.label_id,
+                candidate.original_score,
+            ))
         })
         .collect()
 }
@@ -601,7 +595,7 @@ pub fn try_megadet_v5a(
 
         let half_w = w * 0.5;
         let half_h = h * 0.5;
-        let bbox =
+        let (bbox, source_pixel_box) =
             denormalize_and_normalize(cx - half_w, cy - half_h, cx + half_w, cy + half_h, meta);
         if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
             return Err(SparrowEngineError::Ort(
@@ -610,12 +604,10 @@ pub fn try_megadet_v5a(
         }
 
         let label = label_for_id(labels, class_id as u32);
-        detections.push(Detection {
-            bbox,
-            label,
-            label_id: class_id as u32,
-            confidence,
-        });
+        detections.push(
+            Detection::new(bbox, label, class_id as u32, confidence)
+                .with_source_pixel_box(source_pixel_box),
+        );
     }
 
     // Greedy class-aware NMS on normalized [0,1] bboxes.
@@ -773,17 +765,17 @@ pub fn try_heatmap_peaks(
 
             let label = label_for_id(labels, class_id as u32);
 
-            detections.push(Detection {
-                bbox: BBox {
+            detections.push(Detection::new(
+                BBox {
                     x_min,
                     y_min,
                     x_max,
                     y_max,
                 },
                 label,
-                label_id: class_id as u32,
+                class_id as u32,
                 confidence,
-            });
+            ));
         }
     }
 
@@ -962,7 +954,13 @@ pub fn finalize_embedding(v: &mut [f32], normalize: bool) -> Result<()> {
 /// Output coords are normalized [0,1] relative to the original image dimensions.
 /// Assumes callers use letterbox or resize-with-padding preprocessing.
 /// Do NOT use with `resize_direct` metadata (scale=1.0, pad=0.0 are dummy values).
-fn denormalize_and_normalize(x1: f32, y1: f32, x2: f32, y2: f32, meta: &PreprocessMeta) -> BBox {
+fn denormalize_and_normalize(
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    meta: &PreprocessMeta,
+) -> (BBox, sparrow_engine_types::SourcePixelBox) {
     // Step 1: Remove letterbox padding.
     let x1 = x1 - meta.pad_x;
     let y1 = y1 - meta.pad_y;
@@ -979,12 +977,15 @@ fn denormalize_and_normalize(x1: f32, y1: f32, x2: f32, y2: f32, meta: &Preproce
     let ow = meta.original_width as f32;
     let oh = meta.original_height as f32;
 
-    BBox {
-        x_min: (x1 / ow).clamp(0.0, 1.0),
-        y_min: (y1 / oh).clamp(0.0, 1.0),
-        x_max: (x2 / ow).clamp(0.0, 1.0),
-        y_max: (y2 / oh).clamp(0.0, 1.0),
-    }
+    (
+        BBox {
+            x_min: (x1 / ow).clamp(0.0, 1.0),
+            y_min: (y1 / oh).clamp(0.0, 1.0),
+            x_max: (x2 / ow).clamp(0.0, 1.0),
+            y_max: (y2 / oh).clamp(0.0, 1.0),
+        },
+        sparrow_engine_types::SourcePixelBox::new([x1, y1, x2, y2]),
+    )
 }
 
 /// Find the argmax and max value in a slice of an ndarray row.
@@ -1734,11 +1735,12 @@ mod tests {
     fn test_denormalize_clamps() {
         let meta = identity_meta(100, 100);
         // Coordinates slightly outside image bounds.
-        let bbox = denormalize_and_normalize(-5.0, -3.0, 105.0, 103.0, &meta);
+        let (bbox, source) = denormalize_and_normalize(-5.0, -3.0, 105.0, 103.0, &meta);
         assert_eq!(bbox.x_min, 0.0);
         assert_eq!(bbox.y_min, 0.0);
         assert_eq!(bbox.x_max, 1.0);
         assert_eq!(bbox.y_max, 1.0);
+        assert_eq!(source.xyxy(), [-5.0, -3.0, 105.0, 103.0]);
     }
 
     #[test]
@@ -1952,17 +1954,17 @@ mod phase_a_r1_postprocess {
     use sparrow_engine_types::{BBox, Detection};
 
     fn det(conf: f32) -> Detection {
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: 0.0,
                 y_min: 0.0,
                 x_max: 0.5,
                 y_max: 0.5,
             },
-            label: "x".into(),
-            label_id: 0,
-            confidence: conf,
-        }
+            "x".into(),
+            0,
+            conf,
+        )
     }
 
     /// NaN confidence in `sort_desc_and_cap` must not panic. The sort uses

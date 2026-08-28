@@ -396,6 +396,7 @@ unsafe class Program
         NativeMethods.sparrow_engine_classify_result_free(null);
         NativeMethods.sparrow_engine_audio_result_free(null);
         NativeMethods.sparrow_engine_pipeline_result_free(null);
+        NativeMethods.sparrow_engine_pipeline_result_v2_free(null);
         NativeMethods.sparrow_engine_free_string(null);
         NativeMethods.sparrow_engine_engine_free(null);
         Assert(true, "All _free(null) calls are no-ops (no crash)");
@@ -514,6 +515,16 @@ unsafe class Program
                 string? pipeErr = GetLastError();
                 Assert(pipeErr != null && pipeErr.Length > 0,
                     $"sparrow_engine_last_error set after bad pipeline_id: \"{pipeErr}\"");
+
+                SparrowEnginePipelineResultV2* detailedPipeResult =
+                    NativeMethods.sparrow_engine_run_pipeline_v2(
+                        engine, fakePipelineId, imgPtr, (nuint)dummyImage.Length, null, null);
+
+                Assert(detailedPipeResult == null,
+                    "sparrow_engine_run_pipeline_v2(bad pipeline_id) returns null");
+                string? detailedPipeErr = GetLastError();
+                Assert(detailedPipeErr != null && detailedPipeErr.Length > 0,
+                    $"sparrow_engine_last_error set after v2 bad pipeline_id: \"{detailedPipeErr}\"");
             }
             Marshal.FreeHGlobal((IntPtr)fakePipelineId);
         }
@@ -524,8 +535,7 @@ unsafe class Program
         Console.WriteLine("\n--- 6d. Load Model By ID Negative Test (sparrow_engine_load_model_by_id) ---");
 
         {
-            // Model dir doesn't have md-audiobirds-v1/manifest.toml — should fail
-            byte* badModelId = ToUtf8("md-audiobirds-v1");
+            byte* badModelId = ToUtf8("nonexistent-model-v99");
             void* badIdModel = NativeMethods.sparrow_engine_load_model_by_id(engine, badModelId);
             Marshal.FreeHGlobal((IntPtr)badModelId);
 

@@ -127,8 +127,7 @@ async fn run_server() {
             // typo'd ids were already rejected by parse_preload_ids above, so an
             // explicit id reaching here is in-catalog. Any OTHER load error
             // (corrupt model, OOM, …) still aborts boot. (OQ-2026-07-06-6.)
-            let flavor_incompatible =
-                matches!(e, SparrowEngineError::UnsupportedFormat { .. });
+            let flavor_incompatible = matches!(e, SparrowEngineError::UnsupportedFormat { .. });
             if preload_all_requested || flavor_incompatible {
                 warn!(
                     model_id = %model_id,
@@ -372,7 +371,10 @@ fn spawn_trt_warmups(
     let engine = state.engine.clone();
     let shutdown_rx = shutdown_rx.clone();
     let total = ids.len();
-    info!(models = total, "scheduling TensorRT boot warm-up (serial queue)");
+    info!(
+        models = total,
+        "scheduling TensorRT boot warm-up (serial queue)"
+    );
     Some(tokio::task::spawn_blocking(move || {
         let attempted = drive_trt_warmup_queue(
             ids,

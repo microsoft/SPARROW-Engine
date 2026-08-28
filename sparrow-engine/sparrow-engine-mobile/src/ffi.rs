@@ -1,7 +1,7 @@
 //! Generic C FFI boundary for the mobile (LiteRT) flavor — RP-25-FU-1.
 //!
 //! Replaces the focused 5-export orca cascade API with a documented 18-symbol
-//! subset of the cpu/gpu 37-symbol surface: engine lifecycle, model management,
+//! subset of the cpu/gpu 39-symbol surface: engine lifecycle, model management,
 //! image inference (`detect` implemented in RP-42; `classify` still deferred),
 //! single-model audio detection, and the audio-cascade pipeline family (the orca
 //! cascade is now a `pipeline.toml`, not C code).

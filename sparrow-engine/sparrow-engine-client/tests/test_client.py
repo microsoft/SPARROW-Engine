@@ -112,6 +112,17 @@ PIPELINE_RESPONSE = {
     "model_id": None,
     "image_size": [1920, 1080],
     "processing_time_ms": 65.0,
+    "stage_provenance": {
+        "detector": {
+            "model_id": "megadetector_v6",
+            "model_version": "1",
+            "model_hash": "detector-hash",
+        },
+        "classifier": {
+            "model_id": "speciesnet",
+            "model_hash": "classifier-hash",
+        },
+    },
     "detections": [
         {
             "label": "animal",
@@ -119,6 +130,12 @@ PIPELINE_RESPONSE = {
             "confidence": 0.95,
             "bbox": {"x_min": 0.1, "y_min": 0.2, "x_max": 0.5, "y_max": 0.6},
             "classification": {"label": "deer", "label_id": 3, "confidence": 0.88},
+            "crop": {
+                "bbox": {"x_min": 0.1, "y_min": 0.2, "x_max": 0.5, "y_max": 0.6},
+                "width_px": 768,
+                "height_px": 432,
+                "coordinate_source": "normalized_bbox",
+            },
         },
         {
             "label": "animal",
@@ -126,6 +143,11 @@ PIPELINE_RESPONSE = {
             "confidence": 0.70,
             "bbox": {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.4},
             "classification": None,
+            "failure": {
+                "stage": "crop",
+                "code": "crop_degenerate",
+                "message": "too small",
+            },
         },
     ],
 }
@@ -290,9 +312,18 @@ def test_pipeline(httpserver, client):
     assert pd0.detection.label == "animal"
     assert pd0.classification is not None
     assert pd0.classification.label == "deer"
+    assert pd0.crop is not None
+    assert pd0.crop.width_px == 768
+    assert pd0.crop.coordinate_source == "normalized_bbox"
     # Second detection has no classification
     pd1 = result.detections[1]
     assert pd1.classification is None
+    assert pd1.failure is not None
+    assert pd1.failure.code == "crop_degenerate"
+    assert result.stage_provenance is not None
+    assert result.stage_provenance.detector.model_id == "megadetector_v6"
+    assert result.stage_provenance.classifier is not None
+    assert result.stage_provenance.classifier.model_hash == "classifier-hash"
 
 
 def test_list_models(httpserver, client):

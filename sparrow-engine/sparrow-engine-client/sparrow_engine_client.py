@@ -55,6 +55,37 @@ class Classification:
 class PipelineDetection:
     detection: Detection
     classification: Optional[Classification]
+    crop: Optional["PipelineCropRegion"] = None
+    failure: Optional["PipelineFailure"] = None
+
+
+@dataclass
+class PipelineCropRegion:
+    bbox: BBox
+    width_px: int
+    height_px: int
+    coordinate_source: str
+
+
+@dataclass
+class PipelineFailure:
+    stage: str
+    code: str
+    message: str
+    model_id: Optional[str] = None
+
+
+@dataclass
+class PipelineStageProvenance:
+    model_id: str
+    model_version: Optional[str] = None
+    model_hash: Optional[str] = None
+
+
+@dataclass
+class PipelineProvenance:
+    detector: PipelineStageProvenance
+    classifier: Optional[PipelineStageProvenance] = None
 
 
 @dataclass
@@ -79,6 +110,7 @@ class PipelineResult:
     image_size: tuple[int, int]
     processing_time_ms: float
     detections: list[PipelineDetection]
+    stage_provenance: Optional[PipelineProvenance] = None
 
 
 @dataclass
@@ -492,6 +524,17 @@ class SparrowEngineClient:
             files={"image": (fname, data, mime)},
         )
         d = self._check(resp)
+        stage_data = d.get("stage_provenance")
+        stage_provenance = None
+        if stage_data:
+            stage_provenance = PipelineProvenance(
+                detector=PipelineStageProvenance(**stage_data["detector"]),
+                classifier=(
+                    PipelineStageProvenance(**stage_data["classifier"])
+                    if stage_data.get("classifier")
+                    else None
+                ),
+            )
         return PipelineResult(
             pipeline_id=d["pipeline_id"],
             image_size=tuple(d["image_size"]),
@@ -504,9 +547,25 @@ class SparrowEngineClient:
                         if det.get("classification")
                         else None
                     ),
+                    crop=(
+                        PipelineCropRegion(
+                            bbox=BBox(**det["crop"]["bbox"]),
+                            width_px=det["crop"]["width_px"],
+                            height_px=det["crop"]["height_px"],
+                            coordinate_source=det["crop"]["coordinate_source"],
+                        )
+                        if det.get("crop")
+                        else None
+                    ),
+                    failure=(
+                        PipelineFailure(**det["failure"])
+                        if det.get("failure")
+                        else None
+                    ),
                 )
                 for det in d["detections"]
             ],
+            stage_provenance=stage_provenance,
         )
 
     def detect_audio(

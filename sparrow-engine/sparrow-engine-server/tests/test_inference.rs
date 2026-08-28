@@ -226,7 +226,14 @@ async fn test_detect_mdv6() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );
@@ -270,7 +277,14 @@ async fn test_detect_deepfaune() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );
@@ -313,7 +327,14 @@ async fn test_detect_tiled_herdnet() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );
@@ -362,14 +383,7 @@ async fn test_detect_batch() {
     let mut form = reqwest::multipart::Form::new();
     for img_path in &images {
         let part = reqwest::multipart::Part::bytes(std::fs::read(img_path).expect("read image"))
-            .file_name(
-                img_path
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-            )
+            .file_name(img_path.file_name().unwrap().to_str().unwrap().to_string())
             .mime_str("image/jpeg")
             .unwrap();
         form = form.part("images", part);
@@ -418,7 +432,14 @@ async fn test_classify_speciesnet() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );
@@ -477,7 +498,14 @@ async fn test_audio_detect() {
     let form = reqwest::multipart::Form::new().part(
         "audio",
         reqwest::multipart::Part::bytes(std::fs::read(&audio_path).expect("read audio"))
-            .file_name(audio_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                audio_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("audio/wav")
             .unwrap(),
     );
@@ -569,7 +597,14 @@ async fn test_pipeline() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );
@@ -612,7 +647,14 @@ async fn test_detect_model_not_found() {
     let form = reqwest::multipart::Form::new().part(
         "image",
         reqwest::multipart::Part::bytes(std::fs::read(&image_path).expect("read image"))
-            .file_name(image_path.file_name().unwrap().to_str().unwrap().to_string())
+            .file_name(
+                image_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            )
             .mime_str("image/jpeg")
             .unwrap(),
     );

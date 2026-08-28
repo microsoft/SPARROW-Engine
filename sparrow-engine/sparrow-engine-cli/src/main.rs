@@ -303,12 +303,15 @@ struct PipelineArgs {
     /// Input files or directories
     #[arg(required = true)]
     input: Vec<PathBuf>,
-    /// Detector model ID
-    #[arg(long, required = true)]
-    detector: String,
-    /// Classifier model ID
-    #[arg(long, required = true)]
-    classifier: String,
+    /// Named pipeline ID. Conflicts with --detector and --classifier.
+    #[arg(long, conflicts_with_all = ["detector", "classifier"])]
+    pipeline: Option<String>,
+    /// Detector model ID for an ad-hoc pipeline
+    #[arg(long, requires = "classifier", conflicts_with = "pipeline")]
+    detector: Option<String>,
+    /// Classifier model ID for an ad-hoc pipeline
+    #[arg(long, requires = "detector", conflicts_with = "pipeline")]
+    classifier: Option<String>,
     /// Detection confidence threshold
     #[arg(long)]
     threshold: Option<f32>,
@@ -510,6 +513,7 @@ struct PipelineOutput {
     file: String,
     pipeline_id: String,
     image_size: [u32; 2],
+    stage_provenance: PipelineProvenanceOutput,
     detections: Vec<PipelineDetectionOutput>,
 }
 
@@ -519,6 +523,43 @@ struct PipelineDetectionOutput {
     confidence: f32,
     bbox: BBoxOutput,
     classification: Option<ClassificationOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crop: Option<PipelineCropOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<PipelineFailureOutput>,
+}
+
+#[derive(Serialize)]
+struct PipelineCropOutput {
+    bbox: BBoxOutput,
+    width_px: u32,
+    height_px: u32,
+    coordinate_source: String,
+}
+
+#[derive(Serialize)]
+struct PipelineFailureOutput {
+    stage: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_id: Option<String>,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct PipelineStageProvenanceOutput {
+    model_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_hash: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PipelineProvenanceOutput {
+    detector: PipelineStageProvenanceOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    classifier: Option<PipelineStageProvenanceOutput>,
 }
 
 #[derive(Serialize)]
@@ -2584,17 +2625,49 @@ fn cmd_pipeline_with_engine(
         return Err("No image files found.".into());
     }
 
-    validate_pipeline_ids(engine, &args.detector, &args.classifier)?;
+    let (named_pipeline, detector_id, classifier_id) =
+        match (&args.pipeline, &args.detector, &args.classifier) {
+            (Some(pipeline_id), None, None) => {
+                engine.load_pipeline_by_id(pipeline_id)?;
+                let manifest = engine.get_pipeline(pipeline_id)?;
+                let detector_id = manifest
+                    .steps
+                    .iter()
+                    .find(|step| step.role == engine_dispatch::manifest::PipelineRole::Detector)
+                    .map(|step| step.model.clone())
+                    .ok_or("named pipeline has no detector step")?;
+                let classifier_id = manifest
+                    .steps
+                    .iter()
+                    .find(|step| step.role == engine_dispatch::manifest::PipelineRole::Classifier)
+                    .map(|step| step.model.clone());
+                for step in &manifest.steps {
+                    let handle = engine.get_or_load_model(&step.model)?;
+                    drop(handle);
+                }
+                (Some(pipeline_id.clone()), detector_id, classifier_id)
+            }
+            (None, Some(detector_id), Some(classifier_id)) => {
+                validate_pipeline_ids(engine, detector_id, classifier_id)?;
+                let classifier_handle = engine.get_or_load_model(classifier_id)?;
+                drop(classifier_handle);
+                (None, detector_id.clone(), Some(classifier_id.clone()))
+            }
+            _ => {
+                return Err(
+                    "specify either --pipeline <id> or both --detector <id> and --classifier <id>"
+                        .into(),
+                );
+            }
+        };
 
     // Pre-load detector to obtain its ModelType for viz dispatch (Phase 3.5
     // S3 / MT-9). Lazy + idempotent: a repeat call (e.g. same id for both
     // detector and classifier) reuses the existing session rather than
     // force-reloading and invalidating prior handles.
-    let detector_handle = engine.get_or_load_model(&args.detector)?;
+    let detector_handle = engine.get_or_load_model(&detector_id)?;
     let detector_model_type = detector_handle.model_type();
     drop(detector_handle);
-    let classifier_handle = engine.get_or_load_model(&args.classifier)?;
-    drop(classifier_handle);
 
     let d_opts = DetectOpts {
         confidence_threshold: args.threshold,
@@ -2611,7 +2684,7 @@ fn cmd_pipeline_with_engine(
     let mut collected: Vec<(PathBuf, PipelineResult)> = Vec::new();
 
     if args.print && matches!(args.format, OutputFormat::Csv) {
-        writeln!(out, "file,pipeline_id,idx,label,confidence,x_min,y_min,x_max,y_max,cls_label,cls_confidence")?;
+        writeln!(out, "file,pipeline_id,idx,label,confidence,x_min,y_min,x_max,y_max,cls_label,cls_confidence,detector_model_id,classifier_model_id,crop_x_min,crop_y_min,crop_x_max,crop_y_max,crop_width_px,crop_height_px,crop_coordinate_source,failure_stage,failure_code,failure_model_id,failure_message")?;
     }
 
     let bar = make_progress_bar(total as u64, quiet);
@@ -2619,14 +2692,26 @@ fn cmd_pipeline_with_engine(
         bar.set_message(file.display().to_string());
         let image = ImageInput::FilePath(file.clone());
 
-        match engine_dispatch::pipeline::run_pipeline_adhoc(
-            engine,
-            &image,
-            &args.detector,
-            &args.classifier,
-            &d_opts,
-            &c_opts,
-        ) {
+        let pipeline_result = match &named_pipeline {
+            Some(pipeline_id) => engine_dispatch::pipeline::run_pipeline(
+                engine,
+                pipeline_id,
+                &image,
+                &d_opts,
+                &c_opts,
+            ),
+            None => engine_dispatch::pipeline::run_pipeline_adhoc(
+                engine,
+                &image,
+                &detector_id,
+                classifier_id
+                    .as_deref()
+                    .ok_or("ad-hoc pipeline classifier missing")?,
+                &d_opts,
+                &c_opts,
+            ),
+        };
+        match pipeline_result {
             Ok(result) => {
                 if args.print {
                     write_pipeline_output(&mut out, file, &result, &args.format)?;
@@ -2666,11 +2751,9 @@ fn cmd_pipeline_with_engine(
             Box::new(io::stdout().lock())
         };
         match export_fmt {
-            ExportFormat::Megadet => engine_dispatch::export::to_megadet(
-                &export_refs,
-                &args.detector,
-                &mut export_writer,
-            )?,
+            ExportFormat::Megadet => {
+                engine_dispatch::export::to_megadet(&export_refs, &detector_id, &mut export_writer)?
+            }
             ExportFormat::Coco => {
                 engine_dispatch::export::to_coco(&export_refs, &mut export_writer)?
             }
@@ -2709,6 +2792,20 @@ fn write_pipeline_output(
                 file: file.display().to_string(),
                 pipeline_id: result.pipeline_id.clone(),
                 image_size: [result.image_width, result.image_height],
+                stage_provenance: PipelineProvenanceOutput {
+                    detector: PipelineStageProvenanceOutput {
+                        model_id: result.stage_provenance.detector.model_id.clone(),
+                        model_version: result.stage_provenance.detector.model_version.clone(),
+                        model_hash: result.stage_provenance.detector.model_hash.clone(),
+                    },
+                    classifier: result.stage_provenance.classifier.as_ref().map(|stage| {
+                        PipelineStageProvenanceOutput {
+                            model_id: stage.model_id.clone(),
+                            model_version: stage.model_version.clone(),
+                            model_hash: stage.model_hash.clone(),
+                        }
+                    }),
+                },
                 detections: result
                     .detections
                     .iter()
@@ -2725,6 +2822,23 @@ fn write_pipeline_output(
                             label: c.label.clone(),
                             confidence: c.confidence,
                         }),
+                        crop: pd.crop.map(|crop| PipelineCropOutput {
+                            bbox: BBoxOutput {
+                                x_min: crop.bbox.x_min,
+                                y_min: crop.bbox.y_min,
+                                x_max: crop.bbox.x_max,
+                                y_max: crop.bbox.y_max,
+                            },
+                            width_px: crop.width_px,
+                            height_px: crop.height_px,
+                            coordinate_source: crop.coordinate_source.as_str().to_string(),
+                        }),
+                        failure: pd.failure.as_ref().map(|failure| PipelineFailureOutput {
+                            stage: failure.stage.as_str().to_string(),
+                            code: failure.kind.as_str().to_string(),
+                            model_id: failure.model_id.clone(),
+                            message: failure.message.clone(),
+                        }),
                     })
                     .collect(),
             };
@@ -2734,6 +2848,14 @@ fn write_pipeline_output(
         OutputFormat::Csv => {
             let file_str = engine_dispatch::export::csv_escape(&file.display().to_string());
             let pipeline_str = engine_dispatch::export::csv_escape(&result.pipeline_id);
+            let detector_model_id =
+                engine_dispatch::export::csv_escape(&result.stage_provenance.detector.model_id);
+            let classifier_model_id = result
+                .stage_provenance
+                .classifier
+                .as_ref()
+                .map(|stage| engine_dispatch::export::csv_escape(&stage.model_id))
+                .unwrap_or_default();
             for (idx, pd) in result.detections.iter().enumerate() {
                 let det_label = engine_dispatch::export::csv_escape(&pd.detection.label);
                 let (cls_label, cls_conf) = match &pd.classification {
@@ -2743,9 +2865,51 @@ fn write_pipeline_output(
                     ),
                     None => (String::new(), String::new()),
                 };
+                let (
+                    crop_x_min,
+                    crop_y_min,
+                    crop_x_max,
+                    crop_y_max,
+                    crop_width,
+                    crop_height,
+                    crop_source,
+                ) = match pd.crop {
+                    Some(crop) => (
+                        format!("{:.6}", crop.bbox.x_min),
+                        format!("{:.6}", crop.bbox.y_min),
+                        format!("{:.6}", crop.bbox.x_max),
+                        format!("{:.6}", crop.bbox.y_max),
+                        crop.width_px.to_string(),
+                        crop.height_px.to_string(),
+                        crop.coordinate_source.as_str().to_string(),
+                    ),
+                    None => (
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ),
+                };
+                let (failure_stage, failure_code, failure_model_id, failure_message) =
+                    match &pd.failure {
+                        Some(failure) => (
+                            failure.stage.as_str().to_string(),
+                            failure.kind.as_str().to_string(),
+                            failure
+                                .model_id
+                                .as_deref()
+                                .map(engine_dispatch::export::csv_escape)
+                                .unwrap_or_default(),
+                            engine_dispatch::export::csv_escape(&failure.message),
+                        ),
+                        None => (String::new(), String::new(), String::new(), String::new()),
+                    };
                 writeln!(
                     out,
-                    "{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{},{}",
+                    "{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                     file_str,
                     pipeline_str,
                     idx,
@@ -2757,6 +2921,19 @@ fn write_pipeline_output(
                     pd.detection.bbox.y_max,
                     cls_label,
                     cls_conf,
+                    detector_model_id,
+                    classifier_model_id,
+                    crop_x_min,
+                    crop_y_min,
+                    crop_x_max,
+                    crop_y_max,
+                    crop_width,
+                    crop_height,
+                    crop_source,
+                    failure_stage,
+                    failure_code,
+                    failure_model_id,
+                    failure_message,
                 )?;
             }
         }
@@ -3823,17 +4000,17 @@ mod tests {
     #[test]
     fn test_csv_output_escapes_commas_in_path() {
         let result = DetectResult {
-            detections: vec![engine_dispatch::Detection {
-                bbox: engine_dispatch::BBox {
+            detections: vec![engine_dispatch::Detection::new(
+                engine_dispatch::BBox {
                     x_min: 0.1,
                     y_min: 0.2,
                     x_max: 0.3,
                     y_max: 0.4,
                 },
-                label: "animal".to_string(),
-                label_id: 0,
-                confidence: 0.95,
-            }],
+                "animal".to_string(),
+                0,
+                0.95,
+            )],
             image_width: 1920,
             image_height: 1080,
             processing_time_ms: 50.0,
@@ -3852,17 +4029,17 @@ mod tests {
     #[test]
     fn test_csv_output_escapes_quotes_in_label() {
         let result = DetectResult {
-            detections: vec![engine_dispatch::Detection {
-                bbox: engine_dispatch::BBox {
+            detections: vec![engine_dispatch::Detection::new(
+                engine_dispatch::BBox {
                     x_min: 0.1,
                     y_min: 0.2,
                     x_max: 0.3,
                     y_max: 0.4,
                 },
-                label: "\"bird\"".to_string(),
-                label_id: 0,
-                confidence: 0.8,
-            }],
+                "\"bird\"".to_string(),
+                0,
+                0.8,
+            )],
             image_width: 640,
             image_height: 480,
             processing_time_ms: 30.0,

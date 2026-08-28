@@ -1083,17 +1083,17 @@ mod tests {
     #[test]
     fn detections_to_annotations_preserves_data() {
         let result = DetectResult {
-            detections: vec![Detection {
-                bbox: BBox {
+            detections: vec![Detection::new(
+                BBox {
                     x_min: 0.1,
                     y_min: 0.2,
                     x_max: 0.5,
                     y_max: 0.6,
                 },
-                label: "animal".to_string(),
-                label_id: 0,
-                confidence: 0.9,
-            }],
+                "animal".to_string(),
+                0,
+                0.9,
+            )],
             image_width: 640,
             image_height: 480,
             processing_time_ms: 10.0,
@@ -1921,17 +1921,17 @@ mod phase_a_r1_viz {
     #[test]
     fn detections_to_annotations_preserves_all_bbox_fields() {
         let res = DetectResult {
-            detections: vec![Detection {
-                bbox: BBox {
+            detections: vec![Detection::new(
+                BBox {
                     x_min: 0.123,
                     y_min: 0.456,
                     x_max: 0.789,
                     y_max: 0.012,
                 },
-                label: "fox".into(),
-                label_id: 7,
-                confidence: 0.42,
-            }],
+                "fox".into(),
+                7,
+                0.42,
+            )],
             image_width: 100,
             image_height: 100,
             processing_time_ms: 1.0,

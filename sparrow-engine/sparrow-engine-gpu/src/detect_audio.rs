@@ -184,6 +184,7 @@ mod tests {
             id: "fake_yolo".into(),
             interpolation: None,
             resize_crop: None,
+            crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,

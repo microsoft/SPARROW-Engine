@@ -174,6 +174,54 @@ typedef struct SparrowEnginePipelineResult {
   float processing_time_ms;
 } SparrowEnginePipelineResult;
 
+typedef struct SparrowEnginePipelineStageProvenanceV2 {
+  const char *model_id;
+  const char *model_version;
+  const char *model_hash;
+} SparrowEnginePipelineStageProvenanceV2;
+
+typedef uint32_t SparrowEngineCropCoordinateSource;
+
+typedef struct SparrowEnginePipelineCropRegionV2 {
+  struct SparrowEngineBBox bbox;
+  uint32_t width_px;
+  uint32_t height_px;
+  SparrowEngineCropCoordinateSource coordinate_source;
+} SparrowEnginePipelineCropRegionV2;
+
+typedef uint32_t SparrowEnginePipelineFailureStage;
+
+typedef uint32_t SparrowEnginePipelineFailureKind;
+
+typedef struct SparrowEnginePipelineFailureV2 {
+  SparrowEnginePipelineFailureStage stage;
+  SparrowEnginePipelineFailureKind kind;
+  const char *model_id;
+  const char *message;
+} SparrowEnginePipelineFailureV2;
+
+typedef struct SparrowEnginePipelineDetectionV2 {
+  struct SparrowEngineDetection detection;
+  bool has_classification;
+  struct SparrowEngineClassification classification;
+  bool has_crop;
+  struct SparrowEnginePipelineCropRegionV2 crop;
+  bool has_failure;
+  struct SparrowEnginePipelineFailureV2 failure;
+} SparrowEnginePipelineDetectionV2;
+
+typedef struct SparrowEnginePipelineResultV2 {
+  const char *pipeline_id;
+  struct SparrowEnginePipelineStageProvenanceV2 detector;
+  bool has_classifier;
+  struct SparrowEnginePipelineStageProvenanceV2 classifier;
+  const struct SparrowEnginePipelineDetectionV2 *data;
+  uintptr_t len;
+  uint32_t image_width;
+  uint32_t image_height;
+  float processing_time_ms;
+} SparrowEnginePipelineResultV2;
+
 /**
  * A single detected audio segment.
  */
@@ -278,6 +326,32 @@ typedef struct SparrowEngineVerifyResultC {
    */
   char *detail;
 } SparrowEngineVerifyResultC;
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_NONE 0
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CROP 1
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CLASSIFIER 2
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_NONE 0
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CROP_INVALID_BBOX 1
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CROP_COORDS_UNAVAILABLE 2
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CROP_DEGENERATE 3
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CROP_PREPROCESS 4
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_INFERENCE 5
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_EMPTY 6
+
+#define SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_UNAVAILABLE 7
+
+#define SPARROW_ENGINE_CROP_COORDINATE_NORMALIZED_BBOX 0
+
+#define SPARROW_ENGINE_CROP_COORDINATE_DETECTOR_PIXELS 1
 
 #define SPARROW_ENGINE_PIXEL_FORMAT_RGB 0
 
@@ -455,6 +529,19 @@ struct SparrowEnginePipelineResult *sparrow_engine_run_pipeline(const SparrowEng
                                                                 const struct SparrowEngineClassifyOpts *classify_opts);
 
 /**
+ * Run a pipeline and return detailed crop, failure, and stage provenance.
+ *
+ * # Safety
+ * Same requirements as [`sparrow_engine_run_pipeline`].
+ */
+struct SparrowEnginePipelineResultV2 *sparrow_engine_run_pipeline_v2(const SparrowEngine *engine,
+                                                                     const char *pipeline_id,
+                                                                     const uint8_t *image,
+                                                                     uintptr_t len,
+                                                                     const struct SparrowEngineDetectOpts *detect_opts,
+                                                                     const struct SparrowEngineClassifyOpts *classify_opts);
+
+/**
  * Run audio detection on a WAV file. Returns null on error.
  *
  * # Safety
@@ -552,6 +639,15 @@ void sparrow_engine_embedding_free(struct SparrowEngineEmbedding *ptr);
  * `ptr` must be a pointer returned by `sparrow_engine_run_pipeline`, or null.
  */
 void sparrow_engine_pipeline_result_free(struct SparrowEnginePipelineResult *ptr);
+
+/**
+ * Free a detailed pipeline result returned by
+ * [`sparrow_engine_run_pipeline_v2`].
+ *
+ * # Safety
+ * `ptr` must be a pointer returned by `sparrow_engine_run_pipeline_v2`, or null.
+ */
+void sparrow_engine_pipeline_result_v2_free(struct SparrowEnginePipelineResultV2 *ptr);
 
 /**
  * Free a string returned by `sparrow_engine_list_models` or `sparrow_engine_health`.

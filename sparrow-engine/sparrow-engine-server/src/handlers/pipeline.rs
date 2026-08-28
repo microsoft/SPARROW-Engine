@@ -136,6 +136,7 @@ pub async fn pipeline(
         pipeline_id: result.pipeline_id,
         image_size: [result.image_width, result.image_height],
         processing_time_ms: result.processing_time_ms,
+        stage_provenance: result.stage_provenance.into(),
         detections: result
             .detections
             .into_iter()

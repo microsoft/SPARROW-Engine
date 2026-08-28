@@ -574,17 +574,17 @@ fn detect_tiled(
 
                     let label = postprocess::label_for_id(labels, class_id as u32);
 
-                    all_detections.push(Detection {
-                        bbox: BBox {
+                    all_detections.push(Detection::new(
+                        BBox {
                             x_min,
                             y_min,
                             x_max,
                             y_max,
                         },
                         label,
-                        label_id: class_id as u32,
+                        class_id as u32,
                         confidence,
-                    });
+                    ));
                 }
             }
 
@@ -1035,17 +1035,17 @@ mod tests {
         let img_w = 6000.0_f32;
         let img_h = 4000.0_f32;
         let half = 10.0_f32;
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: (center_x_px - half) / img_w,
                 y_min: (center_y_px - half) / img_h,
                 x_max: (center_x_px + half) / img_w,
                 y_max: (center_y_px + half) / img_h,
             },
-            label: "animal".to_string(),
-            label_id: 0,
+            "animal".to_string(),
+            0,
             confidence,
-        }
+        )
     }
 
     fn image_sigmoid_manifest() -> ModelManifest {
@@ -1061,6 +1061,7 @@ mod tests {
             channel_order: None,
             interpolation: None,
             resize_crop: None,
+            crop: None,
             precision: Precision::Fp32,
             model_file_fp16: None,
             inference_strategy: InferenceStrategy::Single,

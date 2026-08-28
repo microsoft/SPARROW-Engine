@@ -1090,17 +1090,17 @@ fn peaks_for_tile(
 
             let label = label_for_id(labels, class_id as u32);
 
-            detections.push(Detection {
-                bbox: BBox {
+            detections.push(Detection::new(
+                BBox {
                     x_min,
                     y_min,
                     x_max,
                     y_max,
                 },
                 label,
-                label_id: class_id as u32,
+                class_id as u32,
                 confidence,
-            });
+            ));
         }
     }
     Ok(detections)
@@ -1215,6 +1215,7 @@ mod tests {
             id: "tiled-test".into(),
             interpolation: None,
             resize_crop: None,
+            crop: None,
             format: "onnx".into(),
             model_file: "test.onnx".into(),
             preprocess_method: PreprocessMethod::Resize,
@@ -1322,17 +1323,17 @@ mod tests {
         let img_w = 6000.0_f32;
         let img_h = 4000.0_f32;
         let half = 10.0_f32;
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: (center_x_px - half) / img_w,
                 y_min: (center_y_px - half) / img_h,
                 x_max: (center_x_px + half) / img_w,
                 y_max: (center_y_px + half) / img_h,
             },
-            label: "buffalo".to_string(),
-            label_id: 0,
+            "buffalo".to_string(),
+            0,
             confidence,
-        }
+        )
     }
 
     #[test]

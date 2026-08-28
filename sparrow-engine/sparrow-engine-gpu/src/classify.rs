@@ -99,6 +99,74 @@ pub fn classify(
     }
 }
 
+/// Classify multiple images while preserving one result slot per input.
+///
+/// Nearest-resize dynamic-batch classifiers use one GPU ONNX Runtime call per
+/// chunk. Unsupported or failed batch attempts are retried through the
+/// single-image path so one crop failure cannot shift later results.
+pub fn classify_batch(
+    handle: &ModelHandle,
+    images: &[ImageInput],
+    opts: &ClassifyOpts,
+    batch_size: usize,
+) -> Result<Vec<std::result::Result<ClassifyResult, SparrowEngineError>>> {
+    let inner = handle.pin_inner()?;
+    validate_vision_classifier(&inner.manifest)?;
+    let engine_inner = handle
+        .engine_ref
+        .upgrade()
+        .ok_or(SparrowEngineError::EngineFreed)?;
+    let model = match &inner.inner {
+        LoadedModelInner::Classifier(model) => model,
+        LoadedModelInner::Yolo(_) | LoadedModelInner::Tiled(_) | LoadedModelInner::Encoder(_) => {
+            return Err(SparrowEngineError::NotAClassifier {
+                id: inner.manifest.id.clone(),
+                method: inner.manifest.postprocess_method.as_str().to_string(),
+            });
+        }
+        LoadedModelInner::Audio(_) | LoadedModelInner::AudioRaw(_) => {
+            return Err(SparrowEngineError::IsAudioModel {
+                id: inner.manifest.id.clone(),
+                method: inner.manifest.preprocess_method.as_str().to_string(),
+            });
+        }
+    };
+
+    let chunk_size = batch_size.max(1);
+    let mut results = Vec::with_capacity(images.len());
+    for chunk in images.chunks(chunk_size) {
+        if chunk.len() == 1 {
+            results.push(classify(handle, &chunk[0], opts));
+            continue;
+        }
+        let batch_attempt = model.classify_batch(&engine_inner.ctx, chunk, opts);
+        match batch_attempt {
+            Ok(chunk_results) if chunk_results.len() == chunk.len() => {
+                results.extend(chunk_results.into_iter().map(Ok));
+            }
+            Ok(chunk_results) => {
+                tracing::warn!(
+                    model_id = %inner.manifest.id,
+                    expected = chunk.len(),
+                    actual = chunk_results.len(),
+                    "GPU classifier batch returned the wrong result count; retrying per crop"
+                );
+                results.extend(chunk.iter().map(|image| classify(handle, image, opts)));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    model_id = %inner.manifest.id,
+                    batch_len = chunk.len(),
+                    error = %error,
+                    "GPU classifier batch failed; retrying per crop"
+                );
+                results.extend(chunk.iter().map(|image| classify(handle, image, opts)));
+            }
+        }
+    }
+    Ok(results)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -116,6 +184,7 @@ mod tests {
             id: "fake_yolo".into(),
             interpolation: None,
             resize_crop: None,
+            crop: None,
             format: "onnx".into(),
             model_file: "model.onnx".into(),
             model_file_fp16: None,

@@ -80,4 +80,4 @@ at `sparrow-engine/tests/cs_pinvoke_smoke/` and
 
 The C ABI is a **stable contract**, evolved only by adding `_v2` symbols
 (never by re-signing an existing one). A G5 acceptance gate enforces the
-37-symbol set and CPU/GPU parity. See [`ffi-abi.md`](ffi-abi.md).
+39-symbol set and CPU/GPU parity. See [`ffi-abi.md`](ffi-abi.md).

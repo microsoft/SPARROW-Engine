@@ -1,7 +1,8 @@
 use serde::Serialize;
 
 use crate::engine_dispatch::{
-    AudioSegment, BBox, Classification, Detection, EmbedResult, PipelineDetection,
+    AudioSegment, BBox, Classification, Detection, EmbedResult, PipelineCropRegion,
+    PipelineDetection, PipelineFailure, PipelineProvenance, PipelineStageProvenance,
 };
 
 // ---------------------------------------------------------------------------
@@ -170,12 +171,90 @@ pub struct EmbedBatchResponse {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
+pub struct PipelineCropRegionResponse {
+    pub bbox: BBoxResponse,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub coordinate_source: String,
+}
+
+impl From<PipelineCropRegion> for PipelineCropRegionResponse {
+    fn from(region: PipelineCropRegion) -> Self {
+        Self {
+            bbox: region.bbox.into(),
+            width_px: region.width_px,
+            height_px: region.height_px,
+            coordinate_source: region.coordinate_source.as_str().to_string(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PipelineFailureResponse {
+    pub stage: String,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub message: String,
+}
+
+impl From<PipelineFailure> for PipelineFailureResponse {
+    fn from(failure: PipelineFailure) -> Self {
+        Self {
+            stage: failure.stage.as_str().to_string(),
+            code: failure.kind.as_str().to_string(),
+            model_id: failure.model_id,
+            message: failure.message,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PipelineStageProvenanceResponse {
+    pub model_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_hash: Option<String>,
+}
+
+impl From<PipelineStageProvenance> for PipelineStageProvenanceResponse {
+    fn from(stage: PipelineStageProvenance) -> Self {
+        Self {
+            model_id: stage.model_id,
+            model_version: stage.model_version,
+            model_hash: stage.model_hash,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PipelineProvenanceResponse {
+    pub detector: PipelineStageProvenanceResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classifier: Option<PipelineStageProvenanceResponse>,
+}
+
+impl From<PipelineProvenance> for PipelineProvenanceResponse {
+    fn from(provenance: PipelineProvenance) -> Self {
+        Self {
+            detector: provenance.detector.into(),
+            classifier: provenance.classifier.map(Into::into),
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct PipelineDetectionResponse {
     pub label: String,
     pub label_id: u32,
     pub confidence: f32,
     pub bbox: BBoxResponse,
     pub classification: Option<ClassificationResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<PipelineCropRegionResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<PipelineFailureResponse>,
 }
 
 impl From<PipelineDetection> for PipelineDetectionResponse {
@@ -186,6 +265,8 @@ impl From<PipelineDetection> for PipelineDetectionResponse {
             confidence: pd.detection.confidence,
             bbox: pd.detection.bbox.into(),
             classification: pd.classification.map(Into::into),
+            crop: pd.crop.map(Into::into),
+            failure: pd.failure.map(Into::into),
         }
     }
 }
@@ -195,6 +276,7 @@ pub struct PipelineResponse {
     pub pipeline_id: String,
     pub image_size: [u32; 2],
     pub processing_time_ms: f32,
+    pub stage_provenance: PipelineProvenanceResponse,
     pub detections: Vec<PipelineDetectionResponse>,
 }
 
@@ -263,7 +345,10 @@ pub struct AudioDetectResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine_dispatch::AudioClass;
+    use crate::engine_dispatch::{
+        AudioClass, BBox, CropCoordinateSource, Detection, PipelineCropRegion, PipelineDetection,
+        PipelineFailure, PipelineFailureKind, PipelineFailureStage,
+    };
 
     fn segment(classes: Vec<AudioClass>) -> AudioSegment {
         AudioSegment {
@@ -362,6 +447,49 @@ mod tests {
         assert_eq!(classes[1]["class_idx"], 1);
         assert!(!classes[1].as_object().unwrap().contains_key("label"));
         assert!((classes[1]["probability"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pipeline_detection_json_adds_crop_and_failure_as_sibling_fields() {
+        let response = PipelineDetectionResponse::from(PipelineDetection {
+            detection: Detection::new(
+                BBox {
+                    x_min: 0.1,
+                    y_min: 0.2,
+                    x_max: 0.3,
+                    y_max: 0.4,
+                },
+                "Tree".to_string(),
+                0,
+                0.9,
+            ),
+            classification: None,
+            crop: Some(PipelineCropRegion {
+                bbox: BBox {
+                    x_min: 0.1,
+                    y_min: 0.2,
+                    x_max: 0.29,
+                    y_max: 0.39,
+                },
+                width_px: 19,
+                height_px: 19,
+                coordinate_source: CropCoordinateSource::DetectorPixels,
+            }),
+            failure: Some(PipelineFailure {
+                stage: PipelineFailureStage::Classifier,
+                kind: PipelineFailureKind::ClassifierInference,
+                model_id: Some("deepforest-neon-species".to_string()),
+                message: "inference failed".to_string(),
+            }),
+        });
+        let value = serde_json::to_value(response).unwrap();
+        assert!(value["classification"].is_null());
+        assert_eq!(value["crop"]["width_px"], 19);
+        assert_eq!(value["crop"]["coordinate_source"], "detector_pixels");
+        assert_eq!(value["failure"]["stage"], "classifier");
+        assert_eq!(value["failure"]["code"], "classifier_inference");
+        assert_eq!(value["failure"]["model_id"], "deepforest-neon-species");
+        assert_eq!(value["bbox"].as_object().unwrap().len(), 4);
     }
 }
 

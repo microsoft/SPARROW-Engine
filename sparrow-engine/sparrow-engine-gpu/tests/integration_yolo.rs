@@ -37,12 +37,12 @@ use std::time::Instant;
 // Phase 3.8 Phase C Wave 4b: see audio_e2e_parity.rs for the dev-dep
 // rename rationale. `sparrow_engine_cpu` is the CPU baseline used for parity;
 // `sparrow-engine-gpu` (current crate) is the sparrow-engine-gpu surface under test.
+use cudarc::driver::CudaContext;
 use sparrow_engine::kernels::letterbox::LetterboxKernel;
 use sparrow_engine::models::yolo::YoloModel;
 use sparrow_engine_cpu::engine::{Device, Engine, EngineConfig};
 use sparrow_engine_types::manifest::load_manifest;
 use sparrow_engine_types::{DetectOpts, DetectResult, Detection, ImageInput, PixelFormat};
-use cudarc::driver::CudaContext;
 
 // ---------------------------------------------------------------------------
 // Fixture discovery
@@ -52,11 +52,15 @@ const DEFAULT_CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/tes
 const DEFAULT_MODELS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/sparrow_engine_models";
 
 fn corpus_dir() -> PathBuf {
-    PathBuf::from(std::env::var("SPARROW_ENGINE_GPU_TEST_CORPUS").unwrap_or_else(|_| DEFAULT_CORPUS.into()))
+    PathBuf::from(
+        std::env::var("SPARROW_ENGINE_GPU_TEST_CORPUS").unwrap_or_else(|_| DEFAULT_CORPUS.into()),
+    )
 }
 
 fn models_dir() -> PathBuf {
-    PathBuf::from(std::env::var("SPARROW_ENGINE_GPU_TEST_MODELS").unwrap_or_else(|_| DEFAULT_MODELS.into()))
+    PathBuf::from(
+        std::env::var("SPARROW_ENGINE_GPU_TEST_MODELS").unwrap_or_else(|_| DEFAULT_MODELS.into()),
+    )
 }
 
 fn force_fixtures() -> bool {
@@ -121,8 +125,9 @@ fn cpu_baseline_detect(manifest_path: &Path, images: &[PathBuf]) -> Vec<DetectRe
     let opts = DetectOpts::default();
     let mut results = Vec::with_capacity(images.len());
     for p in images {
-        let r = sparrow_engine_cpu::detect::detect(&handle, &ImageInput::FilePath(p.clone()), &opts)
-            .expect("sparrow-engine-cpu detect");
+        let r =
+            sparrow_engine_cpu::detect::detect(&handle, &ImageInput::FilePath(p.clone()), &opts)
+                .expect("sparrow-engine-cpu detect");
         results.push(r);
     }
     drop(handle);
@@ -835,8 +840,8 @@ fn mdv6_inspect_outlier_69267e43() {
 
     // CPU baseline.
     let model_dir = manifest_path.parent().unwrap().to_path_buf();
-    let cpu_engine =
-        Engine::new(EngineConfig::new(Device::Cuda(0), &model_dir)).expect("sparrow-engine-cpu Engine::new");
+    let cpu_engine = Engine::new(EngineConfig::new(Device::Cuda(0), &model_dir))
+        .expect("sparrow-engine-cpu Engine::new");
     let cpu_handle = cpu_engine
         .load_model(&manifest_path)
         .expect("cpu load_model");
@@ -893,17 +898,17 @@ fn mdv6_inspect_outlier_69267e43() {
 #[test]
 fn parity_helpers_iou_basic() {
     // Two identical bboxes → IoU = 1.0.
-    let a = Detection {
-        bbox: sparrow_engine_types::BBox {
+    let a = Detection::new(
+        sparrow_engine_types::BBox {
             x_min: 0.1,
             y_min: 0.2,
             x_max: 0.5,
             y_max: 0.6,
         },
-        label: "x".into(),
-        label_id: 0,
-        confidence: 0.9,
-    };
+        "x".into(),
+        0,
+        0.9,
+    );
     let b = a.clone();
     assert!((iou(&a, &b) - 1.0).abs() < 1e-6);
 }

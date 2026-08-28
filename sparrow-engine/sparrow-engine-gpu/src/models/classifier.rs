@@ -64,7 +64,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
-use ndarray::{ArrayView2, ArrayViewD};
+use ndarray::{s, ArrayView2, ArrayViewD};
 use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
@@ -499,6 +499,12 @@ pub struct ClassifierModel {
     /// Device ordinal captured at load time. Used to validate that
     /// per-call `ctx` matches the session's EP device.
     device_id: i32,
+}
+
+struct PreparedClassifierImage {
+    tensor: Vec<f32>,
+    original_width: u32,
+    original_height: u32,
 }
 
 // SAFETY: All non-Send/Sync ORT types (Session) are wrapped behind
@@ -1064,6 +1070,185 @@ impl ClassifierModel {
         })
     }
 
+    /// Run one true GPU classifier batch for nearest-resize image classifiers.
+    ///
+    /// Pipeline crops are raw RGB buffers with varying source dimensions, but
+    /// preprocessing makes every tensor `[3, H, W]`. The host nearest path is
+    /// already the exact DeepForest path, so the batch is assembled on the
+    /// host and uploaded once before one ONNX Runtime call.
+    pub fn classify_batch(
+        &self,
+        ctx: &Arc<CudaContext>,
+        images: &[ImageInput],
+        opts: &ClassifyOpts,
+    ) -> Result<Vec<ClassifyResult>> {
+        if images.is_empty() {
+            return Ok(Vec::new());
+        }
+        let start = Instant::now();
+        let ctx_ordinal: i32 = ctx
+            .ordinal()
+            .try_into()
+            .map_err(|e| SparrowEngineError::Ort(format!("ctx.ordinal as i32: {e}")))?;
+        if ctx_ordinal != self.device_id {
+            return Err(SparrowEngineError::Ort(format!(
+                "ClassifierModel::classify_batch: ctx device {} != session device {}",
+                ctx_ordinal, self.device_id
+            )));
+        }
+        if self.leading_dim_is_static_one()? && images.len() > 1 {
+            return Err(SparrowEngineError::Ort(format!(
+                "classifier '{}' has a static batch dimension of 1",
+                self.manifest.id
+            )));
+        }
+        if self.manifest.preprocess_method != PreprocessMethod::Resize
+            || self.manifest.interpolation.unwrap_or_default() != Interpolation::Nearest
+        {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "classifier '{}' batch path currently requires preprocessing.method='resize' and interpolation='nearest'",
+                self.manifest.id
+            )));
+        }
+        if self.manifest.layout.unwrap_or(Layout::Nchw) != Layout::Nchw {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "classifier '{}' batch path requires NCHW layout",
+                self.manifest.id
+            )));
+        }
+
+        let [target_width, target_height] = self.manifest.input_size.ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "manifest '{}' missing input_size",
+                self.manifest.id
+            ))
+        })?;
+        let channel_order = self.manifest.channel_order.unwrap_or_default();
+        let stats = match self.manifest.normalization.unwrap_or(Normalization::Unit) {
+            Normalization::Unit => NormalizeStats::UNIT,
+            Normalization::Imagenet => NormalizeStats::IMAGENET,
+            Normalization::None => NormalizeStats::RAW,
+        };
+
+        let mut prepared = Vec::with_capacity(images.len());
+        for image in images {
+            let decoded = decode_to_rgb(image)?;
+            let original_width = decoded.width();
+            let original_height = decoded.height();
+            let resized = resize_torch_nearest(&decoded, target_width, target_height)?;
+            prepared.push(PreparedClassifierImage {
+                tensor: rgb_to_host_nchw(
+                    &resized,
+                    [target_width, target_height],
+                    channel_order,
+                    stats,
+                )?,
+                original_width,
+                original_height,
+            });
+        }
+
+        let elements_per_image = 3usize * target_width as usize * target_height as usize;
+        let mut host_batch = Vec::with_capacity(images.len() * elements_per_image);
+        for item in &prepared {
+            host_batch.extend_from_slice(&item.tensor);
+        }
+
+        let stream = ctx.default_stream();
+        let device_batch = stream.clone_htod(&host_batch).map_err(|error| {
+            SparrowEngineError::Ort(format!("classifier batch host-to-device upload: {error}"))
+        })?;
+        stream.synchronize().map_err(|error| {
+            SparrowEngineError::Ort(format!(
+                "stream.synchronize before classifier batch run: {error}"
+            ))
+        })?;
+        let (device_ptr, _sync) = device_batch.device_ptr(&stream);
+        let input = unsafe {
+            TensorRefMut::<f32>::from_raw(
+                self.cuda_mem_info.clone(),
+                device_ptr as usize as *mut std::ffi::c_void,
+                Shape::from([
+                    images.len() as i64,
+                    3,
+                    target_height as i64,
+                    target_width as i64,
+                ]),
+            )
+        }
+        .map_err(|error| SparrowEngineError::Ort(format!("TensorRefMut::from_raw: {error}")))?;
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| SparrowEngineError::Ort("ClassifierModel session lock poisoned".into()))?;
+        let outputs = guard
+            .run(ort::inputs![&self.input_name => input])
+            .map_err(|error| SparrowEngineError::Ort(format!("Session::run: {error}")))?;
+        let output = outputs.get(&self.output_name).ok_or_else(|| {
+            SparrowEngineError::Ort(format!(
+                "classifier output '{}' not found",
+                self.output_name
+            ))
+        })?;
+        let output_view: ArrayViewD<'_, f32> = output
+            .try_extract_array::<f32>()
+            .map_err(|error| SparrowEngineError::Ort(format!("try_extract_array: {error}")))?;
+        let rows: ArrayView2<'_, f32> = output_view
+            .into_dimensionality::<ndarray::Ix2>()
+            .map_err(|error| SparrowEngineError::Ort(format!("into_dimensionality 2D: {error}")))?;
+        if rows.nrows() != images.len() {
+            return Err(SparrowEngineError::OutputShapeMismatch {
+                id: self.manifest.id.clone(),
+                shape: format!(
+                    "classifier batch output {:?} for {} inputs",
+                    rows.shape(),
+                    images.len()
+                ),
+                method: self.manifest.postprocess_method.as_str().to_string(),
+            });
+        }
+
+        let processing_time_ms = start.elapsed().as_secs_f32() * 1000.0 / images.len() as f32;
+        let mut results = Vec::with_capacity(images.len());
+        for (index, item) in prepared.iter().enumerate() {
+            let row = rows.slice(s![index..index + 1, ..]);
+            let classifications = match self.manifest.postprocess_method {
+                PostprocessMethod::Sigmoid { .. } => {
+                    postprocess::try_sigmoid_classify(&row, &self.labels, opts)?
+                }
+                _ => postprocess::try_softmax(&row, &self.labels, opts)?,
+            };
+            results.push(ClassifyResult {
+                classifications,
+                image_width: item.original_width,
+                image_height: item.original_height,
+                processing_time_ms,
+            });
+        }
+        drop(outputs);
+        drop(guard);
+        Ok(results)
+    }
+
+    fn leading_dim_is_static_one(&self) -> Result<bool> {
+        let guard = self
+            .session
+            .lock()
+            .map_err(|_| SparrowEngineError::Ort("ClassifierModel session lock poisoned".into()))?;
+        let input = guard.inputs().first().ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "classifier '{}' has no ONNX inputs",
+                self.manifest.id
+            ))
+        })?;
+        Ok(matches!(
+            input.dtype(),
+            ort::value::ValueType::Tensor { shape, .. }
+                if shape.iter().next().copied() == Some(1)
+        ))
+    }
+
     /// Manifest snapshot for diagnostics / engine integration.
     pub fn manifest(&self) -> &ModelManifest {
         &self.manifest
@@ -1222,6 +1407,7 @@ mod tests {
             id: "test".into(),
             interpolation: None,
             resize_crop: None,
+            crop: None,
             format: "onnx".into(),
             model_file: "test.onnx".into(),
             preprocess_method: PreprocessMethod::Resize,

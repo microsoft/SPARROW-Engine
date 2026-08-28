@@ -85,3 +85,25 @@ The **authoritative, always-current** schema is the `ModelManifest` type in
 manifests live in `sparrow-engine/tools/examples/` and next to every catalog
 model. The top-level [`../user-manual.md`](../user-manual.md) §10 carries the
 field-by-field walkthrough.
+
+### Detector-to-classifier crop contract
+
+An image classifier may opt into a pipeline crop convention:
+
+```toml
+[crop]
+window = "truncate_extent" # round_clamp (default) | truncate_extent
+expand_pixels = 0
+batch_size = 4
+```
+
+`round_clamp` preserves the original pipeline behavior: round normalized edges,
+clip to the source image, and reject crops smaller than 2 pixels per axis.
+`truncate_extent` uses source-pixel detector geometry and the DeepForest /
+rasterio rule: truncate the origin, truncate `max(1, extent)`, apply optional
+integer context, then clip to the source image. A detector that cannot supply
+source-pixel geometry returns an explicit per-detection
+`crop_coords_unavailable` failure rather than approximating the crop.
+
+The section belongs to the classifier manifest, so named pipeline aliases and
+ad-hoc detector/classifier pairs use identical crop and batch behavior.

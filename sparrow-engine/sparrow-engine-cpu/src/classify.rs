@@ -5,12 +5,13 @@
 
 use std::time::Instant;
 
-use ndarray::{ArrayView2, ArrayViewD};
+use ndarray::{s, ArrayView2, ArrayViewD, Axis};
 use ort::value::TensorRef;
+use ort::value::ValueType;
 
 use crate::detect::preprocess_config_from_manifest;
 use crate::engine::ModelHandle;
-use crate::error::{SparrowEngineError, Result};
+use crate::error::{Result, SparrowEngineError};
 use crate::manifest::{ModelManifest, PostprocessMethod, PreprocessMethod};
 use crate::postprocess;
 use crate::preprocess;
@@ -152,4 +153,147 @@ pub fn classify(
         image_height: original_height,
         processing_time_ms: elapsed.as_secs_f32() * 1000.0,
     })
+}
+
+/// Classify multiple images while preserving one result slot per input.
+///
+/// Dynamic-batch models run each chunk in one ONNX Runtime call. Static
+/// batch-one models and failed batch calls fall back to the single-image path.
+/// The outer error covers model/session setup; each inner result belongs to the
+/// input at the same index.
+pub fn classify_batch(
+    handle: &ModelHandle,
+    images: &[ImageInput],
+    opts: &ClassifyOpts,
+    batch_size: usize,
+) -> Result<Vec<std::result::Result<ClassifyResult, SparrowEngineError>>> {
+    let manifest = &handle.manifest;
+    validate_vision_classifier(manifest)?;
+    let session = handle.pin_session()?;
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let static_batch_one = {
+        let guard = session
+            .lock()
+            .map_err(|_| SparrowEngineError::Ort("classifier session lock poisoned".into()))?;
+        let input = guard.inputs().first().ok_or_else(|| {
+            SparrowEngineError::InvalidManifest(format!(
+                "image classifier '{}' has no ONNX inputs",
+                manifest.id
+            ))
+        })?;
+        matches!(
+            input.dtype(),
+            ValueType::Tensor { shape, .. } if shape.iter().next().copied() == Some(1)
+        )
+    };
+
+    let chunk_size = batch_size.max(1);
+    let mut results = Vec::with_capacity(images.len());
+    for chunk in images.chunks(chunk_size) {
+        if chunk.len() == 1 || static_batch_one {
+            results.extend(chunk.iter().map(|image| classify(handle, image, opts)));
+            continue;
+        }
+
+        match classify_batch_chunk(handle, chunk, opts) {
+            Ok(chunk_results) if chunk_results.len() == chunk.len() => {
+                results.extend(chunk_results.into_iter().map(Ok));
+            }
+            Ok(chunk_results) => {
+                tracing::warn!(
+                    model_id = %manifest.id,
+                    expected = chunk.len(),
+                    actual = chunk_results.len(),
+                    "classifier batch returned the wrong result count; retrying per crop"
+                );
+                results.extend(chunk.iter().map(|image| classify(handle, image, opts)));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    model_id = %manifest.id,
+                    batch_len = chunk.len(),
+                    error = %error,
+                    "classifier batch failed; retrying per crop"
+                );
+                results.extend(chunk.iter().map(|image| classify(handle, image, opts)));
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn classify_batch_chunk(
+    handle: &ModelHandle,
+    images: &[ImageInput],
+    opts: &ClassifyOpts,
+) -> Result<Vec<ClassifyResult>> {
+    let start = Instant::now();
+    let manifest = &handle.manifest;
+    let session = handle.pin_session()?;
+    let labels = &*handle.labels;
+    let config = preprocess_config_from_manifest(manifest)?;
+
+    let mut preps = Vec::with_capacity(images.len());
+    for image in images {
+        preps.push(preprocess::preprocess(image, &config)?);
+    }
+    let views: Vec<_> = preps.iter().map(|prep| prep.tensor.view()).collect();
+    let batch_tensor = ndarray::concatenate(Axis(0), &views).map_err(|error| {
+        SparrowEngineError::Ort(format!("classifier batch concatenate: {error}"))
+    })?;
+
+    let input_value = TensorRef::from_array_view(&batch_tensor).map_err(crate::engine::ort_err)?;
+    let mut guard = session
+        .lock()
+        .map_err(|_| SparrowEngineError::Ort("classifier session lock poisoned".into()))?;
+    let outputs = guard
+        .run(ort::inputs![input_value])
+        .map_err(crate::engine::ort_err)?;
+    if outputs.len() == 0 {
+        return Err(SparrowEngineError::Ort(
+            "classifier session returned no outputs".to_string(),
+        ));
+    }
+
+    let output_view: ArrayViewD<'_, f32> = outputs[0]
+        .try_extract_array::<f32>()
+        .map_err(crate::engine::ort_err)?;
+    let rows: ArrayView2<'_, f32> = output_view
+        .into_dimensionality::<ndarray::Ix2>()
+        .map_err(crate::engine::ort_err)?;
+    if rows.nrows() != images.len() {
+        return Err(SparrowEngineError::OutputShapeMismatch {
+            id: manifest.id.clone(),
+            shape: format!(
+                "classifier batch output {:?} for {} inputs",
+                rows.shape(),
+                images.len()
+            ),
+            method: manifest.postprocess_method.as_str().to_string(),
+        });
+    }
+
+    let processing_time_ms = start.elapsed().as_secs_f32() * 1000.0 / images.len() as f32;
+    let mut results = Vec::with_capacity(images.len());
+    for (index, prep) in preps.iter().enumerate() {
+        let row = rows.slice(s![index..index + 1, ..]);
+        let classifications = match manifest.postprocess_method {
+            PostprocessMethod::Sigmoid { .. } => {
+                postprocess::try_sigmoid_classify(&row, labels, opts)?
+            }
+            _ => postprocess::try_softmax(&row, labels, opts)?,
+        };
+        results.push(ClassifyResult {
+            classifications,
+            image_width: prep.meta.original_width,
+            image_height: prep.meta.original_height,
+            processing_time_ms,
+        });
+    }
+    drop(outputs);
+    drop(guard);
+    Ok(results)
 }

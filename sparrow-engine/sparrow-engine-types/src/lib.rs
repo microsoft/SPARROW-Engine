@@ -2,36 +2,37 @@
 //!
 //! Phase 3.8 Phase A. Zero ORT/CUDA/nvjpeg deps.
 
-pub mod types;
-pub mod error;
-pub mod manifest;
 pub mod drift_metrics;
+pub mod error;
 pub mod inference_log;
+pub mod manifest;
 pub mod trt_state;
+pub mod types;
 // device / model_type / preprocess_meta / engine_config are crate-private:
 // every symbol they expose is re-exported at the crate root below, and no
 // consumer accesses them via the `sparrow_engine_types::module::*` path. Keeping them
 // `pub(crate)` prevents accidental new public paths (`engine_dispatch::device::Device`
 // etc.) from leaking through `sparrow-engine-cpu`'s `pub use sparrow_engine_types::*;` glob.
 pub(crate) mod device;
+pub(crate) mod engine_config;
 pub(crate) mod model_type;
 pub(crate) mod preprocess_meta;
-pub(crate) mod engine_config;
 
 // Crate-root re-exports for ergonomic consumer access.
-pub use error::{Result, SparrowEngineError, TrtWarmupRejection};
-pub use types::*;
 pub use device::Device;
+pub use drift_metrics::{DriftMetrics, DriftReference};
+pub use engine_config::EngineConfig;
+pub use error::{Result, SparrowEngineError, TrtWarmupRejection};
+pub use inference_log::{InferenceLogRecord, SCHEMA_VERSION};
+pub use manifest::{
+    resolve_trt_mode, warmup_trt_config, Ai4gRelationship, CatalogMetadata, CropConfig, CropWindow,
+    GeoScope, ModelManifest, PipelineManifest, ProvenanceRecord, TrtConfig, TrtMode, TrtPrecision,
+    MAX_CROP_BATCH_SIZE,
+};
 pub use model_type::derive_model_type;
 pub use preprocess_meta::{PreprocessConfig, PreprocessMeta};
-pub use engine_config::EngineConfig;
-pub use manifest::{
-    resolve_trt_mode, warmup_trt_config, Ai4gRelationship, CatalogMetadata, GeoScope,
-    ModelManifest, PipelineManifest, ProvenanceRecord, TrtConfig, TrtMode, TrtPrecision,
-};
-pub use drift_metrics::{DriftMetrics, DriftReference};
-pub use inference_log::{InferenceLogRecord, SCHEMA_VERSION};
 pub use trt_state::{TrtState, TrtStateView, WarmupOutcome};
+pub use types::*;
 
 // NOTE: `pub type SparrowEngine = c_void;` is INTENTIONALLY ABSENT here.
 // Per v2 CRIT-1 closure (PRESERVE), the C-FFI opaque alias stays in

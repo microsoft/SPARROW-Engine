@@ -11,21 +11,19 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use sparrow_engine_core::crop::{crop_region, crop_window, extract_crop, CropError};
 use sparrow_engine_core::pipeline_compat::validate_pipeline_compat;
 use sparrow_engine_types::error::{Result, SparrowEngineError};
-use sparrow_engine_types::manifest::{PipelineManifest, PipelineRole};
+use sparrow_engine_types::manifest::{CropConfig, PipelineManifest, PipelineRole};
 use sparrow_engine_types::types::{
-    BBox, ClassifyOpts, DetectOpts, ImageInput, ModelInfo, PipelineDetection, PipelineResult,
-    PixelFormat,
+    ClassifyOpts, DetectOpts, ImageInput, ModelInfo, PipelineDetection, PipelineFailure,
+    PipelineFailureKind, PipelineFailureStage, PipelineProvenance, PipelineResult,
+    PipelineStageProvenance,
 };
 
 use crate::classify;
 use crate::detect;
 use crate::engine::{Engine, ModelHandle};
-
-/// Minimum crop dimension (pixels). Crops smaller than this in either
-/// axis are considered degenerate and skipped for classification.
-const MIN_CROP_SIZE: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -71,46 +69,31 @@ pub fn run_pipeline(
             ))
         })?;
     let detector_handle = &pinned[detector_model_id.as_str()];
-    let detect_result = detect::detect(detector_handle, image, detect_opts)?;
-
-    let decoded = decode_image(image)?;
-    let (orig_w, orig_h) = (decoded.width(), decoded.height());
-
-    // Collect classifier model IDs from pipeline steps.
     let classifier_model_ids: Vec<&str> = pipeline_config
         .steps
         .iter()
         .filter(|s| s.role == PipelineRole::Classifier)
         .map(|s| s.model.as_str())
         .collect();
-
-    let mut pipeline_detections = Vec::with_capacity(detect_result.detections.len());
-    for detection in &detect_result.detections {
-        let crop = crop_detection(&decoded, &detection.bbox, orig_w, orig_h);
-        let classification = match crop {
-            Some(crop_image) if !classifier_model_ids.is_empty() => {
-                let classifier_handle = &pinned[classifier_model_ids[0]];
-                match classify::classify(classifier_handle, &crop_image, classify_opts) {
-                    Ok(cls_result) => cls_result.classifications.into_iter().next(),
-                    Err(_) => None, // classification failure on a crop is non-fatal.
-                }
-            }
-            _ => None,
-        };
-        pipeline_detections.push(PipelineDetection {
-            detection: detection.clone(),
-            classification,
-        });
+    if classifier_model_ids.len() > 1 {
+        tracing::warn!(
+            pipeline_id,
+            classifier_count = classifier_model_ids.len(),
+            "pipeline runtime executes only the first classifier step"
+        );
     }
-
-    let elapsed = start.elapsed();
-    Ok(PipelineResult {
-        pipeline_id: pipeline_id.to_string(),
-        detections: pipeline_detections,
-        image_width: detect_result.image_width,
-        image_height: detect_result.image_height,
-        processing_time_ms: elapsed.as_secs_f32() * 1000.0,
-    })
+    let classifier_handle = classifier_model_ids
+        .first()
+        .map(|model_id| &pinned[*model_id]);
+    run_pipeline_with_handles(
+        pipeline_id.to_string(),
+        detector_handle,
+        classifier_handle,
+        image,
+        detect_opts,
+        classify_opts,
+        start,
+    )
 }
 
 /// Run an ad-hoc pipeline: detect → crop → classify without pre-defined
@@ -130,36 +113,209 @@ pub fn run_pipeline_adhoc(
     let detector_handle = engine.get_or_load_model(detector_id)?;
     let classifier_handle = engine.get_or_load_model(classifier_id)?;
 
-    let detect_result = detect::detect(&detector_handle, image, detect_opts)?;
-    let decoded = decode_image(image)?;
-    let (orig_w, orig_h) = (decoded.width(), decoded.height());
+    run_pipeline_with_handles(
+        format!("adhoc:{detector_id}+{classifier_id}"),
+        &detector_handle,
+        Some(&classifier_handle),
+        image,
+        detect_opts,
+        classify_opts,
+        start,
+    )
+}
 
-    let mut pipeline_detections = Vec::with_capacity(detect_result.detections.len());
-    for detection in &detect_result.detections {
-        let crop = crop_detection(&decoded, &detection.bbox, orig_w, orig_h);
-        let classification = match crop {
-            Some(crop_image) => {
-                match classify::classify(&classifier_handle, &crop_image, classify_opts) {
-                    Ok(cls_result) => cls_result.classifications.into_iter().next(),
-                    Err(_) => None,
-                }
-            }
-            None => None,
-        };
-        pipeline_detections.push(PipelineDetection {
-            detection: detection.clone(),
-            classification,
+#[allow(clippy::too_many_arguments)]
+fn run_pipeline_with_handles(
+    pipeline_id: String,
+    detector_handle: &ModelHandle,
+    classifier_handle: Option<&ModelHandle>,
+    image: &ImageInput,
+    detect_opts: &DetectOpts,
+    classify_opts: &ClassifyOpts,
+    start: Instant,
+) -> Result<PipelineResult> {
+    let detect_result = detect::detect(detector_handle, image, detect_opts)?;
+    let provenance = PipelineProvenance {
+        detector: stage_provenance(detector_handle),
+        classifier: classifier_handle.map(stage_provenance),
+    };
+
+    let Some(classifier_handle) = classifier_handle else {
+        return Ok(PipelineResult {
+            pipeline_id,
+            detections: detect_result
+                .detections
+                .into_iter()
+                .map(|detection| PipelineDetection::new(detection, None))
+                .collect(),
+            image_width: detect_result.image_width,
+            image_height: detect_result.image_height,
+            processing_time_ms: start.elapsed().as_secs_f32() * 1000.0,
+            stage_provenance: provenance,
         });
+    };
+
+    let decoded = sparrow_engine_core::preprocess::decode_to_rgb(image)?;
+    let image_width = decoded.width();
+    let image_height = decoded.height();
+    let crop_config = classifier_handle
+        .manifest()
+        .crop
+        .unwrap_or_else(CropConfig::default);
+    let mut detections: Vec<PipelineDetection> = detect_result
+        .detections
+        .into_iter()
+        .map(|detection| PipelineDetection::new(detection, None))
+        .collect();
+    let mut crop_inputs = Vec::new();
+    let mut crop_indices = Vec::new();
+
+    for (index, item) in detections.iter_mut().enumerate() {
+        match crop_window(&item.detection, image_width, image_height, crop_config) {
+            Ok(window) => {
+                item.crop = Some(crop_region(window, image_width, image_height));
+                crop_inputs.push(extract_crop(&decoded, window));
+                crop_indices.push(index);
+            }
+            Err(error) => {
+                item.failure = Some(crop_failure(
+                    error,
+                    detector_handle.model_id(),
+                    classifier_handle.model_id(),
+                    image_width,
+                    image_height,
+                ));
+            }
+        }
     }
 
-    let elapsed = start.elapsed();
+    if !crop_inputs.is_empty() {
+        match classify::classify_batch(
+            classifier_handle,
+            &crop_inputs,
+            classify_opts,
+            crop_config.batch_size as usize,
+        ) {
+            Ok(results) => {
+                for (index, result) in crop_indices.into_iter().zip(results) {
+                    assign_classification(
+                        &mut detections[index],
+                        result,
+                        classifier_handle.model_id(),
+                    );
+                }
+            }
+            Err(error) => {
+                for index in crop_indices {
+                    detections[index].failure =
+                        Some(classifier_failure(&error, classifier_handle.model_id()));
+                }
+            }
+        }
+    }
+
     Ok(PipelineResult {
-        pipeline_id: format!("adhoc:{detector_id}+{classifier_id}"),
-        detections: pipeline_detections,
+        pipeline_id,
+        detections,
         image_width: detect_result.image_width,
         image_height: detect_result.image_height,
-        processing_time_ms: elapsed.as_secs_f32() * 1000.0,
+        processing_time_ms: start.elapsed().as_secs_f32() * 1000.0,
+        stage_provenance: provenance,
     })
+}
+
+fn stage_provenance(handle: &ModelHandle) -> PipelineStageProvenance {
+    let manifest = handle.manifest();
+    PipelineStageProvenance {
+        model_id: manifest.id.clone(),
+        model_version: manifest.version.clone(),
+        model_hash: manifest.onnx_sha256.clone(),
+    }
+}
+
+fn crop_failure(
+    error: CropError,
+    detector_id: &str,
+    classifier_id: &str,
+    image_width: u32,
+    image_height: u32,
+) -> PipelineFailure {
+    match error {
+        CropError::InvalidBBox => PipelineFailure {
+            stage: PipelineFailureStage::Crop,
+            kind: PipelineFailureKind::CropInvalidBBox,
+            model_id: Some(detector_id.to_string()),
+            message: "detector produced a non-finite or inverted crop box".to_string(),
+        },
+        CropError::CoordinatesUnavailable => PipelineFailure {
+            stage: PipelineFailureStage::Crop,
+            kind: PipelineFailureKind::CropCoordsUnavailable,
+            model_id: Some(detector_id.to_string()),
+            message: format!(
+                "classifier '{classifier_id}' requires detector source-pixel coordinates, but detector '{detector_id}' did not provide them"
+            ),
+        },
+        CropError::Degenerate => PipelineFailure {
+            stage: PipelineFailureStage::Crop,
+            kind: PipelineFailureKind::CropDegenerate,
+            model_id: None,
+            message: format!(
+                "crop window is empty or below the configured minimum after clipping to {image_width}x{image_height}"
+            ),
+        },
+    }
+}
+
+fn assign_classification(
+    item: &mut PipelineDetection,
+    result: std::result::Result<
+        sparrow_engine_types::ClassifyResult,
+        sparrow_engine_types::SparrowEngineError,
+    >,
+    classifier_id: &str,
+) {
+    match result {
+        Ok(result) => match result.classifications.into_iter().next() {
+            Some(classification) => item.classification = Some(classification),
+            None => {
+                item.failure = Some(PipelineFailure {
+                    stage: PipelineFailureStage::Classifier,
+                    kind: PipelineFailureKind::ClassifierEmpty,
+                    model_id: Some(classifier_id.to_string()),
+                    message: "classifier returned no classes".to_string(),
+                });
+            }
+        },
+        Err(error) => item.failure = Some(classifier_failure(&error, classifier_id)),
+    }
+}
+
+fn classifier_failure(error: &SparrowEngineError, classifier_id: &str) -> PipelineFailure {
+    let (stage, kind) = match error {
+        SparrowEngineError::ImageDecode(_)
+        | SparrowEngineError::ImageFileNotFound(_)
+        | SparrowEngineError::InvalidStride { .. } => (
+            PipelineFailureStage::Crop,
+            PipelineFailureKind::CropPreprocess,
+        ),
+        SparrowEngineError::ModelUnloaded
+        | SparrowEngineError::EngineFreed
+        | SparrowEngineError::NotAClassifier { .. }
+        | SparrowEngineError::IsAudioModel { .. } => (
+            PipelineFailureStage::Classifier,
+            PipelineFailureKind::ClassifierUnavailable,
+        ),
+        _ => (
+            PipelineFailureStage::Classifier,
+            PipelineFailureKind::ClassifierInference,
+        ),
+    };
+    PipelineFailure {
+        stage,
+        kind,
+        model_id: Some(classifier_id.to_string()),
+        message: error.to_string(),
+    }
 }
 
 fn validate_adhoc_model_types(
@@ -210,134 +366,12 @@ fn pin_all_sessions(
 }
 
 // ---------------------------------------------------------------------------
-// Image decode + crop (pure CPU helpers, identical to sparrow-engine-cpu).
-// ---------------------------------------------------------------------------
-
-/// Decode the original image to a `DynamicImage` for cropping.
-///
-/// Lives in this module rather than `crate::detect` because the GPU
-/// detect path does not need a CPU-side decoded image (it goes through
-/// nvjpeg + GPU letterbox). Pipeline does need the original pixels for
-/// cropping, so we keep the entry-point here.
-///
-/// Phase 3.8 Phase C W1 audit-fix R2 (CR-1): delegates to
-/// [`sparrow_engine_core::preprocess::decode_to_rgb`] for the actual decode, so
-/// `sparrow-engine-cpu` and `sparrow-engine-gpu` share one byte-identical implementation
-/// (subsumes reviewer F1-F4 error-variant fixes — sparrow-engine-core uses
-/// [`SparrowEngineError::ImageDecode`] / [`SparrowEngineError::ImageFileNotFound`] /
-/// [`SparrowEngineError::InvalidStride`] correctly).
-pub(crate) fn decode_image(image: &ImageInput) -> Result<image::DynamicImage> {
-    let rgb = sparrow_engine_core::preprocess::decode_to_rgb(image)?;
-    Ok(image::DynamicImage::ImageRgb8(rgb))
-}
-
-/// Crop a detection region from the original image. Returns
-/// `Some(ImageInput::Raw { .. })` with the crop pixels, or `None` if the
-/// crop is degenerate.
-fn crop_detection(
-    img: &image::DynamicImage,
-    bbox: &BBox,
-    img_w: u32,
-    img_h: u32,
-) -> Option<ImageInput> {
-    let x1 = (bbox.x_min * img_w as f32).round() as u32;
-    let y1 = (bbox.y_min * img_h as f32).round() as u32;
-    let x2 = (bbox.x_max * img_w as f32).round() as u32;
-    let y2 = (bbox.y_max * img_h as f32).round() as u32;
-
-    let x1 = x1.min(img_w);
-    let y1 = y1.min(img_h);
-    let x2 = x2.min(img_w).max(x1);
-    let y2 = y2.min(img_h).max(y1);
-
-    let crop_w = x2 - x1;
-    let crop_h = y2 - y1;
-
-    if crop_w < MIN_CROP_SIZE || crop_h < MIN_CROP_SIZE {
-        return None;
-    }
-
-    let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
-    let rgb = cropped.to_rgb8();
-    let width = rgb.width();
-    let height = rgb.height();
-    Some(ImageInput::Raw {
-        stride: width * 3,
-        width,
-        height,
-        data: rgb.into_raw(),
-        format: PixelFormat::Rgb,
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Note: `raw_rgb_round_trip` / `raw_bgr_swaps_channels` moved to
-    // `sparrow-engine-core/src/preprocess.rs::tests` per Phase 3.8 Phase C W1
-    // audit-fix R2 CR-1 (decode_to_rgb hoist). The `decode_image`
-    // delegate is exercised transitively by every test that runs the
-    // pipeline path.
-
-    /// Helper: build a `DynamicImage` from a tight RGB pixel buffer via
-    /// the public `decode_image` entry point (replaces the removed
-    /// `raw_to_dynamic_image` private helper).
-    fn dyn_from_rgb(pixels: Vec<u8>, width: u32, height: u32) -> image::DynamicImage {
-        let img = ImageInput::Raw {
-            data: pixels,
-            width,
-            height,
-            stride: width * 3,
-            format: PixelFormat::Rgb,
-        };
-        decode_image(&img).expect("decode_image")
-    }
-
-    #[test]
-    fn crop_rejects_degenerate() {
-        // Construct a 4x4 image and a bbox that maps to <2 pixels.
-        let pixels: Vec<u8> = vec![128; 4 * 4 * 3];
-        let img = dyn_from_rgb(pixels, 4, 4);
-        let bbox = BBox {
-            x_min: 0.0,
-            y_min: 0.0,
-            x_max: 0.1,
-            y_max: 0.1,
-        };
-        let result = crop_detection(&img, &bbox, 4, 4);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn crop_keeps_normal_bbox() {
-        let pixels: Vec<u8> = vec![200; 8 * 8 * 3];
-        let img = dyn_from_rgb(pixels, 8, 8);
-        let bbox = BBox {
-            x_min: 0.25,
-            y_min: 0.25,
-            x_max: 0.75,
-            y_max: 0.75,
-        };
-        let result = crop_detection(&img, &bbox, 8, 8).expect("non-degenerate");
-        if let ImageInput::Raw {
-            width,
-            height,
-            format,
-            ..
-        } = result
-        {
-            assert_eq!(width, 4);
-            assert_eq!(height, 4);
-            assert_eq!(format, PixelFormat::Rgb);
-        } else {
-            panic!("expected ImageInput::Raw");
-        }
-    }
 
     fn info(id: &str, model_type: sparrow_engine_types::ModelType) -> ModelInfo {
         ModelInfo {

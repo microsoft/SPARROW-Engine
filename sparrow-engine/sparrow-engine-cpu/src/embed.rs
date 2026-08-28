@@ -421,6 +421,7 @@ mod tests {
             channel_order: None,
             interpolation: None,
             resize_crop: None,
+            crop: None,
             precision: Precision::Fp32,
             model_file_fp16: None,
             inference_strategy: InferenceStrategy::Single,

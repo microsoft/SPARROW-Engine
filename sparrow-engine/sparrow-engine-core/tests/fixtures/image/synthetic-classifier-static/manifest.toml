@@ -1,0 +1,21 @@
+[model]
+id = "synthetic-classifier-static"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [2, 2]
+layout = "nchw"
+normalization = "unit"
+interpolation = "nearest"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"

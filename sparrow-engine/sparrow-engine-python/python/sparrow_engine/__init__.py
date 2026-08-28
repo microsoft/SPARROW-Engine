@@ -225,8 +225,12 @@ from sparrow_engine._sparrow_engine_core import (
     Detection,
     DetectResult,
     ModelInfo,
+    PipelineCropRegion,
     PipelineDetection,
+    PipelineFailure,
+    PipelineProvenance,
     PipelineResult,
+    PipelineStageProvenance,
     PyEngine,
 )
 from sparrow_engine._sparrow_engine_core import day_night as _day_night_core
@@ -273,8 +277,12 @@ __all__ = [
     "AudioClass",
     "AudioSegment",
     "AudioResult",
+    "PipelineCropRegion",
     "PipelineDetection",
+    "PipelineFailure",
+    "PipelineProvenance",
     "PipelineResult",
+    "PipelineStageProvenance",
     "ModelInfo",
     "SparrowEngineError",
     "EmbedPartialFailureError",
@@ -690,17 +698,19 @@ def detect_audio(
 
 def pipeline(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
-    detector: str,
-    classifier: str,
+    detector: Optional[str] = None,
+    classifier: Optional[str] = None,
     threshold: Optional[float] = None,
     top_k: int = 5,
     recursive: bool = False,
     progress_callback: Optional[ProgressCallback] = None,
+    *,
+    pipeline_id: Optional[str] = None,
 ) -> list[PipelineResult]:
     """Run detect-then-classify pipeline on one or more images.
 
-    Ad-hoc pipeline — no pre-defined TOML required. Detect with
-    ``detector``, crop each detection, classify with ``classifier``.
+    Supply either ``pipeline_id`` for a named pipeline or both ``detector`` and
+    ``classifier`` for an ad-hoc pipeline.
     When ``recursive`` is True, directories are traversed recursively.
     Always returns ``list[PipelineResult]``, even for a single image.
 
@@ -710,7 +720,13 @@ def pipeline(
     """
     paths = _resolve_inputs(input, _IMAGE_EXTS, recursive=recursive)
     return _get_engine().pipeline(
-        paths, detector, classifier, threshold, top_k, progress_callback
+        paths,
+        detector,
+        classifier,
+        threshold,
+        top_k,
+        progress_callback,
+        pipeline_id,
     )
 
 

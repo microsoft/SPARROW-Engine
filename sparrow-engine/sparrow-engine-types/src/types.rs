@@ -18,6 +18,27 @@ pub struct BBox {
     pub y_max: f32,
 }
 
+/// Detector-frame pixel coordinates captured immediately before public
+/// normalization. This is engine plumbing: consumer projections must continue
+/// to expose only [`BBox`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourcePixelBox {
+    xyxy: [f32; 4],
+}
+
+impl SourcePixelBox {
+    #[doc(hidden)]
+    pub fn new(xyxy: [f32; 4]) -> Self {
+        Self { xyxy }
+    }
+
+    #[doc(hidden)]
+    pub fn xyxy(self) -> [f32; 4] {
+        self.xyxy
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Detection
 // ---------------------------------------------------------------------------
@@ -29,6 +50,28 @@ pub struct Detection {
     pub label: String,
     pub label_id: u32,
     pub confidence: f32,
+    /// Engine-only source geometry used by crop conventions that cannot be
+    /// reconstructed exactly from a normalized f32 box.
+    #[doc(hidden)]
+    pub source_pixel_box: Option<SourcePixelBox>,
+}
+
+impl Detection {
+    pub fn new(bbox: BBox, label: String, label_id: u32, confidence: f32) -> Self {
+        Self {
+            bbox,
+            label,
+            label_id,
+            confidence,
+            source_pixel_box: None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn with_source_pixel_box(mut self, source_pixel_box: SourcePixelBox) -> Self {
+        self.source_pixel_box = Some(source_pixel_box);
+        self
+    }
 }
 
 /// Full detection output from a single `detect()` call.
@@ -65,11 +108,116 @@ pub struct ClassifyResult {
 // Pipeline
 // ---------------------------------------------------------------------------
 
+/// Geometry source used to calculate a pipeline crop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CropCoordinateSource {
+    DetectorPixels,
+    NormalizedBBox,
+}
+
+impl CropCoordinateSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DetectorPixels => "detector_pixels",
+            Self::NormalizedBBox => "normalized_bbox",
+        }
+    }
+}
+
+/// The clipped crop passed to the classifier.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PipelineCropRegion {
+    /// Actual crop window, normalized to the source image.
+    pub bbox: BBox,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub coordinate_source: CropCoordinateSource,
+}
+
+/// Pipeline stage that produced a per-detection failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineFailureStage {
+    Crop,
+    Classifier,
+}
+
+impl PipelineFailureStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Crop => "crop",
+            Self::Classifier => "classifier",
+        }
+    }
+}
+
+/// Stable machine-readable reason for a missing pipeline classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineFailureKind {
+    CropInvalidBBox,
+    CropCoordsUnavailable,
+    CropDegenerate,
+    CropPreprocess,
+    ClassifierInference,
+    ClassifierEmpty,
+    ClassifierUnavailable,
+}
+
+impl PipelineFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CropInvalidBBox => "crop_invalid_bbox",
+            Self::CropCoordsUnavailable => "crop_coords_unavailable",
+            Self::CropDegenerate => "crop_degenerate",
+            Self::CropPreprocess => "crop_preprocess",
+            Self::ClassifierInference => "classifier_inference",
+            Self::ClassifierEmpty => "classifier_empty",
+            Self::ClassifierUnavailable => "classifier_unavailable",
+        }
+    }
+}
+
+/// Per-detection crop or classifier failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineFailure {
+    pub stage: PipelineFailureStage,
+    pub kind: PipelineFailureKind,
+    pub model_id: Option<String>,
+    pub message: String,
+}
+
+/// Artifact identity for one executed pipeline stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineStageProvenance {
+    pub model_id: String,
+    pub model_version: Option<String>,
+    pub model_hash: Option<String>,
+}
+
+/// Detector and classifier artifacts used for one pipeline result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineProvenance {
+    pub detector: PipelineStageProvenance,
+    pub classifier: Option<PipelineStageProvenance>,
+}
+
 /// A detection with an optional classification attached (from pipeline).
 #[derive(Debug, Clone)]
 pub struct PipelineDetection {
     pub detection: Detection,
     pub classification: Option<Classification>,
+    pub crop: Option<PipelineCropRegion>,
+    pub failure: Option<PipelineFailure>,
+}
+
+impl PipelineDetection {
+    pub fn new(detection: Detection, classification: Option<Classification>) -> Self {
+        Self {
+            detection,
+            classification,
+            crop: None,
+            failure: None,
+        }
+    }
 }
 
 /// Full pipeline output from `run_pipeline()`.
@@ -80,6 +228,7 @@ pub struct PipelineResult {
     pub image_width: u32,
     pub image_height: u32,
     pub processing_time_ms: f32,
+    pub stage_provenance: PipelineProvenance,
 }
 
 // ---------------------------------------------------------------------------
@@ -436,17 +585,18 @@ mod phase_a_r1_types_tests {
 
     #[test]
     fn detection_clone_preserves_all_fields() {
-        let d = Detection {
-            bbox: BBox {
+        let d = Detection::new(
+            BBox {
                 x_min: 0.0,
                 y_min: 0.0,
                 x_max: 1.0,
                 y_max: 1.0,
             },
-            label: "animal".to_string(),
-            label_id: 1,
-            confidence: 0.987,
-        };
+            "animal".to_string(),
+            1,
+            0.987,
+        )
+        .with_source_pixel_box(SourcePixelBox::new([0.0, 0.0, 640.0, 480.0]));
         let cloned = d.clone();
         assert_eq!(cloned.bbox, d.bbox);
         assert_eq!(cloned.label, d.label);
@@ -457,6 +607,7 @@ mod phase_a_r1_types_tests {
             cloned.confidence,
             d.confidence
         );
+        assert_eq!(cloned.source_pixel_box, d.source_pixel_box);
     }
 
     #[test]

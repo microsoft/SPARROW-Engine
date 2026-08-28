@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a classifier-owned `[crop]` manifest contract for detector-to-classifier
+  pipelines. It preserves legacy edge rounding by default and adds exact
+  DeepForest `truncate_extent` windows, context expansion, CPU/GPU crop
+  batching, explicit per-crop failures, stage artifact provenance, named
+  pipeline support in CLI/Python, and detailed pipeline result fields across
+  HTTP, Python, CLI, the HTTP client, and a new C ABI `_v2` result.
 - Added `multi_label` raw-audio postprocessing on CPU and GPU. Manifests
   declare whether the graph emits logits or probabilities, a per-class
   threshold, a result cap, and an optional fixed sub-frame axis. HTTP, CLI,

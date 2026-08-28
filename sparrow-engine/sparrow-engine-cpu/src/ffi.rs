@@ -11,8 +11,9 @@
 
 use crate::engine::{Device, Engine, EngineConfig, ModelHandle};
 use crate::types::{
-    AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts, ClassifyResult, DetectOpts,
-    DetectResult, EmbedResult, ImageInput, PipelineResult, PixelFormat,
+    AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts, ClassifyResult,
+    CropCoordinateSource, DetectOpts, DetectResult, EmbedResult, ImageInput, PipelineFailureKind,
+    PipelineFailureStage, PipelineResult, PipelineStageProvenance, PixelFormat,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -129,6 +130,75 @@ pub struct SparrowEnginePipelineDetection {
 pub struct SparrowEnginePipelineResult {
     pub pipeline_id: *const c_char,
     pub data: *const SparrowEnginePipelineDetection,
+    pub len: usize,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub processing_time_ms: f32,
+}
+
+pub type SparrowEnginePipelineFailureStage = u32;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_NONE: SparrowEnginePipelineFailureStage = 0;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CROP: SparrowEnginePipelineFailureStage = 1;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CLASSIFIER: SparrowEnginePipelineFailureStage = 2;
+
+pub type SparrowEnginePipelineFailureKind = u32;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_NONE: SparrowEnginePipelineFailureKind = 0;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CROP_INVALID_BBOX: SparrowEnginePipelineFailureKind = 1;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CROP_COORDS_UNAVAILABLE:
+    SparrowEnginePipelineFailureKind = 2;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CROP_DEGENERATE: SparrowEnginePipelineFailureKind = 3;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CROP_PREPROCESS: SparrowEnginePipelineFailureKind = 4;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_INFERENCE: SparrowEnginePipelineFailureKind =
+    5;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_EMPTY: SparrowEnginePipelineFailureKind = 6;
+pub const SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_UNAVAILABLE: SparrowEnginePipelineFailureKind =
+    7;
+
+pub type SparrowEngineCropCoordinateSource = u32;
+pub const SPARROW_ENGINE_CROP_COORDINATE_NORMALIZED_BBOX: SparrowEngineCropCoordinateSource = 0;
+pub const SPARROW_ENGINE_CROP_COORDINATE_DETECTOR_PIXELS: SparrowEngineCropCoordinateSource = 1;
+
+#[repr(C)]
+pub struct SparrowEnginePipelineStageProvenanceV2 {
+    pub model_id: *const c_char,
+    pub model_version: *const c_char,
+    pub model_hash: *const c_char,
+}
+
+#[repr(C)]
+pub struct SparrowEnginePipelineCropRegionV2 {
+    pub bbox: SparrowEngineBBox,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub coordinate_source: SparrowEngineCropCoordinateSource,
+}
+
+#[repr(C)]
+pub struct SparrowEnginePipelineFailureV2 {
+    pub stage: SparrowEnginePipelineFailureStage,
+    pub kind: SparrowEnginePipelineFailureKind,
+    pub model_id: *const c_char,
+    pub message: *const c_char,
+}
+
+#[repr(C)]
+pub struct SparrowEnginePipelineDetectionV2 {
+    pub detection: SparrowEngineDetection,
+    pub has_classification: bool,
+    pub classification: SparrowEngineClassification,
+    pub has_crop: bool,
+    pub crop: SparrowEnginePipelineCropRegionV2,
+    pub has_failure: bool,
+    pub failure: SparrowEnginePipelineFailureV2,
+}
+
+#[repr(C)]
+pub struct SparrowEnginePipelineResultV2 {
+    pub pipeline_id: *const c_char,
+    pub detector: SparrowEnginePipelineStageProvenanceV2,
+    pub has_classifier: bool,
+    pub classifier: SparrowEnginePipelineStageProvenanceV2,
+    pub data: *const SparrowEnginePipelineDetectionV2,
     pub len: usize,
     pub image_width: u32,
     pub image_height: u32,
@@ -601,6 +671,214 @@ fn pipeline_result_to_c(result: PipelineResult) -> *mut SparrowEnginePipelineRes
 struct PipelineResultWithOwner {
     header: SparrowEnginePipelineResult,
     _owner: PipelineResultOwned,
+}
+
+struct PipelineResultV2Owned {
+    data: Vec<SparrowEnginePipelineDetectionV2>,
+    _strings: Vec<CString>,
+}
+
+#[repr(C)]
+struct PipelineResultV2WithOwner {
+    header: SparrowEnginePipelineResultV2,
+    _owner: PipelineResultV2Owned,
+}
+
+fn pipeline_stage_to_c(
+    stage: &PipelineStageProvenance,
+    strings: &mut Vec<CString>,
+) -> SparrowEnginePipelineStageProvenanceV2 {
+    let model_id = push_ffi_string(strings, &stage.model_id);
+    let model_version = stage
+        .model_version
+        .as_deref()
+        .map(|value| push_ffi_string(strings, value))
+        .unwrap_or(ptr::null());
+    let model_hash = stage
+        .model_hash
+        .as_deref()
+        .map(|value| push_ffi_string(strings, value))
+        .unwrap_or(ptr::null());
+    SparrowEnginePipelineStageProvenanceV2 {
+        model_id,
+        model_version,
+        model_hash,
+    }
+}
+
+fn push_ffi_string(strings: &mut Vec<CString>, value: &str) -> *const c_char {
+    strings.push(CString::new(value.replace('\0', "")).unwrap_or_default());
+    strings.last().map_or(ptr::null(), |value| value.as_ptr())
+}
+
+fn pipeline_failure_stage_to_c(stage: PipelineFailureStage) -> SparrowEnginePipelineFailureStage {
+    match stage {
+        PipelineFailureStage::Crop => SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CROP,
+        PipelineFailureStage::Classifier => SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_CLASSIFIER,
+    }
+}
+
+fn pipeline_failure_kind_to_c(kind: PipelineFailureKind) -> SparrowEnginePipelineFailureKind {
+    match kind {
+        PipelineFailureKind::CropInvalidBBox => SPARROW_ENGINE_PIPELINE_FAILURE_CROP_INVALID_BBOX,
+        PipelineFailureKind::CropCoordsUnavailable => {
+            SPARROW_ENGINE_PIPELINE_FAILURE_CROP_COORDS_UNAVAILABLE
+        }
+        PipelineFailureKind::CropDegenerate => SPARROW_ENGINE_PIPELINE_FAILURE_CROP_DEGENERATE,
+        PipelineFailureKind::CropPreprocess => SPARROW_ENGINE_PIPELINE_FAILURE_CROP_PREPROCESS,
+        PipelineFailureKind::ClassifierInference => {
+            SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_INFERENCE
+        }
+        PipelineFailureKind::ClassifierEmpty => SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_EMPTY,
+        PipelineFailureKind::ClassifierUnavailable => {
+            SPARROW_ENGINE_PIPELINE_FAILURE_CLASSIFIER_UNAVAILABLE
+        }
+    }
+}
+
+fn crop_coordinate_source_to_c(source: CropCoordinateSource) -> SparrowEngineCropCoordinateSource {
+    match source {
+        CropCoordinateSource::NormalizedBBox => SPARROW_ENGINE_CROP_COORDINATE_NORMALIZED_BBOX,
+        CropCoordinateSource::DetectorPixels => SPARROW_ENGINE_CROP_COORDINATE_DETECTOR_PIXELS,
+    }
+}
+
+fn pipeline_result_v2_to_c(result: PipelineResult) -> *mut SparrowEnginePipelineResultV2 {
+    let mut strings = Vec::new();
+    let pipeline_id = push_ffi_string(&mut strings, &result.pipeline_id);
+    let detector = pipeline_stage_to_c(&result.stage_provenance.detector, &mut strings);
+    let (has_classifier, classifier) = match result.stage_provenance.classifier.as_ref() {
+        Some(stage) => (true, pipeline_stage_to_c(stage, &mut strings)),
+        None => (
+            false,
+            SparrowEnginePipelineStageProvenanceV2 {
+                model_id: ptr::null(),
+                model_version: ptr::null(),
+                model_hash: ptr::null(),
+            },
+        ),
+    };
+
+    let mut data = Vec::with_capacity(result.detections.len());
+    for item in &result.detections {
+        let detection_label = push_ffi_string(&mut strings, &item.detection.label);
+        let (has_classification, classification) = match item.classification.as_ref() {
+            Some(classification) => (
+                true,
+                SparrowEngineClassification {
+                    label: push_ffi_string(&mut strings, &classification.label),
+                    label_id: classification.label_id,
+                    confidence: classification.confidence,
+                },
+            ),
+            None => (
+                false,
+                SparrowEngineClassification {
+                    label: ptr::null(),
+                    label_id: 0,
+                    confidence: 0.0,
+                },
+            ),
+        };
+        let (has_crop, crop) = match item.crop {
+            Some(crop) => (
+                true,
+                SparrowEnginePipelineCropRegionV2 {
+                    bbox: SparrowEngineBBox {
+                        x_min: crop.bbox.x_min,
+                        y_min: crop.bbox.y_min,
+                        x_max: crop.bbox.x_max,
+                        y_max: crop.bbox.y_max,
+                    },
+                    width_px: crop.width_px,
+                    height_px: crop.height_px,
+                    coordinate_source: crop_coordinate_source_to_c(crop.coordinate_source),
+                },
+            ),
+            None => (
+                false,
+                SparrowEnginePipelineCropRegionV2 {
+                    bbox: SparrowEngineBBox {
+                        x_min: 0.0,
+                        y_min: 0.0,
+                        x_max: 0.0,
+                        y_max: 0.0,
+                    },
+                    width_px: 0,
+                    height_px: 0,
+                    coordinate_source: SPARROW_ENGINE_CROP_COORDINATE_NORMALIZED_BBOX,
+                },
+            ),
+        };
+        let (has_failure, failure) = match item.failure.as_ref() {
+            Some(failure) => (
+                true,
+                SparrowEnginePipelineFailureV2 {
+                    stage: pipeline_failure_stage_to_c(failure.stage),
+                    kind: pipeline_failure_kind_to_c(failure.kind),
+                    model_id: failure
+                        .model_id
+                        .as_deref()
+                        .map(|value| push_ffi_string(&mut strings, value))
+                        .unwrap_or(ptr::null()),
+                    message: push_ffi_string(&mut strings, &failure.message),
+                },
+            ),
+            None => (
+                false,
+                SparrowEnginePipelineFailureV2 {
+                    stage: SPARROW_ENGINE_PIPELINE_FAILURE_STAGE_NONE,
+                    kind: SPARROW_ENGINE_PIPELINE_FAILURE_NONE,
+                    model_id: ptr::null(),
+                    message: ptr::null(),
+                },
+            ),
+        };
+        data.push(SparrowEnginePipelineDetectionV2 {
+            detection: SparrowEngineDetection {
+                bbox: SparrowEngineBBox {
+                    x_min: item.detection.bbox.x_min,
+                    y_min: item.detection.bbox.y_min,
+                    x_max: item.detection.bbox.x_max,
+                    y_max: item.detection.bbox.y_max,
+                },
+                label: detection_label,
+                label_id: item.detection.label_id,
+                confidence: item.detection.confidence,
+            },
+            has_classification,
+            classification,
+            has_crop,
+            crop,
+            has_failure,
+            failure,
+        });
+    }
+
+    let owned = PipelineResultV2Owned {
+        data,
+        _strings: strings,
+    };
+    let mut combined = Box::new(PipelineResultV2WithOwner {
+        header: SparrowEnginePipelineResultV2 {
+            pipeline_id,
+            detector,
+            has_classifier,
+            classifier,
+            data: ptr::null(),
+            len: owned.data.len(),
+            image_width: result.image_width,
+            image_height: result.image_height,
+            processing_time_ms: result.processing_time_ms,
+        },
+        _owner: owned,
+    });
+    combined.header.data = if combined._owner.data.is_empty() {
+        ptr::null()
+    } else {
+        combined._owner.data.as_ptr()
+    };
+    Box::into_raw(combined) as *mut SparrowEnginePipelineResultV2
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,6 +1702,52 @@ pub unsafe extern "C" fn sparrow_engine_run_pipeline(
     }
 }
 
+/// Run a pipeline and return detailed crop, failure, and stage provenance.
+///
+/// # Safety
+/// Same requirements as [`sparrow_engine_run_pipeline`].
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_run_pipeline_v2(
+    engine: *const SparrowEngine,
+    pipeline_id: *const c_char,
+    image: *const u8,
+    len: usize,
+    detect_opts: *const SparrowEngineDetectOpts,
+    classify_opts: *const SparrowEngineClassifyOpts,
+) -> *mut SparrowEnginePipelineResultV2 {
+    clear_last_error();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(
+        || -> Result<*mut SparrowEnginePipelineResultV2, String> {
+            if engine.is_null() {
+                return Err("engine pointer is null".to_string());
+            }
+            if image.is_null() || len == 0 {
+                return Err("image data is null or empty".to_string());
+            }
+            let engine_ref = &*(engine as *const Engine);
+            let pid = cstr_to_str(pipeline_id)?;
+            let image_data = std::slice::from_raw_parts(image, len);
+            let input = ImageInput::Encoded(image_data.to_vec());
+            let d_opts = detect_opts_from_c(detect_opts);
+            let c_opts = classify_opts_from_c(classify_opts);
+            let result = crate::pipeline::run_pipeline(engine_ref, pid, &input, &d_opts, &c_opts)
+                .map_err(|e| e.to_string())?;
+            Ok(pipeline_result_v2_to_c(result))
+        },
+    ));
+    match result {
+        Ok(Ok(ptr)) => ptr,
+        Ok(Err(error)) => {
+            set_last_error(error);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("internal error: panic in sparrow_engine_run_pipeline_v2".to_string());
+            ptr::null_mut()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Audio Inference
 // ---------------------------------------------------------------------------
@@ -1695,6 +2019,29 @@ pub unsafe extern "C" fn sparrow_engine_pipeline_result_free(
     }));
     if result.is_err() {
         set_last_error("internal error: panic in sparrow_engine_pipeline_result_free".to_string());
+    }
+}
+
+/// Free a detailed pipeline result returned by
+/// [`sparrow_engine_run_pipeline_v2`].
+///
+/// # Safety
+/// `ptr` must be a pointer returned by `sparrow_engine_run_pipeline_v2`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_pipeline_result_v2_free(
+    ptr: *mut SparrowEnginePipelineResultV2,
+) {
+    clear_last_error();
+    if ptr.is_null() {
+        return;
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        drop(Box::from_raw(ptr as *mut PipelineResultV2WithOwner));
+    }));
+    if result.is_err() {
+        set_last_error(
+            "internal error: panic in sparrow_engine_pipeline_result_v2_free".to_string(),
+        );
     }
 }
 
@@ -2208,7 +2555,11 @@ pub extern "C" fn sparrow_engine_version() -> *const c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AudioClass, AudioSegment};
+    use crate::types::{
+        AudioClass, AudioSegment, BBox, Classification, CropCoordinateSource, Detection,
+        PipelineCropRegion, PipelineDetection, PipelineFailure, PipelineFailureKind,
+        PipelineFailureStage, PipelineProvenance,
+    };
     use std::ffi::CStr;
 
     #[test]
@@ -2259,6 +2610,14 @@ mod tests {
             image_width: 640,
             image_height: 480,
             processing_time_ms: 0.0,
+            stage_provenance: crate::types::PipelineProvenance {
+                detector: PipelineStageProvenance {
+                    model_id: "detector".to_string(),
+                    model_version: None,
+                    model_hash: None,
+                },
+                classifier: None,
+            },
         };
 
         let ptr = pipeline_result_to_c(result);
@@ -2269,6 +2628,115 @@ mod tests {
             assert_eq!(header.len, 0);
             assert!(header.data.is_null());
             sparrow_engine_pipeline_result_free(ptr);
+        }
+    }
+
+    #[test]
+    fn pipeline_result_v2_to_c_preserves_details_and_v1_projection() {
+        let provenance = PipelineProvenance {
+            detector: PipelineStageProvenance {
+                model_id: "deepforest-tree".to_string(),
+                model_version: Some("1".to_string()),
+                model_hash: Some("detector-hash".to_string()),
+            },
+            classifier: Some(PipelineStageProvenance {
+                model_id: "deepforest-neon-species".to_string(),
+                model_version: None,
+                model_hash: Some("classifier-hash".to_string()),
+            }),
+        };
+        let success = PipelineDetection {
+            detection: Detection::new(
+                BBox {
+                    x_min: 0.1,
+                    y_min: 0.2,
+                    x_max: 0.3,
+                    y_max: 0.4,
+                },
+                "Tree".to_string(),
+                0,
+                0.9,
+            ),
+            classification: Some(Classification {
+                label: "ACRU".to_string(),
+                label_id: 4,
+                confidence: 0.8,
+            }),
+            crop: Some(PipelineCropRegion {
+                bbox: BBox {
+                    x_min: 0.1,
+                    y_min: 0.2,
+                    x_max: 0.29,
+                    y_max: 0.39,
+                },
+                width_px: 19,
+                height_px: 19,
+                coordinate_source: CropCoordinateSource::DetectorPixels,
+            }),
+            failure: None,
+        };
+        let failed = PipelineDetection {
+            detection: Detection::new(
+                BBox {
+                    x_min: 0.9,
+                    y_min: 0.9,
+                    x_max: 1.0,
+                    y_max: 1.0,
+                },
+                "Tree".to_string(),
+                0,
+                0.5,
+            ),
+            classification: None,
+            crop: None,
+            failure: Some(PipelineFailure {
+                stage: PipelineFailureStage::Crop,
+                kind: PipelineFailureKind::CropDegenerate,
+                model_id: None,
+                message: "too small".to_string(),
+            }),
+        };
+        let result = PipelineResult {
+            pipeline_id: "deepforest-tree-species".to_string(),
+            detections: vec![success, failed],
+            image_width: 100,
+            image_height: 100,
+            processing_time_ms: 1.5,
+            stage_provenance: provenance,
+        };
+
+        let v1 = pipeline_result_to_c(result.clone());
+        let v2 = pipeline_result_v2_to_c(result);
+        assert!(!v1.is_null());
+        assert!(!v2.is_null());
+        unsafe {
+            assert_eq!((*v1).len, (*v2).len);
+            assert_eq!((*v1).image_width, (*v2).image_width);
+            assert_eq!((*v1).image_height, (*v2).image_height);
+            assert_eq!(
+                CStr::from_ptr((*v2).detector.model_id).to_str().unwrap(),
+                "deepforest-tree"
+            );
+            assert!((*v2).has_classifier);
+            let rows = std::slice::from_raw_parts((*v2).data, (*v2).len);
+            assert!(rows[0].has_classification);
+            assert!(rows[0].has_crop);
+            assert_eq!(rows[0].crop.width_px, 19);
+            assert_eq!(
+                rows[0].crop.coordinate_source,
+                SPARROW_ENGINE_CROP_COORDINATE_DETECTOR_PIXELS
+            );
+            assert!(rows[1].has_failure);
+            assert_eq!(
+                rows[1].failure.kind,
+                SPARROW_ENGINE_PIPELINE_FAILURE_CROP_DEGENERATE
+            );
+            assert_eq!(
+                CStr::from_ptr(rows[1].failure.message).to_str().unwrap(),
+                "too small"
+            );
+            sparrow_engine_pipeline_result_free(v1);
+            sparrow_engine_pipeline_result_v2_free(v2);
         }
     }
 

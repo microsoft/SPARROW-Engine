@@ -1,0 +1,1231 @@
+{
+  "schema_version": "1.0",
+  "source": "weecology/DeepForest 2.1.0 bundled NEON annotations; crop semantics from DeepForest main BoundingBoxDataset",
+  "case_count": 68,
+  "cases": [
+    {
+      "source": "OSBS_029.csv",
+      "row": 0,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        203.0,
+        67.0,
+        227.0,
+        90.0
+      ],
+      "expected": {
+        "x": 203,
+        "y": 67,
+        "width": 24,
+        "height": 23
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 1,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        256.0,
+        99.0,
+        288.0,
+        140.0
+      ],
+      "expected": {
+        "x": 256,
+        "y": 99,
+        "width": 32,
+        "height": 41
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 2,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        166.0,
+        253.0,
+        225.0,
+        304.0
+      ],
+      "expected": {
+        "x": 166,
+        "y": 253,
+        "width": 59,
+        "height": 51
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 3,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        365.0,
+        2.0,
+        400.0,
+        27.0
+      ],
+      "expected": {
+        "x": 365,
+        "y": 2,
+        "width": 35,
+        "height": 25
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 4,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        312.0,
+        13.0,
+        349.0,
+        47.0
+      ],
+      "expected": {
+        "x": 312,
+        "y": 13,
+        "width": 37,
+        "height": 34
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 5,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        365.0,
+        21.0,
+        400.0,
+        70.0
+      ],
+      "expected": {
+        "x": 365,
+        "y": 21,
+        "width": 35,
+        "height": 49
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 6,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        278.0,
+        1.0,
+        312.0,
+        37.0
+      ],
+      "expected": {
+        "x": 278,
+        "y": 1,
+        "width": 34,
+        "height": 36
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 7,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        364.0,
+        204.0,
+        400.0,
+        246.0
+      ],
+      "expected": {
+        "x": 364,
+        "y": 204,
+        "width": 36,
+        "height": 42
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 8,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        90.0,
+        117.0,
+        121.0,
+        145.0
+      ],
+      "expected": {
+        "x": 90,
+        "y": 117,
+        "width": 31,
+        "height": 28
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 9,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        115.0,
+        109.0,
+        150.0,
+        152.0
+      ],
+      "expected": {
+        "x": 115,
+        "y": 109,
+        "width": 35,
+        "height": 43
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 10,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        161.0,
+        155.0,
+        199.0,
+        191.0
+      ],
+      "expected": {
+        "x": 161,
+        "y": 155,
+        "width": 38,
+        "height": 36
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 11,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        120.0,
+        153.0,
+        160.0,
+        192.0
+      ],
+      "expected": {
+        "x": 120,
+        "y": 153,
+        "width": 40,
+        "height": 39
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 12,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        349.0,
+        290.0,
+        375.0,
+        320.0
+      ],
+      "expected": {
+        "x": 349,
+        "y": 290,
+        "width": 26,
+        "height": 30
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 13,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        1.0,
+        153.0,
+        53.0,
+        217.0
+      ],
+      "expected": {
+        "x": 1,
+        "y": 153,
+        "width": 52,
+        "height": 64
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 14,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        1.0,
+        218.0,
+        41.0,
+        254.0
+      ],
+      "expected": {
+        "x": 1,
+        "y": 218,
+        "width": 40,
+        "height": 36
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 15,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        65.0,
+        143.0,
+        117.0,
+        190.0
+      ],
+      "expected": {
+        "x": 65,
+        "y": 143,
+        "width": 52,
+        "height": 47
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 16,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        368.0,
+        78.0,
+        400.0,
+        110.0
+      ],
+      "expected": {
+        "x": 368,
+        "y": 78,
+        "width": 32,
+        "height": 32
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 17,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        149.0,
+        95.0,
+        203.0,
+        156.0
+      ],
+      "expected": {
+        "x": 149,
+        "y": 95,
+        "width": 54,
+        "height": 61
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 18,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        154.0,
+        195.0,
+        190.0,
+        229.0
+      ],
+      "expected": {
+        "x": 154,
+        "y": 195,
+        "width": 36,
+        "height": 34
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 19,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        103.0,
+        195.0,
+        153.0,
+        244.0
+      ],
+      "expected": {
+        "x": 103,
+        "y": 195,
+        "width": 50,
+        "height": 49
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 20,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        49.0,
+        377.0,
+        75.0,
+        400.0
+      ],
+      "expected": {
+        "x": 49,
+        "y": 377,
+        "width": 26,
+        "height": 23
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 21,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        116.0,
+        367.0,
+        151.0,
+        400.0
+      ],
+      "expected": {
+        "x": 116,
+        "y": 367,
+        "width": 35,
+        "height": 33
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 22,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        234.0,
+        243.0,
+        253.0,
+        267.0
+      ],
+      "expected": {
+        "x": 234,
+        "y": 243,
+        "width": 19,
+        "height": 24
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 23,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        292.0,
+        367.0,
+        337.0,
+        400.0
+      ],
+      "expected": {
+        "x": 292,
+        "y": 367,
+        "width": 45,
+        "height": 33
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 24,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        333.0,
+        336.0,
+        374.0,
+        384.0
+      ],
+      "expected": {
+        "x": 333,
+        "y": 336,
+        "width": 41,
+        "height": 48
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 25,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        1.0,
+        13.0,
+        39.0,
+        62.0
+      ],
+      "expected": {
+        "x": 1,
+        "y": 13,
+        "width": 38,
+        "height": 49
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 26,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        1.0,
+        65.0,
+        40.0,
+        106.0
+      ],
+      "expected": {
+        "x": 1,
+        "y": 65,
+        "width": 39,
+        "height": 41
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 27,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        50.0,
+        3.0,
+        102.0,
+        57.0
+      ],
+      "expected": {
+        "x": 50,
+        "y": 3,
+        "width": 52,
+        "height": 54
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 28,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        102.0,
+        36.0,
+        130.0,
+        68.0
+      ],
+      "expected": {
+        "x": 102,
+        "y": 36,
+        "width": 28,
+        "height": 32
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 29,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        156.0,
+        5.0,
+        180.0,
+        38.0
+      ],
+      "expected": {
+        "x": 156,
+        "y": 5,
+        "width": 24,
+        "height": 33
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 30,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        186.0,
+        1.0,
+        231.0,
+        40.0
+      ],
+      "expected": {
+        "x": 186,
+        "y": 1,
+        "width": 45,
+        "height": 39
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 31,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        382.0,
+        260.0,
+        400.0,
+        305.0
+      ],
+      "expected": {
+        "x": 382,
+        "y": 260,
+        "width": 18,
+        "height": 45
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 32,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        331.0,
+        128.0,
+        363.0,
+        161.0
+      ],
+      "expected": {
+        "x": 331,
+        "y": 128,
+        "width": 32,
+        "height": 33
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 33,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        332.0,
+        84.0,
+        360.0,
+        118.0
+      ],
+      "expected": {
+        "x": 332,
+        "y": 84,
+        "width": 28,
+        "height": 34
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 34,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        363.0,
+        115.0,
+        393.0,
+        146.0
+      ],
+      "expected": {
+        "x": 363,
+        "y": 115,
+        "width": 30,
+        "height": 31
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 35,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        117.0,
+        263.0,
+        149.0,
+        307.0
+      ],
+      "expected": {
+        "x": 117,
+        "y": 263,
+        "width": 32,
+        "height": 44
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 36,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        100.0,
+        309.0,
+        155.0,
+        371.0
+      ],
+      "expected": {
+        "x": 100,
+        "y": 309,
+        "width": 55,
+        "height": 62
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 37,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        179.0,
+        359.0,
+        214.0,
+        398.0
+      ],
+      "expected": {
+        "x": 179,
+        "y": 359,
+        "width": 35,
+        "height": 39
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 38,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        199.0,
+        340.0,
+        231.0,
+        374.0
+      ],
+      "expected": {
+        "x": 199,
+        "y": 340,
+        "width": 32,
+        "height": 34
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 39,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        177.0,
+        308.0,
+        214.0,
+        343.0
+      ],
+      "expected": {
+        "x": 177,
+        "y": 308,
+        "width": 37,
+        "height": 35
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 40,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        239.0,
+        306.0,
+        279.0,
+        342.0
+      ],
+      "expected": {
+        "x": 239,
+        "y": 306,
+        "width": 40,
+        "height": 36
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 41,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        275.0,
+        332.0,
+        310.0,
+        374.0
+      ],
+      "expected": {
+        "x": 275,
+        "y": 332,
+        "width": 35,
+        "height": 42
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 42,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        53.0,
+        192.0,
+        90.0,
+        238.0
+      ],
+      "expected": {
+        "x": 53,
+        "y": 192,
+        "width": 37,
+        "height": 46
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 43,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        115.0,
+        64.0,
+        151.0,
+        103.0
+      ],
+      "expected": {
+        "x": 115,
+        "y": 64,
+        "width": 36,
+        "height": 39
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 44,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        53.0,
+        69.0,
+        96.0,
+        117.0
+      ],
+      "expected": {
+        "x": 53,
+        "y": 69,
+        "width": 43,
+        "height": 48
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 45,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        263.0,
+        243.0,
+        289.0,
+        282.0
+      ],
+      "expected": {
+        "x": 263,
+        "y": 243,
+        "width": 26,
+        "height": 39
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 46,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        331.0,
+        42.0,
+        369.0,
+        87.0
+      ],
+      "expected": {
+        "x": 331,
+        "y": 42,
+        "width": 38,
+        "height": 45
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 47,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        252.0,
+        47.0,
+        283.0,
+        87.0
+      ],
+      "expected": {
+        "x": 252,
+        "y": 47,
+        "width": 31,
+        "height": 40
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 48,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        291.0,
+        89.0,
+        333.0,
+        138.0
+      ],
+      "expected": {
+        "x": 291,
+        "y": 89,
+        "width": 42,
+        "height": 49
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 49,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        288.0,
+        136.0,
+        315.0,
+        167.0
+      ],
+      "expected": {
+        "x": 288,
+        "y": 136,
+        "width": 27,
+        "height": 31
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 50,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        203.0,
+        88.0,
+        247.0,
+        139.0
+      ],
+      "expected": {
+        "x": 203,
+        "y": 88,
+        "width": 44,
+        "height": 51
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 51,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        257.0,
+        198.0,
+        289.0,
+        232.0
+      ],
+      "expected": {
+        "x": 257,
+        "y": 198,
+        "width": 32,
+        "height": 34
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 52,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        31.0,
+        341.0,
+        58.0,
+        372.0
+      ],
+      "expected": {
+        "x": 31,
+        "y": 341,
+        "width": 27,
+        "height": 31
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 53,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        19.0,
+        368.0,
+        52.0,
+        400.0
+      ],
+      "expected": {
+        "x": 19,
+        "y": 368,
+        "width": 33,
+        "height": 32
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 54,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        1.0,
+        261.0,
+        31.0,
+        296.0
+      ],
+      "expected": {
+        "x": 1,
+        "y": 261,
+        "width": 30,
+        "height": 35
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 55,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        73.0,
+        241.0,
+        113.0,
+        287.0
+      ],
+      "expected": {
+        "x": 73,
+        "y": 241,
+        "width": 40,
+        "height": 46
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 56,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        60.0,
+        292.0,
+        96.0,
+        332.0
+      ],
+      "expected": {
+        "x": 60,
+        "y": 292,
+        "width": 36,
+        "height": 40
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 57,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        89.0,
+        362.0,
+        114.0,
+        390.0
+      ],
+      "expected": {
+        "x": 89,
+        "y": 362,
+        "width": 25,
+        "height": 28
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 58,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        236.0,
+        132.0,
+        253.0,
+        152.0
+      ],
+      "expected": {
+        "x": 236,
+        "y": 132,
+        "width": 17,
+        "height": 20
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 59,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        316.0,
+        174.0,
+        346.0,
+        214.0
+      ],
+      "expected": {
+        "x": 316,
+        "y": 174,
+        "width": 30,
+        "height": 40
+      }
+    },
+    {
+      "source": "OSBS_029.csv",
+      "row": 60,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        220.0,
+        208.0,
+        251.0,
+        244.0
+      ],
+      "expected": {
+        "x": 220,
+        "y": 208,
+        "width": 31,
+        "height": 36
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 0,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        313.02652,
+        208.67921,
+        394.21036,
+        283.95688
+      ],
+      "expected": {
+        "x": 313,
+        "y": 208,
+        "width": 81,
+        "height": 75
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 1,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        131.90758,
+        71.16213,
+        180.8946,
+        125.354
+      ],
+      "expected": {
+        "x": 131,
+        "y": 71,
+        "width": 48,
+        "height": 54
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 2,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        3.8083,
+        105.00237,
+        104.63216,
+        214.8396
+      ],
+      "expected": {
+        "x": 3,
+        "y": 105,
+        "width": 100,
+        "height": 109
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 3,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        107.22086,
+        172.13297,
+        208.0163,
+        271.81967
+      ],
+      "expected": {
+        "x": 107,
+        "y": 172,
+        "width": 100,
+        "height": 99
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 4,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        301.15378,
+        321.73984,
+        389.87064,
+        393.4257
+      ],
+      "expected": {
+        "x": 301,
+        "y": 321,
+        "width": 88,
+        "height": 71
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 5,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        186.47333,
+        100.393036,
+        240.11789,
+        156.4899
+      ],
+      "expected": {
+        "x": 186,
+        "y": 100,
+        "width": 53,
+        "height": 56
+      }
+    },
+    {
+      "source": "2018_SJER_3_252000_4107000_image_477.csv",
+      "row": 6,
+      "image_width": 400,
+      "image_height": 400,
+      "source_xyxy": [
+        2.2587814,
+        64.3636,
+        58.41651,
+        139.63036
+      ],
+      "expected": {
+        "x": 2,
+        "y": 64,
+        "width": 56,
+        "height": 75
+      }
+    }
+  ]
+}

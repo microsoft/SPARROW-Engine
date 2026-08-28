@@ -271,12 +271,7 @@ pub fn pipeline_results_to_detect_entries(
                             pd.detection.confidence,
                         ),
                     };
-                    Detection {
-                        bbox: pd.detection.bbox,
-                        label,
-                        label_id,
-                        confidence,
-                    }
+                    Detection::new(pd.detection.bbox, label, label_id, confidence)
                 })
                 .collect();
             (
@@ -298,19 +293,19 @@ mod tests {
     use sparrow_engine_types::Detection;
 
     fn make_det(label: &str, conf: f32, bbox: [f32; 4]) -> Detection {
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: bbox[0],
                 y_min: bbox[1],
                 x_max: bbox[2],
                 y_max: bbox[3],
             },
-            label: label.to_string(),
+            label.to_string(),
             // COCO convention: category_id starts at 1 (0 is reserved for
             // background). See to_coco() invariant.
-            label_id: 1,
-            confidence: conf,
-        }
+            1,
+            conf,
+        )
     }
 
     fn make_result(dets: Vec<Detection>) -> DetectResult {
@@ -482,7 +477,11 @@ mod tests {
 
         // Both annotations must still be emitted, both referencing category_id=1.
         let anns = json["annotations"].as_array().unwrap();
-        assert_eq!(anns.len(), 2, "both annotations preserved despite collision");
+        assert_eq!(
+            anns.len(),
+            2,
+            "both annotations preserved despite collision"
+        );
         assert_eq!(anns[0]["category_id"], 1);
         assert_eq!(anns[1]["category_id"], 1);
     }
@@ -516,7 +515,10 @@ mod tests {
 
     // --- pipeline_results_to_detect_entries tests ---
 
-    use sparrow_engine_types::{Classification, PipelineDetection, PipelineResult};
+    use sparrow_engine_types::{
+        Classification, PipelineDetection, PipelineProvenance, PipelineResult,
+        PipelineStageProvenance,
+    };
 
     fn make_pipeline_detection(
         det_label: &str,
@@ -524,23 +526,38 @@ mod tests {
         bbox: [f32; 4],
         cls: Option<(&str, f32)>,
     ) -> PipelineDetection {
-        PipelineDetection {
-            detection: Detection {
-                bbox: BBox {
+        PipelineDetection::new(
+            Detection::new(
+                BBox {
                     x_min: bbox[0],
                     y_min: bbox[1],
                     x_max: bbox[2],
                     y_max: bbox[3],
                 },
-                label: det_label.to_string(),
+                det_label.to_string(),
                 // COCO convention: category_id starts at 1 (see to_coco invariant).
-                label_id: 1,
-                confidence: det_conf,
-            },
-            classification: cls.map(|(label, conf)| Classification {
+                1,
+                det_conf,
+            ),
+            cls.map(|(label, conf)| Classification {
                 label: label.to_string(),
                 label_id: 42,
                 confidence: conf,
+            }),
+        )
+    }
+
+    fn pipeline_provenance() -> PipelineProvenance {
+        PipelineProvenance {
+            detector: PipelineStageProvenance {
+                model_id: "detector".to_string(),
+                model_version: None,
+                model_hash: None,
+            },
+            classifier: Some(PipelineStageProvenance {
+                model_id: "classifier".to_string(),
+                model_version: None,
+                model_hash: None,
             }),
         }
     }
@@ -558,6 +575,7 @@ mod tests {
             image_width: 1920,
             image_height: 1080,
             processing_time_ms: 100.0,
+            stage_provenance: pipeline_provenance(),
         };
         let path = Path::new("img.jpg");
         let entries = pipeline_results_to_detect_entries(&[(path, &pr)]);
@@ -586,6 +604,7 @@ mod tests {
             image_width: 640,
             image_height: 480,
             processing_time_ms: 50.0,
+            stage_provenance: pipeline_provenance(),
         };
         let path = Path::new("img2.jpg");
         let entries = pipeline_results_to_detect_entries(&[(path, &pr)]);
@@ -611,17 +630,17 @@ mod phase_a_r1_export {
     use sparrow_engine_types::{BBox, DetectResult, Detection};
 
     fn d(label: &str, label_id: u32, conf: f32, bbox: [f32; 4]) -> Detection {
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: bbox[0],
                 y_min: bbox[1],
                 x_max: bbox[2],
                 y_max: bbox[3],
             },
-            label: label.to_string(),
+            label.to_string(),
             label_id,
-            confidence: conf,
-        }
+            conf,
+        )
     }
 
     fn r(dets: Vec<Detection>) -> DetectResult {
@@ -694,7 +713,10 @@ mod phase_a_r1_export {
         assert!((x - 0.1).abs() < 1e-6);
         assert!((y - 0.2).abs() < 1e-6);
         assert!((w - 0.4).abs() < 1e-6, "width must be x_max-x_min, got {w}");
-        assert!((h - 0.4).abs() < 1e-6, "height must be y_max-y_min, got {h}");
+        assert!(
+            (h - 0.4).abs() < 1e-6,
+            "height must be y_max-y_min, got {h}"
+        );
     }
 
     /// COCO category collision: existing `coco_first_seen_label_wins_on_collision`

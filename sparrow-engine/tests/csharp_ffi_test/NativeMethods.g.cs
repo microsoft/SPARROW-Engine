@@ -175,6 +175,15 @@ namespace SparrowEngine.Native
         internal static extern SparrowEnginePipelineResult* sparrow_engine_run_pipeline(void* engine, byte* pipeline_id, byte* image, nuint len, SparrowEngineDetectOpts* detect_opts, SparrowEngineClassifyOpts* classify_opts);
 
         /// <summary>
+        ///  Run a pipeline and return detailed crop, failure, and stage provenance.
+        ///
+        ///  # Safety
+        ///  Same requirements as [`sparrow_engine_run_pipeline`].
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_run_pipeline_v2", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern SparrowEnginePipelineResultV2* sparrow_engine_run_pipeline_v2(void* engine, byte* pipeline_id, byte* image, nuint len, SparrowEngineDetectOpts* detect_opts, SparrowEngineClassifyOpts* classify_opts);
+
+        /// <summary>
         ///  Run audio detection on a WAV file. Returns null on error.
         ///
         ///  # Safety
@@ -273,6 +282,16 @@ namespace SparrowEngine.Native
         /// </summary>
         [DllImport(__DllName, EntryPoint = "sparrow_engine_pipeline_result_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void sparrow_engine_pipeline_result_free(SparrowEnginePipelineResult* ptr);
+
+        /// <summary>
+        ///  Free a detailed pipeline result returned by
+        ///  [`sparrow_engine_run_pipeline_v2`].
+        ///
+        ///  # Safety
+        ///  `ptr` must be a pointer returned by `sparrow_engine_run_pipeline_v2`, or null.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_pipeline_result_v2_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void sparrow_engine_pipeline_result_v2_free(SparrowEnginePipelineResultV2* ptr);
 
         /// <summary>
         ///  Free a string returned by `sparrow_engine_list_models` or `sparrow_engine_health`.
@@ -522,6 +541,58 @@ namespace SparrowEngine.Native
     {
         public byte* pipeline_id;
         public SparrowEnginePipelineDetection* data;
+        public nuint len;
+        public uint image_width;
+        public uint image_height;
+        public float processing_time_ms;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEnginePipelineStageProvenanceV2
+    {
+        public byte* model_id;
+        public byte* model_version;
+        public byte* model_hash;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEnginePipelineCropRegionV2
+    {
+        public SparrowEngineBBox bbox;
+        public uint width_px;
+        public uint height_px;
+        public uint coordinate_source;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEnginePipelineFailureV2
+    {
+        public uint stage;
+        public uint kind;
+        public byte* model_id;
+        public byte* message;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEnginePipelineDetectionV2
+    {
+        public SparrowEngineDetection detection;
+        [MarshalAs(UnmanagedType.U1)] public bool has_classification;
+        public SparrowEngineClassification classification;
+        [MarshalAs(UnmanagedType.U1)] public bool has_crop;
+        public SparrowEnginePipelineCropRegionV2 crop;
+        [MarshalAs(UnmanagedType.U1)] public bool has_failure;
+        public SparrowEnginePipelineFailureV2 failure;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEnginePipelineResultV2
+    {
+        public byte* pipeline_id;
+        public SparrowEnginePipelineStageProvenanceV2 detector;
+        [MarshalAs(UnmanagedType.U1)] public bool has_classifier;
+        public SparrowEnginePipelineStageProvenanceV2 classifier;
+        public SparrowEnginePipelineDetectionV2* data;
         public nuint len;
         public uint image_width;
         public uint image_height;

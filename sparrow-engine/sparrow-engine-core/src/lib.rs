@@ -5,6 +5,7 @@
 
 pub mod audio_postprocess;
 pub mod catalog;
+pub mod crop;
 pub mod daynight;
 pub mod export;
 pub mod hash;

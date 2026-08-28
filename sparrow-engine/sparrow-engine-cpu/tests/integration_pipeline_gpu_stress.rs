@@ -92,8 +92,8 @@ fn test_pipeline_gpu_teardown_stress() {
 
     for iter in 0..iterations {
         for img_path in &images {
-            let image_data = std::fs::read(img_path)
-                .unwrap_or_else(|e| panic!("read {:?}: {}", img_path, e));
+            let image_data =
+                std::fs::read(img_path).unwrap_or_else(|e| panic!("read {:?}: {}", img_path, e));
             let input = ImageInput::Encoded(image_data);
 
             let result = sparrow_engine::pipeline::run_pipeline_adhoc(
@@ -104,9 +104,7 @@ fn test_pipeline_gpu_teardown_stress() {
                 &detect_opts,
                 &classify_opts,
             )
-            .unwrap_or_else(|e| {
-                panic!("pipeline iter {iter} on {:?}: {}", img_path, e)
-            });
+            .unwrap_or_else(|e| panic!("pipeline iter {iter} on {:?}: {}", img_path, e));
 
             assert_eq!(
                 result.pipeline_id,

@@ -1842,6 +1842,7 @@ mod tests {
             channel_order: Some(manifest::ChannelOrder::Rgb),
             interpolation: None,
             resize_crop: None,
+            crop: None,
             precision: manifest::Precision::Fp32,
             inference_strategy: manifest::InferenceStrategy::Single,
             trt: None,

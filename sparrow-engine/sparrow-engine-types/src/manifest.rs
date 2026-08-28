@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::drift_metrics::DriftReference;
 use crate::error::{Result, SparrowEngineError};
-use crate::types::{EmbeddingMetric, ModelSubtype};
+use crate::types::{EmbeddingMetric, ModelSubtype, ModelType};
+
+/// Maximum number of classifier crops accepted in one pipeline inference
+/// batch. Bounds the manifest-controlled working set.
+pub const MAX_CROP_BATCH_SIZE: u32 = 64;
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -475,6 +479,46 @@ impl PostprocessMethod {
     }
 }
 
+/// How a pipeline converts a detector box into an integer crop window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CropWindow {
+    /// Existing behavior: round all normalized edges independently, clamp to
+    /// the image, and require at least two pixels on each axis.
+    #[default]
+    RoundClamp,
+    /// DeepForest/rasterio behavior: truncate the source-pixel origin and
+    /// truncate `max(1, extent)`.
+    TruncateExtent,
+}
+
+impl CropWindow {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RoundClamp => "round_clamp",
+            Self::TruncateExtent => "truncate_extent",
+        }
+    }
+}
+
+/// Classifier-owned crop contract used only by detector-to-classifier
+/// pipelines. Standalone classification ignores this section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CropConfig {
+    pub window: CropWindow,
+    pub expand_pixels: u32,
+    pub batch_size: u32,
+}
+
+impl Default for CropConfig {
+    fn default() -> Self {
+        Self {
+            window: CropWindow::RoundClamp,
+            expand_pixels: 0,
+            batch_size: 1,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public structs — parsed and validated manifest data
 // ---------------------------------------------------------------------------
@@ -507,6 +551,10 @@ pub struct ModelManifest {
     /// Image-only: resize+center-crop parameters. `Some` only when
     /// `preprocess_method == ResizeCrop`; `None` for all other methods.
     pub resize_crop: Option<ResizeCropConfig>,
+
+    /// Optional classifier-owned crop contract. `None` preserves the legacy
+    /// `round_clamp`, zero-expansion, one-crop-per-call pipeline behavior.
+    pub crop: Option<CropConfig>,
 
     /// Inference precision: FP32 (default) or FP16. When `Fp16`, the engine
     /// loads `model_file_fp16` instead of `model_file`. Phase 3.8 fix.
@@ -747,6 +795,19 @@ struct RawModelToml {
     /// Optional `[embedding]` section for image encoders.
     #[serde(default)]
     embedding: Option<RawEmbedding>,
+    /// Optional classifier-owned `[crop]` section.
+    #[serde(default)]
+    crop: Option<RawCrop>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawCrop {
+    #[serde(default)]
+    window: Option<String>,
+    #[serde(default)]
+    expand_pixels: Option<u32>,
+    #[serde(default)]
+    batch_size: Option<u32>,
 }
 
 /// Raw TOML mirror of `DriftReference`. Inline `class_distribution` map
@@ -987,6 +1048,8 @@ struct RawPipeline {
 struct RawPipelineStep {
     role: String,
     model: String,
+    #[serde(default)]
+    crop_from: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1894,6 +1957,43 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         }
     };
 
+    let crop = raw
+        .crop
+        .as_ref()
+        .map(|raw_crop| {
+            let window = match raw_crop.window.as_deref() {
+                None | Some("round_clamp") => CropWindow::RoundClamp,
+                Some("truncate_extent") => CropWindow::TruncateExtent,
+                Some(other) => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "Unknown crop window: '{other}' (expected 'round_clamp' or 'truncate_extent')"
+                    )));
+                }
+            };
+            let batch_size = raw_crop.batch_size.unwrap_or(1);
+            if batch_size == 0 || batch_size > MAX_CROP_BATCH_SIZE {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "[crop] batch_size must be in 1..={MAX_CROP_BATCH_SIZE}, got {batch_size}"
+                )));
+            }
+            Ok(CropConfig {
+                window,
+                expand_pixels: raw_crop.expand_pixels.unwrap_or(0),
+                batch_size,
+            })
+        })
+        .transpose()?;
+
+    if crop.is_some()
+        && crate::model_type::derive_model_type(&preprocess_method, &postprocess_method, subtype)
+            != ModelType::Classifier
+    {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "[crop] is only valid on image classifiers; model '{}' is not an image classifier",
+            raw.model.id
+        )));
+    }
+
     // Resolve resize_crop parameters when the method is `resize_crop`.
     let resize_crop = if preprocess_method == PreprocessMethod::ResizeCrop {
         let resize_mode = match raw.preprocessing.resize_mode.as_deref() {
@@ -1937,6 +2037,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         channel_order,
         interpolation,
         resize_crop,
+        crop,
         precision,
         inference_strategy,
         trt,
@@ -2004,6 +2105,24 @@ pub fn load_pipeline_manifest(path: &Path) -> Result<PipelineManifest> {
                 )))
             }
         };
+
+        match role {
+            PipelineRole::Detector => {
+                if raw_step.crop_from.is_some() {
+                    return Err(SparrowEngineError::InvalidPipeline(
+                        "detector pipeline steps cannot set crop_from".to_string(),
+                    ));
+                }
+            }
+            PipelineRole::Classifier => match raw_step.crop_from.as_deref() {
+                None | Some("detector") => {}
+                Some(other) => {
+                    return Err(SparrowEngineError::InvalidPipeline(format!(
+                        "classifier crop_from must be 'detector', got '{other}'"
+                    )));
+                }
+            },
+        }
 
         steps.push(PipelineStep {
             role,
@@ -3434,6 +3553,110 @@ model = "megadet"
         assert!(matches!(err, SparrowEngineError::WrongManifestType));
     }
 
+    fn classifier_with_crop(crop: &str) -> tempfile::TempDir {
+        let toml = format!(
+            r#"
+[model]
+id = "crop-classifier"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [224, 224]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "softmax"
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+
+{crop}
+"#
+        );
+        write_temp_file("manifest.toml", &toml)
+    }
+
+    #[test]
+    fn test_crop_config_parses_for_image_classifier() {
+        let dir = classifier_with_crop(
+            r#"[crop]
+window = "truncate_extent"
+expand_pixels = 3
+batch_size = 4"#,
+        );
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(
+            manifest.crop,
+            Some(CropConfig {
+                window: CropWindow::TruncateExtent,
+                expand_pixels: 3,
+                batch_size: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn test_crop_config_defaults_and_absence() {
+        let dir = classifier_with_crop("[crop]");
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(manifest.crop, Some(CropConfig::default()));
+
+        let dir = classifier_with_crop("");
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(manifest.crop, None);
+    }
+
+    #[test]
+    fn test_crop_config_rejects_unknown_window_and_batch_bounds() {
+        let dir = classifier_with_crop(
+            r#"[crop]
+window = "epsilon_snap""#,
+        );
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("Unknown crop window"));
+
+        for batch_size in [0, MAX_CROP_BATCH_SIZE + 1] {
+            let dir = classifier_with_crop(&format!("[crop]\nbatch_size = {batch_size}"));
+            let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+            assert!(err.to_string().contains("batch_size must be"));
+        }
+    }
+
+    #[test]
+    fn test_crop_config_rejects_detector_manifest() {
+        let toml = r#"
+[model]
+id = "detector"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "letterbox"
+input_size = [640, 640]
+layout = "nchw"
+normalization = "unit"
+
+[inference]
+strategy = "single"
+
+[postprocessing]
+method = "yolo_e2e"
+
+[crop]
+window = "truncate_extent"
+"#;
+        let dir = write_temp_file("manifest.toml", toml);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("only valid on image classifiers"));
+    }
+
     // -- Pipeline manifest tests --
 
     #[test]
@@ -3459,6 +3682,33 @@ crop_from = "detector"
         assert_eq!(pipeline.steps[0].role, PipelineRole::Detector);
         assert_eq!(pipeline.steps[0].model, "megadetector-v6-yolov9c");
         assert_eq!(pipeline.steps[1].role, PipelineRole::Classifier);
+    }
+
+    #[test]
+    fn test_pipeline_classifier_crop_from_accepts_default_and_validates() {
+        let toml = r#"
+[pipeline]
+id = "default-crop-source"
+
+[[pipeline.steps]]
+role = "detector"
+model = "detector"
+
+[[pipeline.steps]]
+role = "classifier"
+model = "classifier"
+"#;
+        let dir = write_temp_file("pipeline.toml", toml);
+        let pipeline = load_pipeline_manifest(&dir.path().join("pipeline.toml")).unwrap();
+        assert_eq!(pipeline.steps[1].role, PipelineRole::Classifier);
+
+        let invalid = toml.replace(
+            "model = \"classifier\"",
+            "model = \"classifier\"\ncrop_from = \"other\"",
+        );
+        let dir = write_temp_file("pipeline.toml", &invalid);
+        let err = load_pipeline_manifest(&dir.path().join("pipeline.toml")).unwrap_err();
+        assert!(err.to_string().contains("crop_from must be 'detector'"));
     }
 
     #[test]

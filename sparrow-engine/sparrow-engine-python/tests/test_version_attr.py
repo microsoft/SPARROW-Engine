@@ -35,6 +35,18 @@ def test_version_listed_in__all__() -> None:
     assert "__version__" in sparrow_engine.__all__
 
 
+def test_pipeline_detail_types_are_public() -> None:
+    """Detailed pipeline fields use importable public result types."""
+    for name in (
+        "PipelineCropRegion",
+        "PipelineFailure",
+        "PipelineProvenance",
+        "PipelineStageProvenance",
+    ):
+        assert name in sparrow_engine.__all__
+        assert getattr(sparrow_engine, name) is not None
+
+
 def test_version_shape_is_pep440_or_unknown() -> None:
     """Version must be either a PEP-440-shaped string or the fallback `"unknown"`.
 

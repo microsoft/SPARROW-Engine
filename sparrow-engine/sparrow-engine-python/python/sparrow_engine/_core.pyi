@@ -76,15 +76,39 @@ class EmbedResult:
     processing_time_ms: float
     def __len__(self) -> int: ...
 
+class PipelineCropRegion:
+    bbox: BBox
+    width_px: int
+    height_px: int
+    coordinate_source: str
+
+class PipelineFailure:
+    stage: str
+    code: str
+    model_id: Optional[str]
+    message: str
+
+class PipelineStageProvenance:
+    model_id: str
+    model_version: Optional[str]
+    model_hash: Optional[str]
+
+class PipelineProvenance:
+    detector: PipelineStageProvenance
+    classifier: Optional[PipelineStageProvenance]
+
 class PipelineDetection:
     detection: Detection
     classification: Optional[Classification]
+    crop: Optional[PipelineCropRegion]
+    failure: Optional[PipelineFailure]
 
 class PipelineResult:
     pipeline_id: str
     image_size: tuple[int, int]
     processing_time_ms: float
     detections: list[PipelineDetection]
+    stage_provenance: PipelineProvenance
     def __len__(self) -> int: ...
 
 class AudioClass:
@@ -177,11 +201,12 @@ class PyEngine:
     def pipeline(
         self,
         paths: list[str],
-        detector: str,
-        classifier: str,
+        detector: Optional[str] = None,
+        classifier: Optional[str] = None,
         threshold: Optional[float] = None,
         top_k: Optional[int] = None,
         progress_callback: Optional[_ProgressCallback] = None,
+        pipeline_id: Optional[str] = None,
     ) -> list[PipelineResult]: ...
     def list_models(self) -> list[ModelInfo]: ...
     def model_info(self, model_id: str) -> ModelInfo: ...

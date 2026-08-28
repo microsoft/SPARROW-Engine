@@ -2632,6 +2632,7 @@ dependencies = [
  "ndarray",
  "realfft",
  "rubato",
+ "serde",
  "serde_json",
  "sha2",
  "sparrow-engine-types",

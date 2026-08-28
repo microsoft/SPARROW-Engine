@@ -26,12 +26,8 @@ fn types_reexports_resolve_at_crate_root() {
         x_max: 1.0,
         y_max: 1.0,
     };
-    let _det: sparrow_engine::Detection = sparrow_engine::Detection {
-        bbox: _bbox,
-        label: "animal".to_string(),
-        label_id: 1,
-        confidence: 0.9,
-    };
+    let _det: sparrow_engine::Detection =
+        sparrow_engine::Detection::new(_bbox, "animal".to_string(), 1, 0.9);
     let _detr: sparrow_engine::DetectResult = sparrow_engine::DetectResult {
         detections: vec![],
         image_width: 0,
@@ -55,6 +51,14 @@ fn types_reexports_resolve_at_crate_root() {
         image_width: 0,
         image_height: 0,
         processing_time_ms: 0.0,
+        stage_provenance: sparrow_engine::PipelineProvenance {
+            detector: sparrow_engine::PipelineStageProvenance {
+                model_id: "detector".to_string(),
+                model_version: None,
+                model_hash: None,
+            },
+            classifier: None,
+        },
     };
 
     // Enums

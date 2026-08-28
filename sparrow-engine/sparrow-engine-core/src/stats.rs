@@ -163,17 +163,17 @@ mod tests {
     }
 
     fn make_det(label: &str, confidence: f32) -> Detection {
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: 0.0,
                 y_min: 0.0,
                 x_max: 0.5,
                 y_max: 0.5,
             },
-            label: label.to_string(),
-            label_id: 0,
+            label.to_string(),
+            0,
             confidence,
-        }
+        )
     }
 
     #[test]
@@ -351,17 +351,17 @@ mod phase_a_r1_stats {
     use sparrow_engine_types::{BBox, Detection};
 
     fn det(label: &str, conf: f32) -> Detection {
-        Detection {
-            bbox: BBox {
+        Detection::new(
+            BBox {
                 x_min: 0.0,
                 y_min: 0.0,
                 x_max: 0.5,
                 y_max: 0.5,
             },
-            label: label.to_string(),
-            label_id: 0,
-            confidence: conf,
-        }
+            label.to_string(),
+            0,
+            conf,
+        )
     }
 
     fn result(dets: Vec<Detection>) -> sparrow_engine_types::DetectResult {
