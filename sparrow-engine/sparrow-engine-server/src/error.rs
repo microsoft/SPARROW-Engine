@@ -128,10 +128,14 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         InvalidPipeline(_) => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_PIPELINE"),
         IncompatiblePipeline { .. } => (StatusCode::BAD_REQUEST, "INCOMPATIBLE_PIPELINE"),
         EmptyPipeline => (StatusCode::BAD_REQUEST, "EMPTY_PIPELINE"),
+        // Audio frame ensembles
+        AudioEnsembleNotFound { .. } => (StatusCode::NOT_FOUND, "AUDIO_ENSEMBLE_NOT_FOUND"),
+        InvalidAudioEnsemble(_) => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_AUDIO_ENSEMBLE"),
         // Manifest validation
         MissingTiledFields => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_MANIFEST"),
         WrongManifestType => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_MANIFEST"),
         WrongPipelineType => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_MANIFEST"),
+        WrongAudioEnsembleType => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_AUDIO_ENSEMBLE"),
         // Audio
         AudioDecode(_) => (StatusCode::UNPROCESSABLE_ENTITY, "AUDIO_DECODE_ERROR"),
         AudioPreprocess(_) => (StatusCode::UNPROCESSABLE_ENTITY, "AUDIO_PREPROCESS_ERROR"),

@@ -736,7 +736,7 @@ $ spe classify crops/*.jpg \
 
 ---
 
-### 5.3 `spe detect-audio` — sliding-window audio detection
+### 5.3 `spe detect-audio` — audio detection and frame ensembles
 
 ```
 $ spe detect-audio recordings/*.wav \
@@ -747,16 +747,20 @@ $ spe detect-audio recordings/*.wav \
 
 **Why**: detect birds (or other audio classes) in WAV recordings.
 **What**: by default, **merged time ranges** `{start_time_s, end_time_s, max_confidence, class}`. Multi-label models merge each class independently, so secondary labels are not discarded. With `--raw-segments`, JSON includes every above-threshold class; multi-label CSV emits one row per segment/class pair.
-**How**: sparrow-engine decodes WAV, runs either the engine mel front end or a raw-audio ONNX graph, then applies the manifest's binary sigmoid, multi-class softmax, or thresholded multi-label policy.
+**How**: sparrow-engine decodes WAV and runs either the engine mel front end, a
+raw-audio ONNX graph, or a recording-level frame ensemble. Frame ensembles own
+cached spectrogram preprocessing, per-member temporal phases, global frame
+stitching, and optional auxiliary score-map merging.
 
 | Flag | What |
 |------|------|
-| `--model <id>` | Audio model. Catalog includes `md-audiobirds-v1` (default binary bird detector), `perch-v2` (14795-class bird species classifier), `orca-detector-dclde2026-v5` (DCLDE 2026 Stage 1 orca screener), `orca-ecotype-dclde2026-v1` (DCLDE 2026 Stage 2 ecotype classifier). |
+| `--model <id>` | Audio model. Catalog includes `md-audiobirds-v1` (default binary bird detector), `perch-v2` (14795-class bird species classifier), `orca-detector-dclde2026-v5` (DCLDE 2026 Stage 1 orca screener), and `orca-ecotype-dclde2026-v1` (DCLDE 2026 Stage 2 ecotype classifier). Locally installed frame ensembles use the same flag. |
 | `--threshold <f>` | Binary-detection or per-class multi-label threshold. Softmax classifiers ignore it. |
 | `--raw-segments` | Emit pre-merge per-window rows. |
 | `--visualize --output-dir <dir>` | Render spectrogram + confidence heatmap PNGs. |
 | `--smooth` | Apply Gaussian blur to the heatmap visualization. |
 | `--show-windows` | Add the per-window placement diagnostic band. |
+| `--stride` / `--segment-duration` | Runtime overrides for ordinary sliding-window models. Recording-level frame ensembles reject them because member phases are fixed by `ensemble.toml`. |
 
 **Cite**: `sparrow-engine/sparrow-engine-cli/src/main.rs:206-254`.
 
@@ -847,7 +851,7 @@ the detector then (only when positive) the ecotype.
 
 | Flag | What |
 |------|------|
-| `--model-dir <path>` | Model catalog dir (`{model_dir}/{id}/manifest.toml` + `{pipeline}/pipeline.toml`). |
+| `--model-dir <path>` | Model catalog dir (`{model_dir}/{id}/manifest.toml`, `ensemble.toml`, or `{pipeline}/pipeline.toml`). |
 | `--pipeline <id>` | Pipeline id to load + run (default `orca-cascade`). |
 | `--threads <N>` | LiteRT CPU threads (default 4; 0 = LiteRT default). |
 | `--window-sec` / `--overlap-sec` | Sliding-window length / overlap (default: pipeline manifest values). |
@@ -1286,7 +1290,10 @@ DELETE /v1/pipelines/{id}  → remove an alias
 
 **Why**: Phase 4.2 made the server boot fast (no eager model load) and added alias management so consumers can register pipelines at runtime.
 **What**: catalog discovery + lazy load + runtime alias CRUD.
-**How**: discovery scans `SPARROW_ENGINE_MODEL_DIR/<id>/manifest.toml` at boot; models load on first inference request (or on explicit `POST /v1/models/load`); `SPARROW_ENGINE_PRELOAD=id1,id2` restores explicit eager load.
+**How**: discovery scans `SPARROW_ENGINE_MODEL_DIR/<id>/manifest.toml` and
+`ensemble.toml` at boot; models load on first inference request (or on explicit
+`POST /v1/models/load`); `SPARROW_ENGINE_PRELOAD=id1,id2` restores explicit
+eager load.
 
 **Cite**: `docs/master_plan.md § Phase 4.2`; `sparrow-engine/sparrow-engine-server/src/handlers/{catalog,models,pipelines_mgmt}.rs`.
 
@@ -1524,15 +1531,24 @@ $MODEL_DIR/                       (SPARROW_ENGINE_MODEL_DIR)
 │   ├── ...                                                                            
 ├── mdv6-speciesnet/
 │   └── pipeline.toml             (named pipeline alias)                               
+├── bird-frame-ensemble/
+│   ├── ensemble.toml             (recording-level audio frame ensemble)
+│   ├── *.onnx                    (member graphs)
+│   ├── *-window.f32              (pinned frontend windows)
+│   ├── *-filterbank.f32          (pinned frontend filterbanks)
+│   └── labels.txt
 └── ...                                                                                
 
-Sparrow Engine discovers each directory whose name matches the manifest's `[model] id`.
+Sparrow Engine discovers each directory whose name matches the descriptor's id.
 Mismatch → directory skipped + tracing::warn.                                          
 ```
 
 **Why**: Sparrow Engine is model-agnostic. Onboarding a new model = writing a manifest, not patching the engine.
-**What**: a directory-per-model convention; one TOML file per model; optional pipeline TOMLs at the same level.
-**How**: at boot, sparrow-engine-server scans `SPARROW_ENGINE_MODEL_DIR` and parses every `manifest.toml` / `pipeline.toml`; CLI/Python honor `--model-dir` / `init(model_dir=)`.
+**What**: a directory-per-model convention; one model or ensemble TOML per
+model; optional pipeline TOMLs at the same level.
+**How**: at boot, sparrow-engine-server scans `SPARROW_ENGINE_MODEL_DIR` and
+parses every `manifest.toml`, `ensemble.toml`, and `pipeline.toml`; CLI/Python
+honor `--model-dir` / `init(model_dir=)`.
 
 **Cite**: `sparrow-engine/sparrow-engine-server/src/discover.rs`; `sparrow-engine/models/*.toml`.
 
@@ -1647,7 +1663,78 @@ The section affects pipeline crops only; standalone classification is unchanged.
 
 ---
 
-### 10.3 Catalog at a glance (production set)
+### 10.3 Recording-level audio frame ensembles
+
+`ensemble.toml` describes an audio model made from several independently
+scheduled frame-output graphs. It is a separate manifest kind because one
+logical model owns multiple ONNX sessions and shared preprocessing assets.
+
+```toml
+[ensemble]
+id = "bird-frame-ensemble"
+kind = "audio_frame_ensemble"
+frame_rate_hz = 4.0
+frames_per_window = 12
+class_count = 388
+confidence_threshold = 0.7
+max_classes = 388
+inference_batch_size = 200
+combine = "mean"
+labels_file = "labels.txt"
+labels_sha256 = "..."
+
+[frontend]
+sample_rate = 28000
+n_fft = 3248
+win_length = 1624
+hop_length = 218
+filter_rows = 192
+filter_columns = 1625
+chunk_samples = 252000
+chunk_columns = 1152
+window_duration_s = 3.0
+window_columns = 384
+min_coverage_columns = 128
+audio_power = 0.7
+channel_selection = "lower_spectrogram_energy"
+channel_check_seconds = 6.0
+short_window = "stop"
+window_file = "main-window.f32"
+window_sha256 = "..."
+filterbank_file = "main-filterbank.f32"
+filterbank_sha256 = "..."
+
+[[member]]
+id = "01-bk5"
+file = "01-bk5.onnx"
+sha256 = "..."
+size_bytes = 23155685
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+offset_s = 0.0
+lead_window = false
+```
+
+Each member emits `[batch, frames, classes]` calibrated probabilities. Sparrow
+Engine computes the cached spectrogram once, slices each member's phased
+windows, stitches each member onto a global frame grid using float64
+accumulation, then combines complete grids. An optional `[auxiliary]` model can
+use a second frontend and merge selected labels by name with `operation =
+"max"`. With `short_window = "stop"`, an insufficient non-negative tail ends
+that member's schedule; an insufficient prepended negative lead is skipped so
+later windows still run.
+
+Both CPU and GPU flavors use the same CPU cached-spectrogram implementation;
+the GPU flavor runs member ONNX sessions through the CUDA execution provider.
+The public output remains `AudioDetectResult`. Frame-ensemble scheduling is
+fixed, so runtime stride and segment-duration overrides return an error.
+
+**Cite**: `sparrow-engine/sparrow-engine-types/src/audio_ensemble.rs`;
+`sparrow-engine/sparrow-engine-core/src/{cached_spectrogram,audio_ensemble,frame_grid}.rs`.
+
+---
+
+### 10.4 Catalog at a glance (production set)
 
 | Model ID | Type | Resolution | Default precision |
 |----------|------|------------|-------------------|
@@ -1668,7 +1755,7 @@ The section affects pipeline crops only; standalone classification is unchanged.
 
 ---
 
-### 10.4 Pipeline manifests
+### 10.5 Pipeline manifests
 
 ```toml
 [pipeline]                        
@@ -1691,13 +1778,14 @@ model = "SpeciesNet-Crop"
 
 ---
 
-### 10.5 Onboarding a new model — the checklist
+### 10.6 Onboarding a new model — the checklist
 
 1. Export to ONNX with **NCHW** layout (use `tf2onnx --inputs-as-nchw` if upstream is NHWC).
 2. Confirm NMS is **inside** the graph (detectors). Run `onnxsim` to make sure.
 3. Place under `$MODEL_DIR/<your-id>/<files>`.
-4. Write `manifest.toml` with the schema above; the directory name MUST equal `[model] id`.
-5. Compute SHA-256 of the ONNX file; put it in `manifest.toml`.
+4. Write `manifest.toml` for one graph or `ensemble.toml` for a recording-level
+   frame ensemble; the directory name MUST equal the descriptor id.
+5. Compute SHA-256 for every model and frontend asset; put each hash in the descriptor.
 6. Validate: `spe models verify` (CLI) or `sparrow_engine.verify_model("<id>")` (Python). If the hash drifts, you have a transit corruption.
 7. Smoke test: `spe detect <one-image>.jpg --model <your-id>`.
 8. If audio, smoke `spe detect-audio <one-clip>.wav --model <your-id>`.
@@ -1849,7 +1937,7 @@ sparrow-engine (engine):                sparrow-data (deferred sibling):
                     Server boot (cold)                                                                                  
                             │                                                                                           
                             │  Phase 4.2 contract:                                                                      
-                            │    1. Scan SPARROW_ENGINE_MODEL_DIR/<id>/manifest.toml → Catalog                          
+                            │    1. Scan <id>/{manifest,ensemble}.toml → Catalog
                             │    2. Bind TCP listener                                                                   
                             │    3. Become ready (GET /v1/health → "no_models")                                         
                             │    4. DO NOT load any ORT sessions yet                                                    

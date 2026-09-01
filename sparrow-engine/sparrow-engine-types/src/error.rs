@@ -126,6 +126,13 @@ pub enum SparrowEngineError {
     #[error("Pipeline must contain at least one model")]
     EmptyPipeline,
 
+    // -- Audio frame ensembles --
+    #[error("Audio frame ensemble '{id}' not found")]
+    AudioEnsembleNotFound { id: String },
+
+    #[error("Invalid audio frame ensemble manifest: {0}")]
+    InvalidAudioEnsemble(String),
+
     // -- Manifest validation --
     #[error("Tiled strategy requires 'tile_size' and 'tile_overlap' fields")]
     MissingTiledFields,
@@ -135,6 +142,11 @@ pub enum SparrowEngineError {
 
     #[error("Expected pipeline manifest ([pipeline] section), found model manifest")]
     WrongPipelineType,
+
+    #[error(
+        "Expected audio frame ensemble manifest ([ensemble] section), found another manifest type"
+    )]
+    WrongAudioEnsembleType,
 
     // -- Audio --
     #[error("Failed to decode audio: {0}")]

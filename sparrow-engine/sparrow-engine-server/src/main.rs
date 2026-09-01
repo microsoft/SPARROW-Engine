@@ -119,7 +119,7 @@ async fn run_server() {
         }
     };
     for model_id in preload_ids {
-        if let Err(e) = engine.get_or_load_model(&model_id) {
+        if let Err(e) = engine.get_or_load_audio_model(&model_id) {
             // A model that is in the catalog but cannot load in THIS server
             // flavor (e.g. a TFLite id on the desktop ORT server) is a known
             // deployment limitation, not a user error — skip it with a warning

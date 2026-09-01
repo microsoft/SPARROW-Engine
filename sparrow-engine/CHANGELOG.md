@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added manifest-driven recording-level audio frame ensembles on CPU and GPU.
+  `ensemble.toml` can pin cached centered-STFT assets, schedule independently
+  phased member graphs, stitch calibrated frame maps, average complete member
+  grids, and merge an auxiliary frame map by label name. CLI, Python, HTTP,
+  catalog discovery, lazy loading, idle unloading, verification, and the
+  existing C audio functions accept the new model kind without changing
+  `AudioDetectResult` or the 39-symbol native ABI.
 - Added a classifier-owned `[crop]` manifest contract for detector-to-classifier
   pipelines. It preserves legacy edge rounding by default and adds exact
   DeepForest `truncate_extent` windows, context expansion, CPU/GPU crop
@@ -26,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multi-label CLI range merging now uses half a frame as the adjacency
+  threshold, so a below-threshold frame remains a real gap instead of being
+  merged across by the previous `frame_duration + 1 ms` rule.
+- Recording-level audio ensembles use an aligned high-quality sinc resampler
+  for source-rate WAV input; retaining the startup delay matches the frame
+  alignment used by BriteKit's librosa/SoXR decode path.
 - Resize-plus-center-crop preprocessing now uses torchvision's ties-to-even
   center offset instead of integer floor. Odd resize/crop differences no
   longer shift the crop by one pixel on CPU or GPU. GPU bicubic

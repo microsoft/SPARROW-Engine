@@ -78,7 +78,7 @@ unsafe impl Sync for LoadedModel {}
 pub(crate) struct EngineInner {
     /// Session builder template — cloned per `load_model` call so each session
     /// inherits the same EP and thread config.
-    session_builder: Mutex<ort::session::builder::SessionBuilder>,
+    pub(crate) session_builder: Mutex<ort::session::builder::SessionBuilder>,
     /// Engine configuration snapshot.
     pub(crate) config: EngineConfig,
     /// Device after resolving `Device::Auto` via ORT EP availability check.
@@ -103,11 +103,13 @@ pub struct Engine {
     pub(crate) models: RwLock<HashMap<String, LoadedModel>>,
     /// Registered pipeline configs, keyed by pipeline ID.
     pub(crate) pipelines: Mutex<HashMap<String, PipelineManifest>>,
+    /// Loaded recording-level audio frame ensembles, keyed by ensemble ID.
+    pub(crate) audio_ensembles: RwLock<HashMap<String, crate::audio_ensemble::LoadedAudioEnsemble>>,
     /// Serializes first-load operations to prevent TOCTOU double-load race.
     /// Coarse-grained (all model IDs share one lock) because `session_builder`
     /// is already globally serialized — per-model locks would add complexity
     /// for zero throughput gain.
-    loading_lock: Mutex<()>,
+    pub(crate) loading_lock: Mutex<()>,
 }
 
 // Safety: All non-Send/Sync ORT types (SessionBuilder, Session) are wrapped
@@ -191,6 +193,7 @@ impl Engine {
             }),
             models: RwLock::new(HashMap::new()),
             pipelines: Mutex::new(HashMap::new()),
+            audio_ensembles: RwLock::new(HashMap::new()),
             loading_lock: Mutex::new(()),
         })
     }
@@ -268,6 +271,12 @@ impl Engine {
         // Parse and validate manifest (handles file existence check, format
         // validation, tiled field validation, label path traversal check).
         let manifest = manifest::load_manifest(manifest_path)?;
+        if self.get_audio_ensemble_handle(&manifest.id).is_some() {
+            return Err(SparrowEngineError::InvalidAudioEnsemble(format!(
+                "model id '{}' is already loaded as an audio frame ensemble",
+                manifest.id
+            )));
+        }
 
         // Flavor-strict: the cpu/gpu flavors run ONNX models via ORT. The shared
         // loader now also accepts `tflite` manifests (for the mobile LiteRT
@@ -482,6 +491,45 @@ impl Engine {
         }
     }
 
+    fn unload_idle_audio_ensemble_snapshot(
+        &self,
+        model_id: &str,
+        snapshot_last_used: u64,
+        snapshot_active: &Arc<AtomicBool>,
+        now: u64,
+        idle_threshold_millis: u64,
+    ) -> bool {
+        let mut ensembles = match self.audio_ensembles.write() {
+            Ok(ensembles) => ensembles,
+            Err(_) => return false,
+        };
+        let should_remove = match ensembles.get(model_id) {
+            Some(entry) => {
+                let current_last_used = entry.last_used.load(Ordering::Relaxed);
+                if !reaper_snapshot_still_matches(
+                    snapshot_active,
+                    &entry.active,
+                    snapshot_last_used,
+                    current_last_used,
+                    now,
+                    idle_threshold_millis,
+                ) {
+                    false
+                } else {
+                    entry.active.store(false, Ordering::Release);
+                    true
+                }
+            }
+            None => false,
+        };
+        if should_remove {
+            ensembles.remove(model_id);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Reap idle models: unload anything whose `last_used` is older than
     /// `idle_threshold_millis`, EXCEPT the `keep_last_n` most-recently-used.
     /// Returns the list of unloaded model IDs (for logging by the caller).
@@ -492,7 +540,7 @@ impl Engine {
     pub fn reap_idle_models(&self, idle_threshold_millis: u64, keep_last_n: usize) -> Vec<String> {
         let now = now_millis();
         // Snapshot (id, last_used, generation) under read lock.
-        let snapshot: Vec<(String, u64, Arc<AtomicBool>)> = {
+        let mut snapshot: Vec<(String, u64, Arc<AtomicBool>, bool)> = {
             let models = self.models.read().expect("models lock poisoned");
             models
                 .iter()
@@ -502,10 +550,26 @@ impl Engine {
                         id.clone(),
                         m.last_used.load(Ordering::Relaxed),
                         Arc::clone(&m.active),
+                        false,
                     )
                 })
                 .collect()
         };
+        if let Ok(ensembles) = self.audio_ensembles.read() {
+            snapshot.extend(
+                ensembles
+                    .iter()
+                    .filter(|(_, ensemble)| ensemble.active.load(Ordering::Acquire))
+                    .map(|(id, ensemble)| {
+                        (
+                            id.clone(),
+                            ensemble.last_used.load(Ordering::Relaxed),
+                            Arc::clone(&ensemble.active),
+                            true,
+                        )
+                    }),
+            );
+        }
         if snapshot.is_empty() {
             return Vec::new();
         }
@@ -516,8 +580,19 @@ impl Engine {
         // The top `keep_last_n` are protected regardless of idle age.
         // The rest are candidates if they're stale enough.
         let mut unloaded = Vec::new();
-        for (id, last_used, active) in sorted.into_iter().skip(keep_last_n) {
-            if self.unload_idle_snapshot(&id, last_used, &active, now, idle_threshold_millis) {
+        for (id, last_used, active, is_ensemble) in sorted.into_iter().skip(keep_last_n) {
+            let removed = if is_ensemble {
+                self.unload_idle_audio_ensemble_snapshot(
+                    &id,
+                    last_used,
+                    &active,
+                    now,
+                    idle_threshold_millis,
+                )
+            } else {
+                self.unload_idle_snapshot(&id, last_used, &active, now, idle_threshold_millis)
+            };
+            if removed {
                 unloaded.push(id);
             }
         }
@@ -622,7 +697,7 @@ impl Engine {
     /// List all loaded models (ID, path, type).
     pub fn loaded_models(&self) -> Vec<ModelInfo> {
         let models = self.models.read().expect("models lock poisoned");
-        models
+        let mut info: Vec<ModelInfo> = models
             .values()
             .filter(|m| m.active.load(Ordering::Acquire))
             .map(|m| ModelInfo {
@@ -655,7 +730,10 @@ impl Engine {
                 },
                 embedding_metric: m.manifest.embedding_metric,
             })
-            .collect()
+            .collect();
+        drop(models);
+        info.extend(self.loaded_audio_ensemble_info());
+        info
     }
 
     /// Lazy model loading: return cached handle if loaded, otherwise load by ID.
@@ -866,6 +944,12 @@ impl Drop for Engine {
         }
         if let Ok(mut pipelines) = self.pipelines.lock() {
             pipelines.clear();
+        }
+        if let Ok(mut ensembles) = self.audio_ensembles.write() {
+            for ensemble in ensembles.values() {
+                ensemble.active.store(false, Ordering::Release);
+            }
+            ensembles.clear();
         }
         std::mem::forget(Arc::clone(&self.inner));
         ENGINE_EXISTS.store(false, Ordering::SeqCst);

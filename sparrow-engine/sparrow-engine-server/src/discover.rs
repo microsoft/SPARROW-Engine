@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine_dispatch::manifest::{self, PipelineManifest, PipelineRole};
-use crate::engine_dispatch::{derive_model_type, resolve_trt_mode, ModelInfo, TrtMode};
+use crate::engine_dispatch::{
+    derive_model_type, load_audio_ensemble_manifest, resolve_trt_mode, ModelInfo, ModelType,
+    TrtMode,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
@@ -165,6 +168,77 @@ pub fn discover_catalog(model_dir: &Path) -> Catalog {
         if !entry.is_dir {
             continue;
         }
+        let ensemble_path = entry.path.join("ensemble.toml");
+        if !ensemble_path.is_file() {
+            continue;
+        }
+        if entry.path.join("manifest.toml").is_file() {
+            tracing::error!(
+                path = %ensemble_path.display(),
+                "audio ensemble collides with model manifest directory; excluding from catalog"
+            );
+            continue;
+        }
+        match load_audio_ensemble_manifest(&ensemble_path) {
+            Ok(ensemble) => {
+                let entry_id = entry
+                    .path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                if ensemble.id != entry_id {
+                    tracing::warn!(
+                        model_id = %ensemble.id,
+                        entry = %entry_id,
+                        path = %ensemble_path.display(),
+                        "audio ensemble id must match catalog directory; excluding from catalog"
+                    );
+                    continue;
+                }
+                catalog
+                    .model_formats
+                    .insert(ensemble.id.clone(), "onnx".to_string());
+                catalog.trt_modes.insert(ensemble.id.clone(), TrtMode::Off);
+                if ensemble.catalog_metadata != manifest::CatalogMetadata::default() {
+                    catalog
+                        .catalog_metadata
+                        .insert(ensemble.id.clone(), ensemble.catalog_metadata.clone());
+                }
+                if let Some(provenance) = ensemble.provenance.clone() {
+                    catalog.provenance.insert(ensemble.id.clone(), provenance);
+                }
+                catalog.models.insert(
+                    ensemble.id.clone(),
+                    ModelInfo {
+                        id: ensemble.id,
+                        path: ensemble_path,
+                        model_type: ModelType::AudioClassifier,
+                        default: ensemble.default,
+                        version: ensemble.version,
+                        description: ensemble.description,
+                        onnx_sha256: None,
+                        onnx_size_bytes: None,
+                        embedding_version: None,
+                        embedding_dim: None,
+                        normalized: None,
+                        embedding_metric: None,
+                    },
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    path = %ensemble_path.display(),
+                    error = %error,
+                    "failed to parse audio ensemble; excluding from catalog"
+                );
+            }
+        }
+    }
+
+    for entry in &entries {
+        if !entry.is_dir {
+            continue;
+        }
         let pipeline_path = entry.path.join("pipeline.toml");
         if !pipeline_path.is_file() {
             continue;
@@ -224,7 +298,7 @@ fn is_simple_catalog_id(id: &str) -> bool {
 fn pipeline_dir_has_model_manifest(pipeline_path: &Path) -> bool {
     pipeline_path
         .parent()
-        .map(|dir| dir.join("manifest.toml").is_file())
+        .map(|dir| dir.join("manifest.toml").is_file() || dir.join("ensemble.toml").is_file())
         .unwrap_or(false)
 }
 

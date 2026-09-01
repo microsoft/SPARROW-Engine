@@ -303,9 +303,12 @@ pub struct Engine {
     pub(crate) models: Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
     /// Registered pipeline configs, keyed by pipeline ID.
     pub(crate) pipelines: Mutex<HashMap<String, PipelineManifest>>,
+    /// Loaded recording-level audio frame ensembles, keyed by ensemble ID.
+    pub(crate) audio_ensembles:
+        Arc<RwLock<HashMap<String, crate::audio_ensemble::LoadedAudioEnsemble>>>,
     /// Serializes first-load operations to prevent TOCTOU double-load
     /// race in [`Engine::get_or_load_model`]. Mirrors `sparrow-engine-cpu`.
-    loading_lock: Mutex<()>,
+    pub(crate) loading_lock: Mutex<()>,
     trt_build_gate: Arc<Mutex<()>>,
     trt_warmup_threads: Mutex<HashMap<String, std::thread::JoinHandle<()>>>,
     trt_hw_capable: bool,
@@ -780,6 +783,7 @@ impl Engine {
             inner: Arc::new(inner),
             models: Arc::new(RwLock::new(HashMap::new())),
             pipelines: Mutex::new(HashMap::new()),
+            audio_ensembles: Arc::new(RwLock::new(HashMap::new())),
             loading_lock: Mutex::new(()),
             trt_build_gate: Arc::new(Mutex::new(())),
             trt_warmup_threads: Mutex::new(HashMap::new()),
@@ -814,6 +818,12 @@ impl Engine {
     pub fn load_model(&self, path: impl AsRef<Path>) -> Result<ModelHandle> {
         let manifest_path = path.as_ref();
         let manifest_owned = manifest::load_manifest(manifest_path)?;
+        if self.get_audio_ensemble_handle(&manifest_owned.id).is_some() {
+            return Err(SparrowEngineError::InvalidAudioEnsemble(format!(
+                "model id '{}' is already loaded as an audio frame ensemble",
+                manifest_owned.id
+            )));
+        }
 
         // Flavor-strict: the gpu flavor runs ONNX models via ORT. The shared loader
         // now also accepts `tflite` manifests (for the mobile LiteRT flavor); reject
@@ -996,13 +1006,52 @@ impl Engine {
         }
     }
 
+    fn unload_idle_audio_ensemble_snapshot(
+        &self,
+        model_id: &str,
+        snapshot_last_used: u64,
+        snapshot_active: &Arc<AtomicBool>,
+        now: u64,
+        idle_threshold_millis: u64,
+    ) -> Result<bool> {
+        let mut ensembles = self
+            .audio_ensembles
+            .write()
+            .map_err(|_| SparrowEngineError::Ort("audio_ensembles lock poisoned".into()))?;
+        let should_remove = match ensembles.get(model_id) {
+            Some(entry) => {
+                let current_last_used = entry.last_used.load(Ordering::Relaxed);
+                if !reaper_snapshot_still_matches(
+                    snapshot_active,
+                    &entry.active,
+                    snapshot_last_used,
+                    current_last_used,
+                    now,
+                    idle_threshold_millis,
+                ) {
+                    false
+                } else {
+                    entry.active.store(false, Ordering::Release);
+                    true
+                }
+            }
+            None => false,
+        };
+        if should_remove {
+            ensembles.remove(model_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Reap idle models: unload anything whose `last_used` is older than
     /// `idle_threshold_millis`, EXCEPT the `keep_last_n` most-recently-used.
     /// Returns the list of unloaded model IDs (for logging by the caller).
     /// Mirrors `sparrow-engine-cpu::Engine::reap_idle_models`.
     pub fn reap_idle_models(&self, idle_threshold_millis: u64, keep_last_n: usize) -> Vec<String> {
         let now = now_millis();
-        let snapshot: Vec<(String, u64, Arc<AtomicBool>)> = {
+        let mut snapshot: Vec<(String, u64, Arc<AtomicBool>, bool)> = {
             let models = match self.models.read() {
                 Ok(m) => m,
                 Err(_) => return Vec::new(),
@@ -1015,20 +1064,45 @@ impl Engine {
                         id.clone(),
                         m.last_used.load(Ordering::Relaxed),
                         Arc::clone(&m.active),
+                        false,
                     )
                 })
                 .collect()
         };
+        if let Ok(ensembles) = self.audio_ensembles.read() {
+            snapshot.extend(
+                ensembles
+                    .iter()
+                    .filter(|(_, ensemble)| ensemble.active.load(Ordering::Acquire))
+                    .map(|(id, ensemble)| {
+                        (
+                            id.clone(),
+                            ensemble.last_used.load(Ordering::Relaxed),
+                            Arc::clone(&ensemble.active),
+                            true,
+                        )
+                    }),
+            );
+        }
         if snapshot.is_empty() {
             return Vec::new();
         }
         let mut sorted = snapshot;
         sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         let mut unloaded = Vec::new();
-        for (id, last_used, active) in sorted.into_iter().skip(keep_last_n) {
-            if let Ok(true) =
+        for (id, last_used, active, is_ensemble) in sorted.into_iter().skip(keep_last_n) {
+            let removed = if is_ensemble {
+                self.unload_idle_audio_ensemble_snapshot(
+                    &id,
+                    last_used,
+                    &active,
+                    now,
+                    idle_threshold_millis,
+                )
+            } else {
                 self.unload_idle_snapshot(&id, last_used, &active, now, idle_threshold_millis)
-            {
+            };
+            if matches!(removed, Ok(true)) {
                 unloaded.push(id);
             }
         }
@@ -1060,6 +1134,21 @@ impl Engine {
 
     fn trt_warmup_gate(&self, id: &str) -> Result<ModelManifest> {
         sparrow_engine_core::catalog::validate_model_id(id)?;
+        if self
+            .inner
+            .config
+            .model_dir
+            .join(id)
+            .join("ensemble.toml")
+            .try_exists()?
+        {
+            return Err(SparrowEngineError::TrtWarmupRejected(
+                TrtWarmupRejection::NotEligible(
+                    "audio frame ensembles use multiple CUDA sessions and do not support a single TensorRT warm-up target"
+                        .to_string(),
+                ),
+            ));
+        }
         let manifest = {
             let models = self
                 .models
@@ -1322,11 +1411,14 @@ impl Engine {
                 return Vec::new();
             }
         };
-        models
+        let mut info: Vec<ModelInfo> = models
             .values()
             .filter(|m| m.active.load(Ordering::Acquire))
             .map(|m| m.to_model_info())
-            .collect()
+            .collect();
+        drop(models);
+        info.extend(self.loaded_audio_ensemble_info());
+        info
     }
 
     /// Scan model_dir for available models without loading them.
@@ -1337,6 +1429,13 @@ impl Engine {
     /// Look up info for a model by ID. Checks loaded models first, then
     /// falls back to the on-disk catalog.
     pub fn model_info(&self, id: &str) -> Result<ModelInfo> {
+        if let Some(info) = self
+            .loaded_audio_ensemble_info()
+            .into_iter()
+            .find(|info| info.id == id)
+        {
+            return Ok(info);
+        }
         // Loaded path.
         if let Some(handle) = self.get_model_handle(id) {
             return Ok(handle.inner.to_model_info());
@@ -1509,6 +1608,12 @@ impl Drop for Engine {
         }
         if let Ok(mut pipelines) = self.pipelines.lock() {
             pipelines.clear();
+        }
+        if let Ok(mut ensembles) = self.audio_ensembles.write() {
+            for ensemble in ensembles.values() {
+                ensemble.active.store(false, Ordering::Release);
+            }
+            std::mem::forget(std::mem::take(&mut *ensembles));
         }
         std::mem::forget(Arc::clone(&self.inner));
         ENGINE_EXISTS.store(false, Ordering::SeqCst);

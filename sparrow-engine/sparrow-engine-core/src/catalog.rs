@@ -56,6 +56,74 @@ pub enum VerifyResult {
 pub fn verify_model(model_dir: &Path, model_id: &str) -> Result<VerifyResult> {
     validate_model_id(model_id)?;
     let manifest_path = model_dir.join(model_id).join("manifest.toml");
+    let ensemble_path = model_dir.join(model_id).join("ensemble.toml");
+    if ensemble_path.try_exists()? {
+        if manifest_path.try_exists()? {
+            return Err(SparrowEngineError::InvalidAudioEnsemble(format!(
+                "model directory '{}' contains both manifest.toml and ensemble.toml",
+                model_dir.join(model_id).display()
+            )));
+        }
+        let ensemble = sparrow_engine_types::load_audio_ensemble_manifest(&ensemble_path)?;
+        let root = ensemble_path.parent().unwrap_or_else(|| Path::new("."));
+        let mut assets: Vec<(&str, &str, Option<u64>)> = vec![
+            (&ensemble.labels_file, &ensemble.labels_sha256, None),
+            (
+                &ensemble.frontend.window_file,
+                &ensemble.frontend.window_sha256,
+                None,
+            ),
+            (
+                &ensemble.frontend.filterbank_file,
+                &ensemble.frontend.filterbank_sha256,
+                None,
+            ),
+        ];
+        for member in &ensemble.members {
+            assets.push((&member.file, &member.sha256, Some(member.size_bytes)));
+        }
+        if let Some(auxiliary) = &ensemble.auxiliary {
+            assets.extend([
+                (
+                    auxiliary.labels_file.as_str(),
+                    auxiliary.labels_sha256.as_str(),
+                    None,
+                ),
+                (
+                    auxiliary.frontend.window_file.as_str(),
+                    auxiliary.frontend.window_sha256.as_str(),
+                    None,
+                ),
+                (
+                    auxiliary.frontend.filterbank_file.as_str(),
+                    auxiliary.frontend.filterbank_sha256.as_str(),
+                    None,
+                ),
+                (
+                    auxiliary.file.as_str(),
+                    auxiliary.sha256.as_str(),
+                    Some(auxiliary.size_bytes),
+                ),
+            ]);
+        }
+        for (file, expected_hash, expected_size) in assets {
+            let path = root.join(file);
+            if let Some(expected) = expected_size {
+                let actual = std::fs::metadata(&path)?.len();
+                if actual != expected {
+                    return Ok(VerifyResult::SizeMismatch { expected, actual });
+                }
+            }
+            let actual = crate::hash::hash_file(&path)?;
+            if actual != expected_hash {
+                return Ok(VerifyResult::ChecksumMismatch {
+                    expected: expected_hash.to_string(),
+                    actual,
+                });
+            }
+        }
+        return Ok(VerifyResult::Ok);
+    }
     let m = manifest::load_manifest(&manifest_path)?;
 
     // If no checksum fields present, cannot verify.
@@ -152,13 +220,13 @@ pub fn list_available_models(model_dir: &Path) -> Vec<ModelInfo> {
             }
         }
         let manifest_path = entry_path.join("manifest.toml");
+        let ensemble_path = entry_path.join("ensemble.toml");
         // Path::try_exists() (stable since 1.63) returns io::Result<bool>;
         // Path::exists() coerces errors to false (rustdoc explicitly warns
         // "this method may be error-prone, consider using try_exists()
         // instead").
-        match manifest_path.try_exists() {
-            Ok(true) => {}
-            Ok(false) => continue,
+        let has_manifest = match manifest_path.try_exists() {
+            Ok(value) => value,
             Err(e) => {
                 tracing::warn!(
                     target: "engine_dispatch::core::catalog",
@@ -167,6 +235,61 @@ pub fn list_available_models(model_dir: &Path) -> Vec<ModelInfo> {
                 );
                 continue;
             }
+        };
+        let has_ensemble = match ensemble_path.try_exists() {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!(
+                    target: "engine_dispatch::core::catalog",
+                    "skipping ensemble with unreadable existence-check {}: {e}",
+                    ensemble_path.display()
+                );
+                continue;
+            }
+        };
+        if has_manifest && has_ensemble {
+            tracing::warn!(
+                target: "engine_dispatch::core::catalog",
+                "skipping ambiguous model directory {}: both manifest.toml and ensemble.toml exist",
+                entry_path.display()
+            );
+            continue;
+        }
+        if has_ensemble {
+            match sparrow_engine_types::load_audio_ensemble_manifest(&ensemble_path) {
+                Ok(ensemble) => {
+                    let dir_id = entry_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(String::from)
+                        .unwrap_or(ensemble.id);
+                    models.push(ModelInfo {
+                        id: dir_id,
+                        path: ensemble_path,
+                        model_type: sparrow_engine_types::ModelType::AudioClassifier,
+                        default: ensemble.default,
+                        version: ensemble.version,
+                        description: ensemble.description,
+                        onnx_sha256: None,
+                        onnx_size_bytes: None,
+                        embedding_version: None,
+                        embedding_dim: None,
+                        normalized: None,
+                        embedding_metric: None,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "engine_dispatch::core::catalog",
+                        "skipping unloadable audio ensemble {}: {e}",
+                        ensemble_path.display()
+                    );
+                }
+            }
+            continue;
+        }
+        if !has_manifest {
+            continue;
         }
         match manifest::load_manifest(&manifest_path) {
             Ok(m) => {
@@ -225,6 +348,13 @@ pub fn list_available_models(model_dir: &Path) -> Vec<ModelInfo> {
 pub fn write_checksum(model_dir: &Path, model_id: &str) -> Result<(String, u64)> {
     validate_model_id(model_id)?;
     let manifest_path = model_dir.join(model_id).join("manifest.toml");
+    let ensemble_path = model_dir.join(model_id).join("ensemble.toml");
+    if ensemble_path.try_exists()? {
+        return Err(SparrowEngineError::InvalidAudioEnsemble(
+            "audio ensemble checksums cover multiple files and must be regenerated by the bundle exporter"
+                .to_string(),
+        ));
+    }
     let m = manifest::load_manifest(&manifest_path)?;
 
     let onnx_path = resolve_onnx_path(&manifest_path, &m);
@@ -984,5 +1114,79 @@ format = "one_per_line"
         // A deploy that symlinks `model_dir/<alias> -> /shared/<versioned>/`
         // must be detectable via `<alias>`, and model_info must agree.
         assert_eq!(models[0].id, "symlinked-megadet");
+    }
+
+    #[test]
+    fn list_available_models_discovers_audio_ensemble() {
+        let root = tempfile::tempdir().unwrap();
+        let ensemble_dir = root.path().join("ensemble-alias");
+        std::fs::create_dir(&ensemble_dir).unwrap();
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let descriptor = format!(
+            r#"
+[ensemble]
+id = "internal-id"
+kind = "audio_frame_ensemble"
+version = "1"
+frame_rate_hz = 4.0
+frames_per_window = 4
+class_count = 3
+confidence_threshold = 0.7
+max_classes = 3
+combine = "mean"
+labels_file = "labels.txt"
+labels_sha256 = "{hash}"
+
+[frontend]
+sample_rate = 32
+n_fft = 16
+win_length = 8
+hop_length = 4
+filter_rows = 2
+filter_columns = 9
+chunk_samples = 96
+chunk_columns = 24
+window_duration_s = 1.0
+window_columns = 8
+min_coverage_columns = 2
+audio_power = 0.7
+channel_selection = "average"
+channel_check_seconds = 1.0
+short_window = "stop"
+window_file = "window.f32"
+window_sha256 = "{hash}"
+filterbank_file = "filterbank.f32"
+filterbank_sha256 = "{hash}"
+
+[[member]]
+id = "m1"
+file = "m1.onnx"
+sha256 = "{hash}"
+size_bytes = 1
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+offset_s = 0.0
+lead_window = false
+"#
+        );
+        std::fs::write(ensemble_dir.join("ensemble.toml"), descriptor).unwrap();
+
+        let models = list_available_models(root.path());
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "ensemble-alias");
+        assert_eq!(
+            models[0].model_type,
+            sparrow_engine_types::ModelType::AudioClassifier
+        );
+    }
+
+    #[test]
+    fn verify_model_checks_every_audio_ensemble_asset() {
+        let root =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+        assert_eq!(
+            verify_model(&root, "frame_ensemble_tiny").expect("verify ensemble"),
+            VerifyResult::Ok
+        );
     }
 }

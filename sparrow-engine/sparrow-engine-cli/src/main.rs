@@ -54,10 +54,10 @@ use std::time::Duration;
 // this file uses `engine_dispatch::*` paths directly — no backward-compat
 // alias.
 use crate::engine_dispatch::{
-    classify, detect, detect_audio, embed, AudioDetectOpts, AudioDetectResult, AudioInput,
-    ClassifyOpts, ClassifyResult, DetectOpts, DetectResult, Device, EmbedResult, Engine,
-    EngineConfig, ImageInput, ModelInfo, ModelType, PipelineResult, SparrowEngineError, TrtState,
-    TrtStateView, TrtWarmupRejection,
+    audio_ensemble, classify, detect, detect_audio, embed, AudioDetectOpts, AudioDetectResult,
+    AudioInput, ClassifyOpts, ClassifyResult, DetectOpts, DetectResult, Device, EmbedResult,
+    Engine, EngineConfig, ImageInput, ModelInfo, ModelType, PipelineResult, SparrowEngineError,
+    TrtState, TrtStateView, TrtWarmupRejection,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -285,7 +285,8 @@ struct DetectAudioArgs {
     /// Override the sliding-window stride (in seconds). The manifest provides
     /// a default; this flag is the runtime override. Stride is engine policy:
     /// it never has to match a model architecture constraint, so any positive
-    /// value is accepted (validated > 0).
+    /// value is accepted (validated > 0). Recording-level audio frame
+    /// ensembles reject this override because their member phases are fixed.
     #[arg(long)]
     stride: Option<f32>,
     /// Override the sliding-window segment duration (in seconds). The
@@ -294,6 +295,7 @@ struct DetectAudioArgs {
     /// (e.g. md-audiobirds-v1). Silently ignored by raw-audio classifiers
     /// whose ONNX input is fixed-size (e.g. perch-v2's `[batch, 160000]`) —
     /// the window is an upstream architecture constraint for those models.
+    /// Recording-level audio frame ensembles reject this override.
     #[arg(long = "segment-duration")]
     segment_duration_s: Option<f32>,
 }
@@ -824,7 +826,7 @@ const BOOTSTRAP_HINT: &str = "First run? Populate the model directory:\n  \
     (Latest Zenodo model bundle: https://doi.org/10.5281/zenodo.20348978)";
 
 /// Surface an actionable error when the resolved model directory is missing or
-/// contains no per-model `manifest.toml`. Intercepts BEFORE `Engine::new`, so the
+/// contains no model, pipeline, or audio-ensemble descriptor. Intercepts BEFORE `Engine::new`, so the
 /// user gets a setup hint instead of a cryptic `Model manifest not found: …`
 /// from the engine's typed error.
 fn check_model_dir_populated(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -838,8 +840,12 @@ fn check_model_dir_populated(dir: &Path) -> Result<(), Box<dyn std::error::Error
     }
     let has_manifest = std::fs::read_dir(dir)
         .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .any(|e| e.path().join("manifest.toml").is_file())
+            rd.filter_map(|e| e.ok()).any(|e| {
+                let path = e.path();
+                path.join("manifest.toml").is_file()
+                    || path.join("pipeline.toml").is_file()
+                    || path.join("ensemble.toml").is_file()
+            })
         })
         .unwrap_or(false);
     if !has_manifest {
@@ -2113,15 +2119,10 @@ fn audio_visualize_output_filter_threshold(
     manifest_threshold.map(|threshold| cli_threshold.unwrap_or(threshold))
 }
 
-fn audio_merge_gap_s(
-    manifest_window_s: f32,
-    effective_stride_s: f32,
-    frames_per_window: Option<usize>,
-) -> f32 {
-    frames_per_window
-        .map(|frames| (manifest_window_s / frames as f32).min(effective_stride_s))
-        .unwrap_or(effective_stride_s)
-        + 1e-3
+fn audio_merge_gap_s(effective_stride_s: f32, frame_duration_s: Option<f32>) -> f32 {
+    frame_duration_s
+        .map(|duration| duration * 0.5)
+        .unwrap_or(effective_stride_s + 1e-3)
 }
 
 fn cmd_detect_audio(
@@ -2164,15 +2165,9 @@ fn cmd_detect_audio_with_engine(
     };
 
     let model_id = args.model.as_deref().unwrap_or("md-audiobirds-v1");
-    let handle = engine.get_or_load_model(model_id)?;
+    let handle = engine.get_or_load_audio_model(model_id)?;
     let audio_config = handle.audio_preprocess_config();
-    let multi_label_frames = match &handle.manifest().postprocess_method {
-        engine_dispatch::manifest::PostprocessMethod::MultiLabel {
-            frames_per_window, ..
-        } => Some(*frames_per_window),
-        _ => None,
-    };
-    let is_multi_label = multi_label_frames.is_some();
+    let is_multi_label = handle.is_multi_label();
 
     // Resolve window + stride from the manifest, then apply CLI overrides.
     // The manifest provides defaults; `--stride` / `--segment-duration`
@@ -2187,7 +2182,7 @@ fn cmd_detect_audio_with_engine(
     ));
     let window_s = args.segment_duration_s.unwrap_or(manifest_window_s);
     let stride_s = args.stride.unwrap_or(manifest_stride_s);
-    let merge_gap_s = audio_merge_gap_s(manifest_window_s, stride_s, multi_label_frames);
+    let merge_gap_s = audio_merge_gap_s(stride_s, handle.frame_duration_s());
 
     // When --visualize is set for thresholded sigmoid detectors, layers 02
     // (segments) and 03 (heatmap) need the full per-window confidence
@@ -2196,14 +2191,12 @@ fn cmd_detect_audio_with_engine(
     // threshold (CLI override > manifest default). Thresholdless softmax
     // classifiers such as Perch 2 have no production threshold to restore, so
     // visualization must not add a CLI-only 0.5 output filter.
-    let output_filter_threshold = matches!(
-        &handle.manifest().postprocess_method,
-        engine_dispatch::manifest::PostprocessMethod::Sigmoid { .. }
-    )
-    .then(|| {
-        audio_visualize_output_filter_threshold(args.threshold, handle.audio_confidence_threshold())
-    })
-    .flatten();
+    let output_filter_threshold = handle
+        .uses_sigmoid_postprocess()
+        .then(|| {
+            audio_visualize_output_filter_threshold(args.threshold, handle.confidence_threshold())
+        })
+        .flatten();
     let inference_threshold = if args.visualize && output_filter_threshold.is_some() {
         Some(0.0)
     } else {
@@ -2250,7 +2243,7 @@ fn cmd_detect_audio_with_engine(
         bar.set_message(file.display().to_string());
         let audio = AudioInput::FilePath(file.clone());
 
-        match detect_audio::detect_audio(&handle, &audio, &opts) {
+        match audio_ensemble::detect_audio_model(&handle, &audio, &opts) {
             Ok(result) => {
                 // For thresholded detectors, --visualize lowers inference to
                 // 0 and this view restores the intended machine-readable
@@ -2307,9 +2300,8 @@ fn cmd_detect_audio_with_engine(
                     let ranges_owned = if args.raw_segments {
                         None
                     } else if is_multi_label {
-                        let threshold = handle
-                            .audio_confidence_threshold()
-                            .unwrap_or(VIZ_MERGE_THRESHOLD);
+                        let threshold =
+                            handle.confidence_threshold().unwrap_or(VIZ_MERGE_THRESHOLD);
                         let high_confidence: Vec<_> = result
                             .segments
                             .iter()
@@ -3393,9 +3385,9 @@ mod tests {
 
     #[test]
     fn audio_merge_gap_uses_multilabel_subframe_duration() {
-        assert!((audio_merge_gap_s(1.0, 1.0, Some(4)) - 0.251).abs() < 1e-6);
-        assert!((audio_merge_gap_s(5.0, 1.0, Some(1)) - 1.001).abs() < 1e-6);
-        assert!((audio_merge_gap_s(1.0, 0.3, None) - 0.301).abs() < 1e-6);
+        assert!((audio_merge_gap_s(1.0, Some(0.25)) - 0.125).abs() < 1e-6);
+        assert!((audio_merge_gap_s(1.0, Some(1.0)) - 0.5).abs() < 1e-6);
+        assert!((audio_merge_gap_s(0.3, None) - 0.301).abs() < 1e-6);
     }
 
     #[test]
@@ -4576,5 +4568,14 @@ mod tests {
             Err(err) => err,
         };
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn model_dir_population_accepts_audio_ensemble_descriptor() {
+        let root = tempfile::tempdir().unwrap();
+        let model = root.path().join("audio-ensemble");
+        fs::create_dir(&model).unwrap();
+        fs::write(model.join("ensemble.toml"), "[ensemble]\n").unwrap();
+        check_model_dir_populated(root.path()).unwrap();
     }
 }

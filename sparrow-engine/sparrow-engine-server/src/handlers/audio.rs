@@ -8,9 +8,8 @@ use axum::extract::{Multipart, Query, State};
 use axum::Json;
 use serde::Deserialize;
 
-use crate::engine_dispatch::manifest::PostprocessMethod;
 use crate::engine_dispatch::{
-    detect_audio, AudioDetectOpts, AudioInput, AudioSegment, SparrowEngineError,
+    audio_ensemble, AudioDetectOpts, AudioInput, AudioSegment, SparrowEngineError,
 };
 use crate::error::AppError;
 use crate::response::{AudioDetectResponse, AudioSegmentResponse};
@@ -80,7 +79,7 @@ pub async fn audio_detect(
         let _permit = permit;
         // Phase 4.2 lazy-load: resolve (or load on demand) inside the blocking
         // pool so the async runtime stays responsive.
-        let handle = engine.get_or_load_model(&model_id_for_load)?;
+        let handle = engine.get_or_load_audio_model(&model_id_for_load)?;
         // Write audio to a temp file on the blocking pool for sparrow-engine-cpu
         // (AudioInput::FilePath), keeping the file alive through inference.
         let mut tmp = tempfile::NamedTempFile::new().map_err(SparrowEngineError::Io)?;
@@ -88,16 +87,10 @@ pub async fn audio_detect(
             .map_err(SparrowEngineError::Io)?;
         let audio_input = AudioInput::FilePath(tmp.path().to_path_buf());
         let _keep = tmp;
-        let result = detect_audio::detect_audio(&handle, &audio_input, &opts)?;
-        let is_multi_label = matches!(
-            &handle.manifest().postprocess_method,
-            PostprocessMethod::MultiLabel { .. }
-        );
+        let result = audio_ensemble::detect_audio_model(&handle, &audio_input, &opts)?;
+        let is_multi_label = handle.is_multi_label();
         let (drift_ref, prov) = if want_manifest_meta {
-            (
-                handle.manifest().drift_reference.clone(),
-                handle.manifest().provenance.clone(),
-            )
+            (handle.drift_reference(), handle.provenance())
         } else {
             (None, None)
         };

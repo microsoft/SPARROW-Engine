@@ -11,11 +11,14 @@ use std::time::Instant;
 
 use ndarray::Array4;
 use realfft::RealFftPlanner;
-use rubato::{FftFixedInOut, Resampler};
+use rubato::{
+    FftFixedInOut, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
 
 use sparrow_engine_types::manifest::PreprocessMethod;
 use sparrow_engine_types::AudioInput;
-use sparrow_engine_types::{SparrowEngineError, Result};
+use sparrow_engine_types::{Result, SparrowEngineError};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -158,6 +161,19 @@ pub struct AudioSamples {
     pub orig_sample_rate: u32,
 }
 
+/// Planar audio channels resampled to one target sample rate.
+///
+/// Recording-level ensemble frontends use this to reproduce model-defined
+/// stereo channel selection before collapsing to mono. Existing audio models
+/// continue through [`AudioSamples`] and retain their current average-downmix
+/// behavior.
+pub struct AudioChannelSet {
+    pub channels: Vec<Vec<f32>>,
+    pub sample_rate: u32,
+    pub duration_s: f32,
+    pub orig_sample_rate: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -239,6 +255,59 @@ pub fn load_audio_at_sample_rate(
         sample_rate: target_sample_rate,
         duration_s,
         orig_sample_rate: sr,
+    })
+}
+
+/// Load audio as planar channels and resample each channel independently.
+pub fn load_audio_channels_at_sample_rate(
+    input: &AudioInput,
+    target_sample_rate: u32,
+) -> Result<AudioChannelSet> {
+    if target_sample_rate == 0 {
+        return Err(SparrowEngineError::InvalidManifest(
+            "target_sample_rate must be greater than 0".to_string(),
+        ));
+    }
+    let (channels, source_rate) = match input {
+        AudioInput::FilePath(path) => decode_wav_channels(path)?,
+        AudioInput::Samples { data, sample_rate } => {
+            if !data.iter().all(|sample| sample.is_finite()) {
+                return Err(SparrowEngineError::AudioDecode(
+                    "raw audio samples must be finite".to_string(),
+                ));
+            }
+            (vec![data.clone()], *sample_rate)
+        }
+    };
+    if source_rate == 0 {
+        return Err(SparrowEngineError::AudioDecode(
+            "audio sample_rate must be greater than 0".to_string(),
+        ));
+    }
+    if channels.is_empty() {
+        return Err(SparrowEngineError::AudioDecode(
+            "audio input has no channels".to_string(),
+        ));
+    }
+
+    let mut resampled = Vec::with_capacity(channels.len());
+    for channel in channels {
+        let output = if source_rate == target_sample_rate {
+            channel
+        } else {
+            resample_high_quality(&channel, source_rate, target_sample_rate)?
+        };
+        resampled.push(output);
+    }
+    let common_len = resampled.iter().map(Vec::len).min().unwrap_or(0);
+    for channel in &mut resampled {
+        channel.truncate(common_len);
+    }
+    Ok(AudioChannelSet {
+        channels: resampled,
+        sample_rate: target_sample_rate,
+        duration_s: common_len as f32 / target_sample_rate as f32,
+        orig_sample_rate: source_rate,
     })
 }
 
@@ -354,7 +423,6 @@ pub fn segment_time_range(
     let end_s = actual_end as f32 / sample_rate as f32;
     (start_s, end_s)
 }
-
 
 /// Non-zero band `[start, start + weights.len())` of one triangular mel filter.
 /// Mel filters are triangular, so each row of the dense filterbank is non-zero
@@ -653,6 +721,56 @@ fn decode_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
     decode_wav_reader(reader)
 }
 
+fn decode_wav_channels(path: &Path) -> Result<(Vec<Vec<f32>>, u32)> {
+    let reader =
+        hound::WavReader::open(path).map_err(|e| SparrowEngineError::AudioDecode(e.to_string()))?;
+    let spec = reader.spec();
+    let sample_rate = spec.sample_rate;
+    let channel_count = spec.channels as usize;
+    if channel_count == 0 {
+        return Err(SparrowEngineError::AudioDecode(
+            "WAV declares zero channels".to_string(),
+        ));
+    }
+
+    let interleaved: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample;
+            let max_value = (1i64 << (bits - 1)) as f32;
+            reader
+                .into_samples::<i32>()
+                .map(|sample| sample.map(|value| value as f32 / max_value))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| SparrowEngineError::AudioDecode(e.to_string()))?
+        }
+        hound::SampleFormat::Float => reader
+            .into_samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| SparrowEngineError::AudioDecode(e.to_string()))?,
+    };
+    if !interleaved.iter().all(|sample| sample.is_finite()) {
+        return Err(SparrowEngineError::AudioDecode(
+            "decoded WAV contains non-finite samples".to_string(),
+        ));
+    }
+    let chunks = interleaved.chunks_exact(channel_count);
+    if !chunks.remainder().is_empty() {
+        return Err(SparrowEngineError::AudioDecode(
+            "WAV sample count is not divisible by its channel count".to_string(),
+        ));
+    }
+    let frame_count = interleaved.len() / channel_count;
+    let mut channels = (0..channel_count)
+        .map(|_| Vec::with_capacity(frame_count))
+        .collect::<Vec<_>>();
+    for frame in chunks {
+        for (channel, sample) in channels.iter_mut().zip(frame) {
+            channel.push(*sample);
+        }
+    }
+    Ok((channels, sample_rate))
+}
+
 /// Shared WAV decoding: read samples, convert to mono f32 in [-1, 1].
 ///
 /// Phase 3.8 Step 2 perf-fix B (post Wave-4 triage,
@@ -867,6 +985,65 @@ fn resample_rubato(samples: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>
     }
 
     Ok(output)
+}
+
+/// High-quality sinc resampling for models whose channel selection and
+/// predictions are sensitive to the resampler response.
+///
+/// This is intentionally scoped to recording-level audio ensembles. Existing
+/// models retain [`resample_rubato`] and its locked regression behavior.
+fn resample_high_quality(samples: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>> {
+    if from_sr == to_sr {
+        return Ok(samples.to_vec());
+    }
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+    let chunk_size = 1024usize;
+    let parameters = SincInterpolationParameters {
+        sinc_len: 512,
+        f_cutoff: 0.95,
+        oversampling_factor: 256,
+        interpolation: SincInterpolationType::Cubic,
+        window: WindowFunction::BlackmanHarris2,
+    };
+    let ratio = to_sr as f64 / from_sr as f64;
+    let mut resampler = SincFixedIn::<f32>::new(ratio, 1.0, parameters, chunk_size, 1)
+        .map_err(|error| SparrowEngineError::Resample(error.to_string()))?;
+    let mut remaining = samples;
+    let mut output = Vec::new();
+    while remaining.len() >= resampler.input_frames_next() {
+        let input_frames = resampler.input_frames_next();
+        let chunk = &remaining[..input_frames];
+        let result = resampler
+            .process(&[chunk], None)
+            .map_err(|error| SparrowEngineError::Resample(error.to_string()))?;
+        output.extend_from_slice(&result[0]);
+        remaining = &remaining[input_frames..];
+    }
+    if !remaining.is_empty() {
+        let result = resampler
+            .process_partial(Some(&[remaining]), None)
+            .map_err(|error| SparrowEngineError::Resample(error.to_string()))?;
+        output.extend_from_slice(&result[0]);
+    }
+    let flushed = resampler
+        .process_partial::<&[f32]>(None, None)
+        .map_err(|error| SparrowEngineError::Resample(error.to_string()))?;
+    output.extend_from_slice(&flushed[0]);
+
+    let target_len = (samples.len() as f64 * ratio).round() as usize;
+    if output.len() < target_len {
+        return Err(SparrowEngineError::Resample(format!(
+            "sinc resampler produced {} samples, expected at least {target_len}",
+            output.len(),
+        )));
+    }
+    // BriteKit 1.6's librosa/SoXR load path retains the filter's startup
+    // delay. Keeping the leading samples is required for frame-aligned parity;
+    // trimming `Resampler::output_delay()` advances predictions by ~162
+    // samples at 44.1 kHz -> 28 kHz.
+    Ok(output[..target_len].to_vec())
 }
 
 // ---------------------------------------------------------------------------
@@ -1447,6 +1624,81 @@ mod tests {
                 "stereo mono sample {i}: fast {a} vs expected {b}"
             );
         }
+    }
+
+    #[test]
+    fn load_audio_channels_preserves_stereo_samples() {
+        use std::io::Cursor;
+
+        let pcm_lr: Vec<i16> = vec![1000, -1000, 20_000, -19_000];
+        let mut buf = Cursor::new(Vec::<u8>::new());
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        {
+            let mut writer = hound::WavWriter::new(&mut buf, spec).expect("WavWriter::new");
+            for sample in &pcm_lr {
+                writer.write_sample(*sample).expect("write_sample");
+            }
+            writer.finalize().expect("WavWriter::finalize");
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("stereo.wav");
+        std::fs::write(&path, buf.into_inner()).expect("write wav");
+
+        let channels = load_audio_channels_at_sample_rate(&AudioInput::FilePath(path), 48_000)
+            .expect("load planar channels");
+        assert_eq!(channels.channels.len(), 2);
+        assert_eq!(channels.channels[0].len(), 2);
+        assert_eq!(channels.channels[1].len(), 2);
+        assert_eq!(
+            channels.channels[0][0].to_bits(),
+            (1000.0 / 32768.0f32).to_bits()
+        );
+        assert_eq!(
+            channels.channels[1][1].to_bits(),
+            (-19_000.0 / 32768.0f32).to_bits()
+        );
+    }
+
+    #[test]
+    fn high_quality_resampler_keeps_soxr_frame_alignment() {
+        let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/audio/resample_soxr_tiny");
+        let mut channels = load_audio_channels_at_sample_rate(
+            &AudioInput::FilePath(fixture.join("source_44100.wav")),
+            28_000,
+        )
+        .expect("resample fixture");
+        let actual = channels.channels.remove(0);
+        let bytes = std::fs::read(fixture.join("expected_28000.f32")).expect("expected samples");
+        let expected = bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+
+        let rmse = |left: &[f32], right: &[f32]| {
+            let squared = left
+                .iter()
+                .zip(right)
+                .map(|(a, b)| {
+                    let delta = f64::from(*a - *b);
+                    delta * delta
+                })
+                .sum::<f64>();
+            (squared / left.len() as f64).sqrt()
+        };
+        let aligned = rmse(&actual, &expected);
+        let shifted = rmse(&actual[1..], &expected[..expected.len() - 1]);
+        assert!(aligned < 0.06, "SoXR fixture RMSE too large: {aligned}");
+        assert!(
+            aligned < shifted,
+            "resampler startup alignment regressed: aligned={aligned}, shifted={shifted}"
+        );
     }
 
     #[test]

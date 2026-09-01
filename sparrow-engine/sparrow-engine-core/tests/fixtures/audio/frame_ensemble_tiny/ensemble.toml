@@ -1,0 +1,107 @@
+[ensemble]
+id = "frame-ensemble-tiny"
+kind = "audio_frame_ensemble"
+version = "1"
+description = "Deterministic tiny recording-level audio frame ensemble"
+default = false
+frame_rate_hz = 4.0
+frames_per_window = 4
+class_count = 3
+confidence_threshold = 0.7
+max_classes = 3
+inference_batch_size = 2
+combine = "mean"
+labels_file = "labels.txt"
+labels_sha256 = "40462f8435adfff533b36249b5fc19781c385fabf850266ca99f1af7d3248d61"
+
+[frontend]
+sample_rate = 32
+n_fft = 16
+win_length = 8
+hop_length = 4
+filter_rows = 2
+filter_columns = 9
+chunk_samples = 96
+chunk_columns = 24
+window_duration_s = 1.0
+window_columns = 8
+min_coverage_columns = 2
+audio_power = 0.7
+channel_selection = "average"
+channel_check_seconds = 1.0
+short_window = "stop"
+window_file = "main-window.f32"
+window_sha256 = "4e90d0f7dcdad2fae2d8ef306f01fbb8c92a7f2d75d90fcd530d5b7529867358"
+filterbank_file = "main-filterbank.f32"
+filterbank_sha256 = "84e2326c5a177ba296a53c192e4189984a639eaaea14a298f064eaa9965128c7"
+
+[[member]]
+id = "member-1"
+file = "member-1.onnx"
+sha256 = "e4f9b58075fde5d3966c516cfdf5203669ec1d3243e6b332bb4b6542f8ae0963"
+size_bytes = 6117
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+offset_s = 0.0
+lead_window = false
+
+[[member]]
+id = "member-2"
+file = "member-2.onnx"
+sha256 = "e4f9b58075fde5d3966c516cfdf5203669ec1d3243e6b332bb4b6542f8ae0963"
+size_bytes = 6117
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+offset_s = 0.25
+lead_window = true
+
+[[member]]
+id = "member-3"
+file = "member-3.onnx"
+sha256 = "e4f9b58075fde5d3966c516cfdf5203669ec1d3243e6b332bb4b6542f8ae0963"
+size_bytes = 6117
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+offset_s = 0.5
+lead_window = true
+
+[auxiliary]
+id = "auxiliary"
+file = "auxiliary.onnx"
+sha256 = "3e7a1886be064db233e3f6323d9af3bfe89015aa85c5d4eae2257a37d50714c9"
+size_bytes = 6101
+input_name = "spectrogram"
+output_name = "frame_probabilities"
+labels_file = "aux-labels.txt"
+labels_sha256 = "c295098fc60013fb04af1719dd07e6be66c54b498ada2cf8ba1f3c806d1a513d"
+class_count = 2
+frames_per_window = 4
+frame_rate_hz = 4.0
+offset_s = 0.0
+lead_window = false
+operation = "max"
+
+[auxiliary.frontend]
+sample_rate = 16
+n_fft = 8
+win_length = 4
+hop_length = 2
+filter_rows = 2
+filter_columns = 5
+chunk_samples = 48
+chunk_columns = 24
+window_duration_s = 1.0
+window_columns = 8
+min_coverage_columns = 2
+audio_power = 1.2
+channel_selection = "average"
+channel_check_seconds = 1.0
+short_window = "stop"
+window_file = "low-window.f32"
+window_sha256 = "0903e88d2ff9e0e5509ba475628fc865fa0cbab57b49c02bff937c9dc5ae7607"
+filterbank_file = "low-filterbank.f32"
+filterbank_sha256 = "3b6bbf31a32d03802089abb6ebd87914a1072e8e5c180047046551ff12c5476d"
+
+[[auxiliary.merge]]
+from = "source"
+to = "aux-merged"
