@@ -24,7 +24,7 @@ cd -
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the other 68 ONNX models in the Zenodo bundle (image classifiers, audio detectors, overhead- and marine-imagery detectors, image encoders). See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The public model zoo contains **75 models**: 69 ONNX models, 5 mobile TFLite models, and 1 mobile cascade descriptor. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -230,7 +230,7 @@ Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a p
 
 **Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 66 default desktop ONNX models to `~/.sparrow-engine/models/` (the default model dir read by `spe`, `sparrow-engine-server`, and the Python wheel; the zoo also holds 6 mobile `.tflite` / cascade artifacts and 3 opt-in ONNX models (two FP16 precision variants plus the separate BioCLIP 2.5 Huge encoder), fetched on demand either by name or with `--all`):
+The catalog contains **75 models in total**. Run the downloader without arguments to install the **66 default desktop ONNX models** into `~/.sparrow-engine/models/`, the default model directory used by `spe`, `sparrow-engine-server`, and the Python wheel. The remaining 9 entries—5 mobile TFLite models, 1 mobile cascade descriptor, and 3 opt-in ONNX models (two FP16 precision variants plus the separate BioCLIP 2.5 Huge encoder)—are fetched when named explicitly or with `--all`:
 
 ```bash
 bash scripts/download_models.sh
