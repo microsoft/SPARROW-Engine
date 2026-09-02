@@ -1103,8 +1103,13 @@ impl PyEngine {
     #[pyo3(signature = (id, trt_warmup=false))]
     fn load_model(&self, py: Python<'_>, id: &str, trt_warmup: bool) -> PyResult<()> {
         py.detach(|| {
-            self.engine.load_model_by_id(id).map_err(to_pyerr)?;
+            let handle = self.engine.get_or_load_audio_model(id).map_err(to_pyerr)?;
             if trt_warmup {
+                if matches!(handle, sparrow_engine::AudioModelHandle::Ensemble(_)) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "TensorRT warm-up is not supported for audio frame ensembles",
+                    ));
+                }
                 self.engine.trt_warmup_blocking(id).map_err(to_pyerr)?;
             }
             Ok(())
@@ -1299,7 +1304,8 @@ impl PyEngine {
     /// ONNX time-axis (e.g. md-audiobirds-v1); silently ignored by
     /// raw-audio classifiers whose ONNX input is fixed-size (e.g.
     /// perch-v2's `[batch, 160000]`) — the window is an upstream
-    /// architecture constraint for those models.
+    /// architecture constraint for those models. Recording-level audio frame
+    /// ensembles reject both overrides because their temporal phases are fixed.
     #[pyo3(signature = (paths, model, threshold=None, stride_s=None, segment_duration_s=None, progress_callback=None))]
     #[allow(clippy::too_many_arguments)]
     fn detect_audio(
@@ -1338,7 +1344,9 @@ impl PyEngine {
         let total = paths.len();
 
         py.detach(move || {
-            let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
+            let handle = engine
+                .get_or_load_audio_model(&model_id)
+                .map_err(to_pyerr)?;
             let (window_s, effective_stride_s) = resolve_audio_window_stride(
                 handle.audio_window_stride(),
                 stride_s,
@@ -1348,7 +1356,7 @@ impl PyEngine {
             let mut errors = 0usize;
             for (i, path) in paths.iter().enumerate() {
                 let input = AudioInput::FilePath(PathBuf::from(path));
-                match sparrow_engine::detect_audio::detect_audio(&handle, &input, &opts) {
+                match sparrow_engine::audio_ensemble::detect_audio_model(&handle, &input, &opts) {
                     Ok(r) => {
                         results.push(AudioResult {
                             model_id: model_id.clone(),
@@ -3101,5 +3109,53 @@ mod tests {
         assert_eq!(viz_output_extension(image::ImageFormat::Bmp), "png");
         assert_eq!(viz_output_extension(image::ImageFormat::Tiff), "png");
         assert_eq!(viz_output_extension(image::ImageFormat::WebP), "png");
+    }
+
+    #[test]
+    fn python_engine_detect_audio_accepts_frame_ensemble() {
+        if std::env::var_os("ORT_LIB_LOCATION").is_none()
+            && std::env::var_os("ORT_DYLIB_PATH").is_none()
+            && std::env::var_os("ORT_CAPI").is_none()
+        {
+            return;
+        }
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace")
+            .to_path_buf();
+        let fixture =
+            workspace.join("sparrow-engine-core/tests/fixtures/audio/frame_ensemble_tiny");
+        let model_root = workspace
+            .join("target")
+            .join(format!("python-audio-ensemble-{}", std::process::id()));
+        let installed = model_root.join("frame-ensemble-tiny");
+        let _ = std::fs::remove_dir_all(&model_root);
+        std::fs::create_dir_all(&installed).expect("create model dir");
+        for entry in std::fs::read_dir(&fixture).expect("read fixture") {
+            let entry = entry.expect("fixture entry");
+            std::fs::copy(entry.path(), installed.join(entry.file_name())).expect("copy fixture");
+        }
+
+        let engine =
+            PyEngine::new("cpu", model_root.to_str().expect("model root")).expect("engine");
+        Python::initialize();
+        Python::attach(|py| {
+            let results = engine
+                .detect_audio(
+                    py,
+                    vec![fixture.join("input.wav").display().to_string()],
+                    "frame-ensemble-tiny",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .expect("Python audio ensemble inference");
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].segments.len(), 7);
+            assert_eq!(results[0].model_id, "frame-ensemble-tiny");
+        });
+        drop(engine);
+        let _ = std::fs::remove_dir_all(model_root);
     }
 }

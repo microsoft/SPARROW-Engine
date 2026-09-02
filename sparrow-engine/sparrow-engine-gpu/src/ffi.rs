@@ -18,6 +18,7 @@
 //!   - Thread-local errors: `sparrow_engine_last_error()` returns per-thread error string.
 //!   - No reserved fields: structs are immutable once shipped. New fields = `_v2` function.
 
+use crate::audio_ensemble::AudioModelHandle;
 use crate::engine::{Device, Engine, EngineConfig, ModelHandle};
 use crate::types::{
     AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts, ClassifyResult,
@@ -58,6 +59,25 @@ fn clear_last_error() {
 pub type SparrowEngine = c_void;
 /// Opaque model handle. Consumers must not inspect or dereference.
 pub type SparrowEngineModel = c_void;
+
+unsafe fn ffi_model_handle<'a>(
+    model: *const SparrowEngineModel,
+) -> std::result::Result<&'a AudioModelHandle, String> {
+    if model.is_null() {
+        return Err("model pointer is null".to_string());
+    }
+    Ok(&*(model as *const AudioModelHandle))
+}
+
+fn standard_model_handle(handle: &AudioModelHandle) -> std::result::Result<&ModelHandle, String> {
+    match handle {
+        AudioModelHandle::Model(handle) => Ok(handle),
+        AudioModelHandle::Ensemble(handle) => Err(format!(
+            "'{}' is an audio frame ensemble and cannot be used for image inference",
+            handle.model_id()
+        )),
+    }
+}
 
 // ===========================================================================
 // C-compatible structs
@@ -1160,7 +1180,17 @@ pub unsafe extern "C" fn sparrow_engine_load_model(
             }
             let engine_ref = &*(engine as *const Engine);
             let path_str = cstr_to_str(manifest_path)?;
-            let handle = engine_ref.load_model(path_str).map_err(|e| e.to_string())?;
+            let path = PathBuf::from(path_str);
+            let handle = if path.file_name().and_then(|name| name.to_str()) == Some("ensemble.toml")
+            {
+                AudioModelHandle::Ensemble(
+                    engine_ref
+                        .load_audio_ensemble(&path)
+                        .map_err(|e| e.to_string())?,
+                )
+            } else {
+                AudioModelHandle::Model(engine_ref.load_model(&path).map_err(|e| e.to_string())?)
+            };
             Ok(Box::into_raw(Box::new(handle)) as *mut SparrowEngineModel)
         },
     ));
@@ -1202,7 +1232,7 @@ pub unsafe extern "C" fn sparrow_engine_load_model_by_id(
             let engine_ref = &*(engine as *const Engine);
             let id = cstr_to_str(model_id)?;
             let handle = engine_ref
-                .get_or_load_model(id)
+                .get_or_load_audio_model(id)
                 .map_err(|e| e.to_string())?;
             Ok(Box::into_raw(Box::new(handle)) as *mut SparrowEngineModel)
         },
@@ -1231,12 +1261,19 @@ pub unsafe extern "C" fn sparrow_engine_unload_model(model: *mut SparrowEngineMo
         return;
     }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let handle = Box::from_raw(model as *mut ModelHandle);
-        // Deactivate the model so other holders of cloned handles see it as unloaded.
-        // The map entry leaks until engine drop — acceptable since unload is rare.
-        handle
-            .active
-            .store(false, std::sync::atomic::Ordering::Release);
+        let handle = Box::from_raw(model as *mut AudioModelHandle);
+        match handle.as_ref() {
+            AudioModelHandle::Model(handle) => {
+                handle
+                    .active
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
+            AudioModelHandle::Ensemble(handle) => {
+                handle
+                    .active
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
         drop(handle);
     }));
     if result.is_err() {
@@ -1379,7 +1416,7 @@ pub unsafe extern "C" fn sparrow_engine_detect(
             if image.is_null() || len == 0 {
                 return Err("image data is null or empty".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = standard_model_handle(ffi_model_handle(model)?)?;
             let image_data = std::slice::from_raw_parts(image, len);
             let input = ImageInput::Encoded(image_data.to_vec());
             let d_opts = detect_opts_from_c(opts);
@@ -1426,7 +1463,7 @@ pub unsafe extern "C" fn sparrow_engine_detect_raw(
             if pixels.is_null() {
                 return Err("pixels pointer is null".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = standard_model_handle(ffi_model_handle(model)?)?;
             let buf_len = (h as usize)
                 .checked_mul(stride as usize)
                 .ok_or_else(|| "h * stride overflows usize".to_string())?;
@@ -1534,7 +1571,7 @@ pub unsafe extern "C" fn sparrow_engine_detect_batch(
             if model.is_null() || images.is_null() {
                 return Err("model or images pointer is null".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = standard_model_handle(ffi_model_handle(model)?)?;
             let d_opts = detect_opts_from_c(opts);
 
             // Build ImageInput slice from C buffers.
@@ -1600,7 +1637,7 @@ pub unsafe extern "C" fn sparrow_engine_classify(
             if image.is_null() || len == 0 {
                 return Err("image data is null or empty".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = standard_model_handle(ffi_model_handle(model)?)?;
             let image_data = std::slice::from_raw_parts(image, len);
             let input = ImageInput::Encoded(image_data.to_vec());
             let c_opts = classify_opts_from_c(opts);
@@ -1642,7 +1679,7 @@ pub unsafe extern "C" fn sparrow_engine_embed(
             if image.is_null() || len == 0 {
                 return Err("image data is null or empty".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = standard_model_handle(ffi_model_handle(model)?)?;
             let image_data = std::slice::from_raw_parts(image, len);
             let input = ImageInput::Encoded(image_data.to_vec());
             let result = crate::embed::embed(handle, &input).map_err(|e| e.to_string())?;
@@ -1779,11 +1816,11 @@ pub unsafe extern "C" fn sparrow_engine_detect_audio(
             if model.is_null() {
                 return Err("model pointer is null".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = ffi_model_handle(model)?;
             let path_str = cstr_to_str(audio_path)?;
             let input = AudioInput::FilePath(PathBuf::from(path_str));
             let a_opts = audio_detect_opts_from_c(opts);
-            let result = crate::detect_audio::detect_audio(handle, &input, &a_opts)
+            let result = crate::audio_ensemble::detect_audio_model(handle, &input, &a_opts)
                 .map_err(|e| e.to_string())?;
             Ok(audio_result_to_c(result))
         },
@@ -1819,11 +1856,11 @@ pub unsafe extern "C" fn sparrow_engine_detect_audio_v2(
             if model.is_null() {
                 return Err("model pointer is null".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = ffi_model_handle(model)?;
             let path_str = cstr_to_str(audio_path)?;
             let input = AudioInput::FilePath(PathBuf::from(path_str));
             let a_opts = audio_detect_opts_from_c(opts);
-            let result = crate::detect_audio::detect_audio(handle, &input, &a_opts)
+            let result = crate::audio_ensemble::detect_audio_model(handle, &input, &a_opts)
                 .map_err(|e| e.to_string())?;
             Ok(audio_result_v2_to_c(result))
         },
@@ -1880,21 +1917,25 @@ pub unsafe extern "C" fn sparrow_engine_detect_audio_streaming(
             if model.is_null() {
                 return Err("model pointer is null".to_string());
             }
-            let handle = &*(model as *const ModelHandle);
+            let handle = ffi_model_handle(model)?;
             let path_str = cstr_to_str(audio_path)?;
             let input = AudioInput::FilePath(PathBuf::from(path_str));
             let a_opts = audio_detect_opts_from_c(opts);
 
-            let result =
-                crate::detect_audio::detect_audio_streaming(handle, &input, &a_opts, |seg| {
+            let result = crate::audio_ensemble::detect_audio_model_streaming(
+                handle,
+                &input,
+                &a_opts,
+                |seg| {
                     let c_seg = SparrowEngineAudioSegment {
                         start_time_s: seg.start_time_s,
                         end_time_s: seg.end_time_s,
                         confidence: seg.confidence,
                     };
                     callback(&c_seg as *const SparrowEngineAudioSegment, user_data);
-                })
-                .map_err(|e| e.to_string())?;
+                },
+            )
+            .map_err(|e| e.to_string())?;
             Ok(audio_result_to_c(result))
         },
     ));

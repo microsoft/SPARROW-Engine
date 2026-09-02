@@ -432,7 +432,11 @@ else
     mid="$(python3 - "$manifest" <<'PY' 2>/dev/null
 import sys, tomllib
 d = tomllib.load(open(sys.argv[1], "rb"))
-print(d.get("model", {}).get("id", "") or d.get("id", ""))
+print(
+    d.get("model", {}).get("id", "")
+    or d.get("ensemble", {}).get("id", "")
+    or d.get("id", "")
+)
 PY
 )"
     if [[ -z "$mid" ]]; then
@@ -452,8 +456,8 @@ PY
     else
       pass "$dir → catalog id '$mid'"
     fi
-  done < <(find "$MODEL_DIR" -maxdepth 2 -name manifest.toml 2>/dev/null | sort)
-  [[ $found -eq 0 ]] && skip "no manifests under $MODEL_DIR (run download_models.sh first)"
+  done < <(find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name ensemble.toml \) 2>/dev/null | sort)
+  [[ $found -eq 0 ]] && skip "no model descriptors under $MODEL_DIR (run download_models.sh first)"
 fi
 echo ""
 
@@ -467,7 +471,7 @@ for cand in "$REPO_DIR/target/release/spe" "$REPO_DIR/target/debug/spe" "$(comma
 done
 if [[ -z "$SPE" ]]; then
   skip "no spe binary found (build with cargo, or install)"
-elif ! find "$MODEL_DIR" -maxdepth 2 -name manifest.toml 2>/dev/null | grep -q .; then
+elif ! find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name ensemble.toml \) 2>/dev/null | grep -q .; then
   skip "no models on disk to load"
 else
   # Source the shared ORT discovery env INSIDE a subshell so its

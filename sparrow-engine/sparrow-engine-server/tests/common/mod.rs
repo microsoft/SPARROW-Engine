@@ -124,9 +124,18 @@ impl TestServer {
         let engine_config = EngineConfig::new(Device::Cpu, model_dir.clone());
         let engine = Engine::new(engine_config).expect("failed to create Engine");
         for path in manifest_paths {
-            engine
-                .load_model(path)
-                .unwrap_or_else(|e| panic!("failed to load fixture {}: {e}", path.display()));
+            if path.file_name().and_then(|name| name.to_str()) == Some("ensemble.toml") {
+                engine.load_audio_ensemble(path).unwrap_or_else(|e| {
+                    panic!(
+                        "failed to load audio ensemble fixture {}: {e}",
+                        path.display()
+                    )
+                });
+            } else {
+                engine
+                    .load_model(path)
+                    .unwrap_or_else(|e| panic!("failed to load fixture {}: {e}", path.display()));
+            }
         }
         Self::start_with_engine_and_model_dir(engine, model_dir).await
     }

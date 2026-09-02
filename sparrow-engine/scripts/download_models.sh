@@ -268,9 +268,10 @@ for i in "${!IDS[@]}"; do
   # bare "skip if the dir exists" would silently serve a stale copy
   # (OQ-2026-07-06-12). Each install is stamped with its verified ZIP MD5;
   # here we re-fetch when the catalog's MD5 no longer matches that stamp.
-  # `manifest.toml` covers onnx/tflite models; `pipeline.toml` covers cascade
+  # `manifest.toml` covers onnx/tflite models; `pipeline.toml` covers cascade;
+  # `ensemble.toml` covers recording-level audio frame ensembles.
   # descriptors.
-  if [[ $FORCE -eq 0 ]] && [[ -f "$DEST/$m/manifest.toml" || -f "$DEST/$m/pipeline.toml" ]]; then
+  if [[ $FORCE -eq 0 ]] && [[ -f "$DEST/$m/manifest.toml" || -f "$DEST/$m/pipeline.toml" || -f "$DEST/$m/ensemble.toml" ]]; then
     stamp_file="$DEST/$m/.sparrow_zip_md5"
     if [[ $VERIFY -eq 1 && -n "$expected_md5" ]]; then
       recorded_md5="$(cat "$stamp_file" 2>/dev/null || true)"

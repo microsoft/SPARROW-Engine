@@ -101,7 +101,7 @@ pub async fn load_model(
 
     let handle = super::run_blocking({
         let mid = model_id.clone();
-        move || engine.get_or_load_model(&mid)
+        move || engine.get_or_load_audio_model(&mid)
     })
     .await?;
 
@@ -144,10 +144,10 @@ pub async fn unload_model(
     // design (lazy-load on the inference path doesn't apply to unload).
     let handle = state
         .engine
-        .get_model_handle(&model_id)
+        .get_audio_model_handle(&model_id)
         .ok_or_else(|| AppError::model_not_loaded(&model_id))?;
     let engine = state.engine.clone();
-    super::run_blocking(move || engine.unload_model(&handle)).await?;
+    super::run_blocking(move || engine.unload_audio_model(&handle)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

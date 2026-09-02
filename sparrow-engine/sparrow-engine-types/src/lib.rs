@@ -2,6 +2,7 @@
 //!
 //! Phase 3.8 Phase A. Zero ORT/CUDA/nvjpeg deps.
 
+mod audio_ensemble;
 pub mod drift_metrics;
 pub mod error;
 pub mod inference_log;
@@ -19,6 +20,11 @@ pub(crate) mod model_type;
 pub(crate) mod preprocess_meta;
 
 // Crate-root re-exports for ergonomic consumer access.
+pub use audio_ensemble::{
+    load_audio_ensemble_manifest, AudioEnsembleAuxiliary, AudioEnsembleManifest,
+    AudioEnsembleMember, AuxiliaryMerge, AuxiliaryMergeOp, CachedSpectrogramConfig,
+    ChannelSelection, EnsembleCombine, ShortWindowPolicy,
+};
 pub use device::Device;
 pub use drift_metrics::{DriftMetrics, DriftReference};
 pub use engine_config::EngineConfig;

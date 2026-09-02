@@ -23,6 +23,7 @@
 //!   routes to the right per-model GPU pipeline.
 
 pub mod audio;
+pub mod audio_ensemble;
 pub mod classify;
 pub mod decode;
 pub mod detect;
@@ -55,4 +56,5 @@ pub use sparrow_engine_types::*;
 
 // Engine-side re-exports (Engine + ModelHandle wrap GPU sessions and
 // stay in sparrow-engine-gpu).
+pub use audio_ensemble::{AudioEnsembleHandle, AudioModelHandle};
 pub use engine::{Engine, ModelHandle};
