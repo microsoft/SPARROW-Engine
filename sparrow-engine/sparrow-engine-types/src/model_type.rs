@@ -120,7 +120,7 @@ mod phase_a_r1_model_type_tests {
             center: true,
             fmin: 10_000.0,
             fmax: 120_000.0,
-            spec_height: 220,
+            spec_height: 128,
             resize_factor: 0.5,
             frame_rate_hz: 1_000.0,
             model_time_frames: 500,

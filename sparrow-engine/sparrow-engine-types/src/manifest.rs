@@ -41,7 +41,9 @@ pub struct PcenSpectrogramConfig {
     pub center: bool,
     pub fmin: f32,
     pub fmax: f32,
+    /// Model-input frequency rows after bilinear resizing.
     pub spec_height: usize,
+    /// Scale factor applied independently to the cropped frequency and time axes.
     pub resize_factor: f32,
     pub frame_rate_hz: f32,
     pub model_time_frames: usize,
@@ -1568,13 +1570,6 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             return Err(SparrowEngineError::InvalidManifest(
                 "pcen_spectrogram fmin/fmax must map to integral FFT bins".to_string(),
             ));
-        }
-        if (crop_end.round() - crop_start.round()) as usize != config.spec_height {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "pcen_spectrogram crop produces {} frequency bins, expected spec_height {}",
-                (crop_end.round() - crop_start.round()) as usize,
-                config.spec_height
-            )));
         }
     }
 
@@ -4912,7 +4907,7 @@ center = true
 power = 1
 fmin = 10000.0
 fmax = 120000.0
-spec_height = 220
+spec_height = 128
 resize_factor = 0.5
 resize_interpolation = "torch_bilinear"
 frame_rate_hz = 1000.0
@@ -4969,7 +4964,7 @@ format = "one_per_line"
         assert_eq!(preprocess.sample_rate, 256_000);
         assert_eq!(preprocess.n_fft, 512);
         assert_eq!(preprocess.hop_length, 128);
-        assert_eq!(preprocess.spec_height, 220);
+        assert_eq!(preprocess.spec_height, 128);
         assert_eq!(preprocess.model_time_frames, 500);
         assert_eq!(preprocess.resampler, AudioResampler::ScipyPoly);
         assert_eq!(preprocess.tail_policy, AudioTailPolicy::Drop);
@@ -5029,9 +5024,9 @@ format = "one_per_line"
                 "positive odd",
             ),
             (
-                "wrong crop height",
-                make_audio_event_toml().replace("spec_height = 220", "spec_height = 219"),
-                "crop produces 220",
+                "zero output height",
+                make_audio_event_toml().replace("spec_height = 128", "spec_height = 0"),
+                "dimensions and sample rate",
             ),
         ] {
             let dir = write_temp_file("manifest.toml", &manifest);

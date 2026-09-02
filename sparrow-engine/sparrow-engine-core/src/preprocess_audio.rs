@@ -209,22 +209,7 @@ pub fn load_audio_at_sample_rate(
         ));
     }
     let t_decode = Instant::now();
-    let (samples, sr) = match input {
-        AudioInput::FilePath(path) => decode_wav(path)?,
-        AudioInput::Samples { data, sample_rate } => {
-            if !data.iter().all(|sample| sample.is_finite()) {
-                return Err(SparrowEngineError::AudioDecode(
-                    "raw audio samples must be finite".to_string(),
-                ));
-            }
-            (data.clone(), *sample_rate)
-        }
-    };
-    if sr == 0 {
-        return Err(SparrowEngineError::AudioDecode(
-            "audio sample_rate must be greater than 0".to_string(),
-        ));
-    }
+    let (samples, sr) = decode_audio_input(input)?;
     tracing::info!(
         stage = "audio.decode",
         duration_ns = t_decode.elapsed().as_nanos() as u64,
@@ -256,6 +241,41 @@ pub fn load_audio_at_sample_rate(
         duration_s,
         orig_sample_rate: sr,
     })
+}
+
+/// Decode an audio input to mono without changing its sample rate.
+///
+/// Fixed-window frontends that require a model-specific resampler use this
+/// entry point so existing mel/raw-audio resampling behavior remains untouched.
+pub fn load_audio_native(input: &AudioInput) -> Result<AudioSamples> {
+    let (samples, sample_rate) = decode_audio_input(input)?;
+    let duration_s = samples.len() as f32 / sample_rate as f32;
+    Ok(AudioSamples {
+        data: samples,
+        sample_rate,
+        duration_s,
+        orig_sample_rate: sample_rate,
+    })
+}
+
+fn decode_audio_input(input: &AudioInput) -> Result<(Vec<f32>, u32)> {
+    let (samples, sample_rate) = match input {
+        AudioInput::FilePath(path) => decode_wav(path)?,
+        AudioInput::Samples { data, sample_rate } => {
+            if !data.iter().all(|sample| sample.is_finite()) {
+                return Err(SparrowEngineError::AudioDecode(
+                    "raw audio samples must be finite".to_string(),
+                ));
+            }
+            (data.clone(), *sample_rate)
+        }
+    };
+    if sample_rate == 0 {
+        return Err(SparrowEngineError::AudioDecode(
+            "audio sample_rate must be greater than 0".to_string(),
+        ));
+    }
+    Ok((samples, sample_rate))
 }
 
 /// Load audio as planar channels and resample each channel independently.
