@@ -226,7 +226,7 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 ## Model zoo
 
-Sparrow Engine doesn't ship the ONNX model weights in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
+Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
 **Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
@@ -257,89 +257,147 @@ spe detect --model MDV6-yolov10-e --print image.jpg
 
 The downloader verifies MD5 per model (against the Zenodo record API), is idempotent (skip-if-present unless `--force`), and unpacks into the layout Sparrow Engine expects (`<dir>/<model_id>/manifest.toml` + `model.onnx` + `labels.txt`).
 
-### Per-model catalog
+### Complete 75-model catalogue
 
-This is a **multi-license bundle** — each model ships under its own upstream license. Open each `models/<model_id>/LICENSE.md` after download for the canonical terms.
+The index below is generated from
+[`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
+the source of truth used by `download_models.sh`. The
+[full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
+developer/owner details, and source citations.
 
-The tables below highlight the most-used models across four groups (detectors, heatmap detectors, classifiers, audio) — they are **not the full catalog**. For the complete **75-model** catalog (incl. the regional camera-trap classifiers, the MegaDetector v1000 variants, the FathomNet marine-imagery detectors, and the BioCLIP image encoders in `general/encoder`), see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md). `yolo_e2e` detectors carry NMS in the ONNX graph; declared raw-head lanes use the shared engine-side `megadet_v5a` or `retinanet_soft_nms` postprocessor. All classifiers consume crops produced by an upstream detector.
+<!-- BEGIN GENERATED MODEL ZOO INDEX -->
 
-#### Bounding-box detectors
+| Area | Models |
+|---|---:|
+| Camera trap | 48 |
+| Acoustics | 11 |
+| Overhead | 6 |
+| Marine imagery | 6 |
+| General | 4 |
+| **Total** | **75** |
 
-| Model ID | Resolution | Classes | ONNX | License |
-|---|---|---|---|---|
-| `MDV6-yolov10-c` | 640 × 640 | 3 (animal / person / vehicle) | 9 MB | Ultralytics AGPL-3.0 |
-| `MDV6-yolov10-e` | 1280 × 1280 | 3 (animal / person / vehicle) | 113 MB | Ultralytics AGPL-3.0 |
-| `MDV5a` | 1280 × 1280 | 3 (animal / person / vehicle) | 535 MB | Ultralytics AGPL-3.0 |
-| `deepfaune-yolo8s` | 960 × 960 | 3 (MD-style) | 43 MB | AGPL-3.0 ∩ CC-BY-SA 4.0 |
-| `european_mammals` | 640 × 480 | 31 | 113 MB | Ultralytics AGPL-3.0 |
-| `north_american_mammals` | 640 × 480 | 14 | 113 MB | Ultralytics AGPL-3.0 |
-| `sub_saharan` | 640 × 480 | 35 | 113 MB | Ultralytics AGPL-3.0 |
-| `fathomnet-mbari-315k` | 640 × 640 | 499 marine classes | 275 MB | CC-BY-4.0 |
-| `fathomnet-vme` | 640 × 640 | 4 broad marine groups | 273 MB | CC-BY-4.0 |
-| `fathomnet-trash` | 640 × 640 | 13 debris / fauna / platform classes | 273 MB | CC-BY-4.0 |
-| `fathomnet-megafish-yolov5s-640` | 640 × 640 | 1 (fish) | 28 MB | MIT |
-| `fathomnet-megafish-yolov5m-1280` | 1280 × 1280 | 1 (fish) | 83 MB | MIT |
-| `fathomnet-megafish-yolov5l-640` | 640 × 640 | 1 (fish) | 185 MB | MIT |
+Formats: **69 ONNX**, **5 TFLite**, and **1 cascade descriptor**.
 
-- MegaDetector v6 (`MDV6-yolov10-c` / `-e`) is the recommended default detector — `-c` for speed, `-e` for accuracy.
-- `MDV5a` (formerly `Species_Net_MDV5a`) is the legacy v5a detector; kept for projects validated against v5a outputs.
-- `deepfaune-yolo8s` is the DeepFaune detector stage, designed to pair with `Deepfaune-Europe` / `Deepfaune-New-England` classifiers.
-- `european_mammals` / `north_american_mammals` / `sub_saharan` are the Microsoft AI for Good Lab (AI4G) regional YOLO detectors (multi-species per region).
-- `fathomnet-mbari-315k` detects 499 taxonomic, morphotaxonomic, life-stage, physical-feature, and non-biological classes in Monterey Bay underwater imagery.
-- `fathomnet-vme` detects four vulnerable-marine-ecosystem indicator groups; `fathomnet-trash` detects marine debris together with broad fauna, plant, and remotely operated vehicle classes.
-- The three `fathomnet-megafish-*` entries detect generic fish in underwater imagery. Choose `yolov5s-640` for speed and download size, `yolov5l-640` for the strongest measured recall and small/distant-fish coverage, or `yolov5m-1280` only when the upstream-native 1280px model is specifically required.
+#### Camera Trap — Detectors (21)
 
-#### Heatmap-based detectors
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `MDV5a` | MDV5a | MegaDetector | onnx · v5a | AGPL-3.0 | Yes |
+| `MDV6-yolov10-c` | MDV6-yolov10-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
+| `MDV6-yolov10-c-tflite` | MDV6-yolov10-c-tflite | MegaDetector | tflite-fp16 · v6 | AGPL-3.0 | Yes |
+| `MDV6-yolov10-e` | MDV6-yolov10-e | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
+| `deepfaune-yolo8s` | deepfaune-yolo8s | DeepFaune | onnx | AGPL-3.0 AND CC-BY-SA-4.0 | Yes |
+| `european_mammals` | MD European Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
+| `north_american_mammals` | MD North American Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
+| `sub_saharan` | MD Sub-Saharan Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
+| `MDV5b` | MDV5b | MegaDetector | onnx · v5b | AGPL-3.0 | Yes |
+| `MD1000-redwood` | MD1000-redwood | MegaDetector | onnx · v1000-redwood | AGPL-3.0 | Yes |
+| `MD1000-spruce` | MD1000-spruce | MegaDetector | onnx · v1000-spruce | AGPL-3.0 | Yes |
+| `MD1000-larch` | MD1000-larch | MegaDetector | onnx · v1000-larch | AGPL-3.0 | Yes |
+| `MD1000-cedar` | MD1000-cedar | MegaDetector | onnx · v1000-cedar | GPL-3.0 | Yes |
+| `MD1000-sorrel` | MD1000-sorrel | MegaDetector | onnx · v1000-sorrel | AGPL-3.0 | Yes |
+| `MDV6-yolov9-c` | MDV6-yolov9-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
+| `MDV6-yolov9-e` | MDV6-yolov9-e | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
+| `MDV6-rtdetr-c` | MDV6-rtdetr-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
+| `MDV6-mit-yolov9-c` | MDV6-mit-yolov9-c | MegaDetector | onnx · v6 | MIT | Yes |
+| `MDV6-mit-yolov9-e` | MDV6-mit-yolov9-e | MegaDetector | onnx · v6 | MIT | Yes |
+| `MDV6-apa-rtdetr-c` | MDV6-apa-rtdetr-c | MegaDetector | onnx · v6 | Apache-2.0 | Yes |
+| `MDV6-apa-rtdetr-e` | MDV6-apa-rtdetr-e | MegaDetector | onnx · v6 | Apache-2.0 | Yes |
 
-| Model ID | Resolution | Classes | ONNX | License |
-|---|---|---|---|---|
-| `HerdNet_General_Dataset_2022` | 512 × 512 | 6 species + background | 70 MB | CC-BY-NC-SA 4.0 |
-| `OWL` | 512 × 512 (tiled) | 1 (animal) | 114 MB | MIT |
+#### Camera Trap — Classifiers (27)
 
-- `HerdNet_General_Dataset_2022` counts large African mammals (elephants, antelopes, zebras, etc.) in low-altitude aerial / drone imagery.
-- `OWL` does tiled detection of small wildlife in large camera-trap or aerial scenes; converts heatmap peaks to fixed-size boxes.
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `AI4G-Amazon-V2` | AI4G-Amazon-V2 | AI4G | onnx | MIT | Yes |
+| `AI4G-Serengeti` | AI4G-Serengeti | AI4G | onnx | MIT | Yes |
+| `Deepfaune-Europe` | Deepfaune-Europe | DeepFaune | onnx | CC-BY-SA-4.0 | Yes |
+| `Deepfaune-New-England` | Deepfaune-New-England | DeepFaune | onnx | CC0-1.0 | Yes |
+| `SpeciesNet-Crop` | SpeciesNet-Crop | SpeciesNet | onnx | Apache-2.0 | Yes |
+| `southwest-usa-v3` | southwest-usa-v3-SDZWA | AddaxAI | onnx | MIT | Yes |
+| `peruvian-andes` | peruvian-andes-SDZWA | AddaxAI | onnx | MIT | Yes |
+| `sub-saharan-drylands` | sub-saharan-drylands-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `manas-panthera` | manas-panthera | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `gifu-japan` | gifu-japan-GifuUniversity | AddaxAI | onnx | MIT | Yes |
+| `hawaii-puaa` | hawaii-puaa-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
+| `central-india` | central-india-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
+| `top-end-savanna` | top-end-savanna-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
+| `parks-victoria` | parks-victoria-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
+| `sw-borderlands` | sw-borderlands-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
+| `ahdrift` | ahdrift-OSU-ColumbusZoo-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
+| `deep-forest-vision` | deep-forest-vision-MNHN-OFVI | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `awc135` | awc135-AWC | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `namibian` | namibian-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `iran` | iran-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `nz-invasives` | nz-invasives-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `queensland` | queensland-WildObs | AddaxAI, SpeciesNet | onnx | CC-BY-4.0 | Yes |
+| `nz-species` | nz-species-wekaResearch | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
+| `tropicam-ai` | tropicam-ai-MNCN-CSIC | AddaxAI | onnx | CC-BY-NC-ND-4.0 | No |
+| `terai-nepal` | terai-nepal | AddaxAI, MEWC | onnx | MIT | Yes |
+| `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-4.0 | Yes |
+| `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | MIT | Yes |
 
-#### Image classifiers (consume crops from a detector)
+#### Acoustics — Detectors (4)
 
-| Model ID | Crop | Classes | ONNX | License |
-|---|---|---|---|---|
-| `Deepfaune-Europe` | 182 × 182 | 34 | 1.2 GB | CC-BY-SA 4.0 |
-| `Deepfaune-New-England` | 182 × 182 | 24 | 1.2 GB | CC0 1.0 |
-| `SpeciesNet-Crop` | 480 × 480 | 2498 | 214 MB | Apache 2.0 |
-| `AI4G-Amazon-V2` | 224 × 224 | 36 | 90 MB | MIT |
-| `AI4G-Serengeti` | 224 × 224 | 10 | 43 MB | MIT |
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `md-audiobirds-v1` | md-audiobirds-v1 | — | onnx | MIT | Yes |
+| `orca-detector-dclde2026-v5` | orca-detector-dclde2026-v5 | DCLDE-orca | onnx · v5 | MIT | Yes |
+| `orca-detector-v5-fp16-tflite` | orca-detector-v5-fp16-tflite | DCLDE-orca | tflite-fp16 · v5 | MIT | Yes |
+| `orca-detector-v5-int8-tflite` | orca-detector-v5-int8-tflite | DCLDE-orca | tflite-int8 · v5 | MIT | Yes |
 
-- `Deepfaune-Europe` / `Deepfaune-New-England` are the DeepFaune classifier stage for European and New England (NA) mammals.
-- `SpeciesNet-Crop` is Google's SpeciesNet classifier; pairs downstream of a detector (e.g. MDv6).
-- `AI4G-Amazon-V2` and `AI4G-Serengeti` are Microsoft AI for Good Lab (AI4G) regional classifiers for Amazon-basin and Serengeti / East African species.
+#### Acoustics — Classifiers (6)
 
-#### Audio detectors / classifiers
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `orca-ecotype-dclde2026-v1` | orca-ecotype-dclde2026-v1 | DCLDE-orca | onnx · v1 | MIT | Yes |
+| `orca-ecotype-melinput-fp16-tflite` | orca-ecotype-melinput-fp16-tflite | DCLDE-orca | tflite-fp16 | MIT | Yes |
+| `orca-ecotype-melinput-int8-tflite` | orca-ecotype-melinput-int8-tflite | DCLDE-orca | tflite-int8 | MIT | Yes |
+| `perch-v2` | perch-v2 | — | onnx | Apache-2.0 | Yes |
+| `buzzdetect` | BuzzDetect Acoustic Event Classifier | BuzzDetect, YAMNet | onnx | MIT AND Apache-2.0 | Yes |
+| `perch-v2-fp16` | perch-v2-fp16 | — | onnx-fp16 | Apache-2.0 | Yes |
 
-| Model ID | Input window | Classes | ONNX | License |
-|---|---|---|---|---|
-| `md-audiobirds-v1` | 1 s @ 48 kHz, mel spectrogram (0.3 s stride) | 1 (bird vs no-bird) | 81 MB | MIT |
-| `perch-v2` | 5 s @ 32 kHz raw audio | 14795 | 391 MB | Apache 2.0 |
-| `orca-detector-dclde2026-v5` | 3 s @ 24 kHz, mel spectrogram (1.5 s stride) | 1 (Orca vs rest) | 43 MB | MIT |
-| `orca-ecotype-dclde2026-v1` | 3 s @ 24 kHz raw audio (in-graph mel) | 5 (SRKW / TKW / SAR / NRKW / OKW) | 48 MB | MIT |
+#### Acoustics — Cascade (1)
 
-- `md-audiobirds-v1` (published ONNX file `MD_AudioBirds_V1.onnx`) is the sparrow-engine default audio detector — a lightweight binary bird-vs-no-bird model used in benchmarks and Phase 4.x manual tests. Sliding-window mel-spectrogram front-end (Slaney mel scale + Slaney filter norm). Ships in the v0.5.0 Zenodo bundle (DOI [10.5281/zenodo.20563673](https://doi.org/10.5281/zenodo.20563673)) as FP32; the FP16 conversion path is in `sparrow-engine/tools/convert_fp16.py` and is parity-verified against the FP32 reference (Phase 3.8 Step 2 post-STRETCH audit, 2026-05-05).
-- `perch-v2` is Google Perch 2, a global bird-vocalisation classifier (Conformer encoder) with an in-graph mel front-end. Takes 160000-sample windows of raw audio; emits softmax over 14795 classes (birds + non-bird FSD50K labels).
-- `orca-detector-dclde2026-v5` + `orca-ecotype-dclde2026-v1` are a two-stage killer-whale cascade from the [DCLDE 2026 challenge](https://github.com/microsoft/orcas_dclde2026). Stage 1 screens 3-s windows with a binary Orca-vs-rest model at the operational 0.7 threshold. On the 180-window validation set, v5 produced recall 0.3333 and precision 0.8696, compared with v3 recall 0.30 and precision 0.90: two additional true positives, one additional false positive, and no v3 positive decisions lost. The FP16 and INT8 TFLite conversions had zero threshold flips and zero additional Orca decisions versus the binary ONNX; maximum absolute probability differences were 0.00184 and 0.02775. Stage 2 classifies Orca-positive windows into 5 Pacific Northwest ecotypes (Southern Resident / Transient / Southern Alaska Residents / Northern Resident / Offshore), with temperature scaling (T=5.4254) baked into the ONNX so softmax output is calibrated. Both stages **require sparrow-engine ≥ v0.1.16** because they use the RP-27 `fill_highfreq` engine opt-in to match the upstream training pipeline on under-sampled hydrophone audio (most field hydrophones cap at 16 kHz). Cascade usage and the Stage 2 abstention threshold (0.94 → `Unassigned_KW`) are documented in the model cards.
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `orca-cascade` | orca-cascade | DCLDE-orca | cascade | MIT | Yes |
 
-#### License summary
+#### Overhead — Detectors (6)
 
-This summary covers the highlighted models above. For the **complete per-model license + a machine-readable `commercial_use` flag across all 75 models**, see [`docs/model-zoo-catalogue.md`](docs/model-zoo-catalogue.md) (generated from `sparrow-engine/scripts/catalog.toml`, the source of truth).
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `HerdNet_General_Dataset_2022` | HerdNet_General_Dataset_2022 | — | onnx | CC-BY-NC-SA-4.0 | No |
+| `OWL` | OWL | — | onnx | MIT | Yes |
+| `imageomics-mmla` | Imageomics MMLA Aerial Wildlife Detector | Imageomics, YOLO11 | onnx | MIT | Yes |
+| `deepforest-tree` | DeepForest Tree-Crown Detector | DeepForest, RetinaNet | onnx | MIT | Yes |
+| `deepforest-bird` | DeepForest Aerial Bird Detector | DeepForest, RetinaNet | onnx | MIT | Yes |
+| `ducknet` | DuckNet Waterfowl Detector | DuckNet, RetinaNet | onnx | CC-BY-NC-SA-4.0 | No |
 
-- **Ultralytics AGPL-3.0**: MDv6 × 2, MDv5a, the 3 AI4G regional YOLOs, plus `deepfaune-yolo8s` (which also intersects CC-BY-SA 4.0).
-- **CC-BY-SA 4.0**: `deepfaune-yolo8s` (∩ AGPL-3.0), `Deepfaune-Europe`.
-- **CC-BY 4.0**: `fathomnet-mbari-315k`, `fathomnet-vme`, `fathomnet-trash`.
-- **CC0 1.0**: `Deepfaune-New-England` (USGS public-domain release).
-- **Apache 2.0**: `SpeciesNet-Crop`, `perch-v2`.
-- **MIT**: `AI4G-Amazon-V2`, `AI4G-Serengeti`, `OWL`, `md-audiobirds-v1`, `orca-detector-dclde2026-v5`, `orca-ecotype-dclde2026-v1`, and the three `fathomnet-megafish-*` variants.
-- **CC-BY-NC-SA 4.0 — non-commercial**: `HerdNet_General_Dataset_2022` (the pretrained weights are non-commercial; the HerdNet repo *code* is MIT). Plus the regional classifiers flagged `commercial_use = false` in the catalogue (non-commercial CC-BY-NC-* licenses).
+#### Marine Imagery — Detectors (6)
 
-**Commercial users**: YOLO-based detectors need an [Ultralytics Enterprise License](https://www.ultralytics.com/license), and every model with `commercial_use = false` (non-commercial licenses like CC-BY-NC-*) must not be used commercially. `tropicam-ai` is additionally no-derivatives (CC-BY-NC-ND-4.0).
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `fathomnet-mbari-315k` | FathomNet MBARI 315k Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
+| `fathomnet-vme` | FathomNet VME Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
+| `fathomnet-trash` | FathomNet Trash Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
+| `fathomnet-megafish-yolov5s-640` | FathomNet MegaFishDetector YOLOv5s 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
+| `fathomnet-megafish-yolov5m-1280` | FathomNet MegaFishDetector YOLOv5m 1280 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
+| `fathomnet-megafish-yolov5l-640` | FathomNet MegaFishDetector YOLOv5l 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
 
+#### General — Encoders (4)
+
+| Model ID | Display name | Family | Format | Licence | Commercial use |
+|---|---|---|---|---|:---:|
+| `bioclip-2` | bioclip-2 | BioCLIP | onnx · v2 | MIT | Yes |
+| `bioclip-2-fp16` | bioclip-2-fp16 | BioCLIP | onnx-fp16 · v2 | MIT | Yes |
+| `bioclip-25` | BioCLIP 2.5 Huge | BioCLIP | onnx-fp16 · 1.0.0 | MIT | Yes |
+| `dinov3-vitl16` | dinov3-vitl16 | DINOv3 | onnx · vitl16-lvd1689m | DINOv3 License | Yes |
+
+<!-- END GENERATED MODEL ZOO INDEX -->
+
+Every model remains subject to its own original licence and usage
+conditions. NonCommercial, ShareAlike, academic-use, custom, and other
+restrictions continue to apply to users of the corresponding model.
 ---
 
 ## Architecture
