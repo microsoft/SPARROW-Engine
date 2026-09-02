@@ -142,6 +142,14 @@ fn bongo_into_response(e: SparrowEngineError) -> Response {
         Resample(_) => (StatusCode::UNPROCESSABLE_ENTITY, "RESAMPLE_ERROR"),
         NotAnAudioModel { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
         IsAudioModel { .. } => (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE"),
+        NotAnAudioEventModel { .. } | IsAudioEventModel { .. } => {
+            (StatusCode::BAD_REQUEST, "WRONG_MODEL_TYPE")
+        }
+        FixedClipShapeMismatch { .. } => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "AUDIO_EVENT_SHAPE_MISMATCH",
+        ),
+        AudioInputTooLong { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "AUDIO_INPUT_TOO_LONG"),
         // Image
         ImageDecode(_) => (StatusCode::UNPROCESSABLE_ENTITY, "IMAGE_DECODE_ERROR"),
         InvalidStride { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_IMAGE_INPUT"),

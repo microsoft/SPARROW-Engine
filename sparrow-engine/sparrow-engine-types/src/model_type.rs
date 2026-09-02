@@ -23,11 +23,16 @@ pub fn derive_model_type(
 ) -> ModelType {
     let is_audio_preprocess = matches!(
         preprocess,
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
+        PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_)
     );
     let base = match (preprocess, postprocess) {
         (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Sigmoid { .. }) => {
             ModelType::AudioDetector
+        }
+        (PreprocessMethod::PcenSpectrogram(_), PostprocessMethod::TfEventPeaks(_)) => {
+            ModelType::AudioEventDetector
         }
         // Mel-input multi-class audio classifier (e.g. the orca ecotype mel-input
         // re-export) and raw-audio classifier (e.g. Perch 2) both resolve to
@@ -73,7 +78,10 @@ pub fn derive_model_type(
 #[cfg(test)]
 mod phase_a_r1_model_type_tests {
     use super::*;
-    use crate::manifest::{MultiLabelActivation, PostprocessMethod, PreprocessMethod};
+    use crate::manifest::{
+        AudioEventAnchor, AudioResampler, AudioTailPolicy, MultiLabelActivation,
+        PcenSpectrogramConfig, PostprocessMethod, PreprocessMethod, TfEventPeaksConfig,
+    };
     use crate::types::{ModelSubtype, ModelType};
 
     /// Canonical placeholder MelSpectrogram constructor. All fields are required
@@ -101,6 +109,46 @@ mod phase_a_r1_model_type_tests {
             window_samples: 160000,
             pass_orig_sample_rate: false,
         }
+    }
+
+    fn pcen() -> PreprocessMethod {
+        PreprocessMethod::PcenSpectrogram(PcenSpectrogramConfig {
+            sample_rate: 256_000,
+            resampler: AudioResampler::ScipyPoly,
+            n_fft: 512,
+            hop_length: 128,
+            center: true,
+            fmin: 10_000.0,
+            fmax: 120_000.0,
+            spec_height: 220,
+            resize_factor: 0.5,
+            frame_rate_hz: 1_000.0,
+            model_time_frames: 500,
+            pcen_smoothing_constant: 0.04876562255935639,
+            pcen_gain: 0.98,
+            pcen_bias: 2.0,
+            pcen_power: 0.5,
+            pcen_eps: 1e-6,
+            pcen_input_scale: 2_147_483_648.0,
+            spectral_mean_subtraction: true,
+            tail_policy: AudioTailPolicy::Drop,
+            max_input_duration_s: 3_600.0,
+        })
+    }
+
+    fn tf_event_peaks() -> PostprocessMethod {
+        PostprocessMethod::TfEventPeaks(TfEventPeaksConfig {
+            nms_kernel_time: 9,
+            nms_kernel_freq: 9,
+            detection_threshold: 0.01,
+            classification_threshold: 0.1,
+            top_k_per_second: 100,
+            size_time_scale: 1_000.0,
+            size_frequency_hz_per_unit: 859.375,
+            anchor: AudioEventAnchor::BottomLeft,
+            max_classes: 17,
+            batch_size: 1,
+        })
     }
 
     fn heatmap() -> PostprocessMethod {
@@ -297,6 +345,20 @@ mod phase_a_r1_model_type_tests {
             derive_model_type(&raw_audio(), &embedding(), ModelSubtype::Standard),
             ModelType::Detector
         );
+        assert_eq!(
+            derive_model_type(&pcen(), &embedding(), ModelSubtype::Standard),
+            ModelType::Detector
+        );
+    }
+
+    #[test]
+    fn audio_event_detector_when_pcen_plus_tf_event_peaks() {
+        for subtype in [ModelSubtype::Standard, ModelSubtype::Overhead] {
+            assert_eq!(
+                derive_model_type(&pcen(), &tf_event_peaks(), subtype),
+                ModelType::AudioEventDetector
+            );
+        }
     }
 
     #[test]
@@ -329,7 +391,7 @@ mod phase_a_r1_model_type_tests {
 
     #[test]
     fn cartesian_full_matrix_no_panic_and_no_unknown_variants() {
-        // Exhaustive cartesian: 4 preprocess × 8 postprocess × 2 subtype = 64 combos.
+        // Exhaustive cartesian: 5 preprocess × 9 postprocess × 2 subtype = 90 combos.
         // The point of this test is twofold:
         //   1) every combo derives without panicking,
         //   2) every result is one of the 5 known ModelType variants (sanity for refactor regressions).
@@ -338,6 +400,7 @@ mod phase_a_r1_model_type_tests {
             PreprocessMethod::Resize,
             mel(),
             raw_audio(),
+            pcen(),
         ];
         let postprocesses: Vec<PostprocessMethod> = vec![
             PostprocessMethod::YoloE2e,
@@ -350,6 +413,7 @@ mod phase_a_r1_model_type_tests {
             embedding(),
             PostprocessMethod::RtDetrTopk { topk: Some(300) },
             multi_label(),
+            tf_event_peaks(),
         ];
         let subtypes: [ModelSubtype; 2] = [ModelSubtype::Standard, ModelSubtype::Overhead];
 
@@ -365,6 +429,7 @@ mod phase_a_r1_model_type_tests {
                             | ModelType::Classifier
                             | ModelType::AudioDetector
                             | ModelType::AudioClassifier
+                            | ModelType::AudioEventDetector
                             | ModelType::ImageEncoder
                     );
                     assert!(known, "unknown ModelType returned: {mt:?}");
@@ -372,7 +437,7 @@ mod phase_a_r1_model_type_tests {
                 }
             }
         }
-        assert_eq!(combo_count, 4 * 8 * 2);
+        assert_eq!(combo_count, 5 * 9 * 2);
     }
 
     #[test]

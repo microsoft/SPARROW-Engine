@@ -412,7 +412,7 @@ pub fn render(image: &DynamicImage, annotations: &[BboxAnnotation], opts: &Rende
                     draw_filled_circle(&mut canvas, cx, cy, opts.point_radius, color);
                 }
             }
-            ModelType::ImageEncoder => {}
+            ModelType::ImageEncoder | ModelType::AudioEventDetector => {}
             // Standard / classifier / audio model types all take the bbox path.
             // Audio and classifier paths already produce full-image or
             // time-extent rectangles that render correctly as bboxes.

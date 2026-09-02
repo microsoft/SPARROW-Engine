@@ -345,6 +345,39 @@ pub struct AudioDetectResult {
     pub processing_time_ms: f32,
 }
 
+/// One localized time-frequency acoustic event.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioEvent {
+    pub start_time_s: f32,
+    pub end_time_s: f32,
+    pub low_freq_hz: f32,
+    pub high_freq_hz: f32,
+    pub peak_time_s: f32,
+    pub peak_freq_hz: f32,
+    pub confidence: f32,
+    pub classes: Vec<AudioClass>,
+}
+
+/// Full time-frequency event output from one recording.
+#[derive(Debug, Clone)]
+pub struct AudioEventResult {
+    pub events: Vec<AudioEvent>,
+    pub duration_s: f32,
+    pub analyzed_duration_s: f32,
+    pub sample_rate: u32,
+    pub clip_duration_s: f32,
+    pub clip_stride_s: f32,
+    pub processing_time_ms: f32,
+}
+
+/// Runtime overrides for time-frequency audio-event inference.
+#[derive(Debug, Clone, Default)]
+pub struct AudioEventOpts {
+    pub detection_threshold: Option<f32>,
+    pub classification_threshold: Option<f32>,
+    pub max_events: Option<u32>,
+}
+
 /// Merged-segment range output from `detect_audio::merge_segments`.
 ///
 /// `class` carries the resolved label string when class-aware merging is in
@@ -411,6 +444,7 @@ pub enum ModelType {
     OverheadDetector,
     Classifier,
     AudioDetector,
+    AudioEventDetector,
     AudioClassifier,
     ImageEncoder,
 }
@@ -422,6 +456,7 @@ impl ModelType {
             ModelType::OverheadDetector => "overhead_detector",
             ModelType::Classifier => "classifier",
             ModelType::AudioDetector => "audio_detector",
+            ModelType::AudioEventDetector => "audio_event_detector",
             ModelType::AudioClassifier => "audio_classifier",
             ModelType::ImageEncoder => "image_encoder",
         }
@@ -516,6 +551,7 @@ mod phase_a_r1_types_tests {
             (ModelType::Classifier, "classifier"),
             (ModelType::AudioDetector, "audio_detector"),
             (ModelType::AudioClassifier, "audio_classifier"),
+            (ModelType::AudioEventDetector, "audio_event_detector"),
             (ModelType::ImageEncoder, "image_encoder"),
         ];
         for (mt, expected) in table {
@@ -531,6 +567,7 @@ mod phase_a_r1_types_tests {
             ModelType::Classifier,
             ModelType::AudioDetector,
             ModelType::AudioClassifier,
+            ModelType::AudioEventDetector,
             ModelType::ImageEncoder,
         ] {
             assert_eq!(

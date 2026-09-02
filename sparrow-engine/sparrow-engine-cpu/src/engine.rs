@@ -831,6 +831,7 @@ impl Engine {
             ModelType::Classifier => "SPARROW_ENGINE_DEFAULT_CLASSIFIER",
             ModelType::AudioDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_DETECTOR",
             ModelType::AudioClassifier => "SPARROW_ENGINE_DEFAULT_AUDIO_CLASSIFIER",
+            ModelType::AudioEventDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_EVENT_DETECTOR",
             ModelType::ImageEncoder => "SPARROW_ENGINE_DEFAULT_IMAGE_ENCODER",
         };
         if let Ok(val) = std::env::var(env_var) {
@@ -1339,6 +1340,19 @@ fn validate_output_dims(
                 _ => false,
             };
             if !valid {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: shape_str,
+                    method: method_str,
+                });
+            }
+        }
+        PostprocessMethod::TfEventPeaks(_) => {
+            if shape.len() != 4
+                || !shape
+                    .iter()
+                    .all(|dimension| *dimension == -1 || *dimension > 0)
+            {
                 return Err(SparrowEngineError::OutputShapeMismatch {
                     id: model_id.to_string(),
                     shape: shape_str,

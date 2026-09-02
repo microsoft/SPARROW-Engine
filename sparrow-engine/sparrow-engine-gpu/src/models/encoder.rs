@@ -297,7 +297,9 @@ impl EncoderModel {
                     self.manifest.id
                 )));
             }
-            PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
+            PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_) => {
                 return Err(SparrowEngineError::InvalidManifest(format!(
                     "EncoderModel::embed: manifest '{}' has audio preprocess ({})",
                     self.manifest.id,

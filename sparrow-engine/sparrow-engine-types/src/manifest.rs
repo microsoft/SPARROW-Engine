@@ -22,6 +22,40 @@ pub const MAX_CROP_BATCH_SIZE: u32 = 64;
 // Public enums
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioResampler {
+    ScipyPoly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioTailPolicy {
+    Drop,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PcenSpectrogramConfig {
+    pub sample_rate: u32,
+    pub resampler: AudioResampler,
+    pub n_fft: usize,
+    pub hop_length: usize,
+    pub center: bool,
+    pub fmin: f32,
+    pub fmax: f32,
+    pub spec_height: usize,
+    pub resize_factor: f32,
+    pub frame_rate_hz: f32,
+    pub model_time_frames: usize,
+    pub pcen_smoothing_constant: f64,
+    pub pcen_gain: f64,
+    pub pcen_bias: f64,
+    pub pcen_power: f64,
+    pub pcen_eps: f64,
+    pub pcen_input_scale: f64,
+    pub spectral_mean_subtraction: bool,
+    pub tail_policy: AudioTailPolicy,
+    pub max_input_duration_s: f32,
+}
+
 /// Preprocessing method: how input is transformed before inference.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PreprocessMethod {
@@ -73,6 +107,8 @@ pub enum PreprocessMethod {
         /// RawAudio behavior (RP-27 Part 2, 2026-06-05).
         pass_orig_sample_rate: bool,
     },
+    /// Fixed-window PCEN spectrogram for time-frequency audio event models.
+    PcenSpectrogram(PcenSpectrogramConfig),
 }
 
 /// Tensor layout expected by the model.
@@ -382,6 +418,25 @@ impl MultiLabelActivation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioEventAnchor {
+    BottomLeft,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TfEventPeaksConfig {
+    pub nms_kernel_time: usize,
+    pub nms_kernel_freq: usize,
+    pub detection_threshold: f32,
+    pub classification_threshold: f32,
+    pub top_k_per_second: usize,
+    pub size_time_scale: f64,
+    pub size_frequency_hz_per_unit: f64,
+    pub anchor: AudioEventAnchor,
+    pub max_classes: usize,
+    pub batch_size: usize,
+}
+
 /// Postprocessing method: how raw model output becomes detections/classifications.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PostprocessMethod {
@@ -423,6 +478,8 @@ pub enum PostprocessMethod {
         max_classes: usize,
         frames_per_window: usize,
     },
+    /// Localized time-frequency event peaks from dense model output maps.
+    TfEventPeaks(TfEventPeaksConfig),
     /// Embedding vector output for image encoders.
     Embedding { normalize: bool },
 }
@@ -448,6 +505,7 @@ impl PreprocessMethod {
             PreprocessMethod::ResizeCrop => "resize_crop",
             PreprocessMethod::MelSpectrogram { .. } => "mel_spectrogram",
             PreprocessMethod::RawAudio { .. } => "raw_audio",
+            PreprocessMethod::PcenSpectrogram(_) => "pcen_spectrogram",
         }
     }
 
@@ -457,7 +515,9 @@ impl PreprocessMethod {
     pub fn is_audio(&self) -> bool {
         matches!(
             self,
-            PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
+            PreprocessMethod::MelSpectrogram { .. }
+                | PreprocessMethod::RawAudio { .. }
+                | PreprocessMethod::PcenSpectrogram(_)
         )
     }
 }
@@ -474,6 +534,7 @@ impl PostprocessMethod {
             PostprocessMethod::Softmax => "softmax",
             PostprocessMethod::Sigmoid { .. } => "sigmoid",
             PostprocessMethod::MultiLabel { .. } => "multi_label",
+            PostprocessMethod::TfEventPeaks(_) => "tf_event_peaks",
             PostprocessMethod::Embedding { .. } => "embedding",
         }
     }
@@ -954,6 +1015,41 @@ struct RawPreprocessing {
     /// non-mel preprocess methods.
     #[serde(default)]
     fill_highfreq: Option<bool>,
+    // PCEN spectrogram fields for time-frequency audio event models.
+    #[serde(default)]
+    resampler: Option<String>,
+    #[serde(default)]
+    center: Option<bool>,
+    #[serde(default)]
+    power: Option<u32>,
+    #[serde(default)]
+    spec_height: Option<usize>,
+    #[serde(default)]
+    resize_factor: Option<f32>,
+    #[serde(default)]
+    resize_interpolation: Option<String>,
+    #[serde(default)]
+    frame_rate_hz: Option<f32>,
+    #[serde(default)]
+    model_time_frames: Option<usize>,
+    #[serde(default)]
+    pcen_smoothing_constant: Option<f64>,
+    #[serde(default)]
+    pcen_gain: Option<f64>,
+    #[serde(default)]
+    pcen_bias: Option<f64>,
+    #[serde(default)]
+    pcen_power: Option<f64>,
+    #[serde(default)]
+    pcen_eps: Option<f64>,
+    #[serde(default)]
+    pcen_input_scale: Option<f64>,
+    #[serde(default)]
+    spectral_mean_subtraction: Option<bool>,
+    #[serde(default)]
+    tail_policy: Option<String>,
+    #[serde(default)]
+    max_input_duration_s: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -968,6 +1064,8 @@ struct RawInference {
     // Sliding window fields.
     segment_duration_s: Option<f32>,
     segment_stride_s: Option<f32>,
+    #[serde(default)]
+    batch_size: Option<usize>,
     /// Optional `[inference.trt]` nested table.
     #[serde(default)]
     trt: Option<TrtConfig>,
@@ -990,6 +1088,14 @@ struct RawPostprocessing {
     adaptive: Option<bool>,
     point_to_box_half_size: Option<u32>,
     topk: Option<usize>,
+    nms_kernel_time: Option<usize>,
+    nms_kernel_freq: Option<usize>,
+    detection_threshold: Option<f32>,
+    classification_threshold: Option<f32>,
+    top_k_per_second: Option<usize>,
+    size_time_scale: Option<f64>,
+    size_frequency_hz_per_unit: Option<f64>,
+    anchor: Option<String>,
     #[serde(default)]
     normalize: Option<bool>,
 }
@@ -1117,7 +1223,7 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
     // -- Parse preprocessing --
     let is_audio = matches!(
         raw.preprocessing.method.as_str(),
-        "mel_spectrogram" | "raw_audio"
+        "mel_spectrogram" | "raw_audio" | "pcen_spectrogram"
     );
 
     let preprocess_method = match raw.preprocessing.method.as_str() {
@@ -1172,6 +1278,118 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                     .ok_or_else(|| mel_err("filter_norm"))?,
                 fill_highfreq: raw.preprocessing.fill_highfreq.unwrap_or(false),
             }
+        }
+        "pcen_spectrogram" => {
+            let required = |name: &str| {
+                SparrowEngineError::InvalidManifest(format!(
+                    "pcen_spectrogram requires '{name}' field"
+                ))
+            };
+            let resampler = match raw
+                .preprocessing
+                .resampler
+                .as_deref()
+                .ok_or_else(|| required("resampler"))?
+            {
+                "scipy_poly" => AudioResampler::ScipyPoly,
+                other => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "unsupported pcen_spectrogram resampler '{other}'; only 'scipy_poly' is implemented"
+                    )))
+                }
+            };
+            if raw.preprocessing.window.as_deref() != Some("hann_periodic") {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "pcen_spectrogram requires window = 'hann_periodic'".to_string(),
+                ));
+            }
+            if raw.preprocessing.resize_interpolation.as_deref() != Some("torch_bilinear") {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "pcen_spectrogram requires resize_interpolation = 'torch_bilinear'".to_string(),
+                ));
+            }
+            if raw.preprocessing.power != Some(1) {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "pcen_spectrogram requires power = 1".to_string(),
+                ));
+            }
+            let tail_policy = match raw
+                .preprocessing
+                .tail_policy
+                .as_deref()
+                .ok_or_else(|| required("tail_policy"))?
+            {
+                "drop" => AudioTailPolicy::Drop,
+                other => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "unsupported pcen_spectrogram tail_policy '{other}'; only 'drop' is implemented"
+                    )))
+                }
+            };
+            PreprocessMethod::PcenSpectrogram(PcenSpectrogramConfig {
+                sample_rate: raw
+                    .preprocessing
+                    .sample_rate
+                    .ok_or_else(|| required("sample_rate"))?,
+                resampler,
+                n_fft: raw.preprocessing.n_fft.ok_or_else(|| required("n_fft"))? as usize,
+                hop_length: raw
+                    .preprocessing
+                    .hop_length
+                    .ok_or_else(|| required("hop_length"))? as usize,
+                center: raw.preprocessing.center.ok_or_else(|| required("center"))?,
+                fmin: raw.preprocessing.fmin.ok_or_else(|| required("fmin"))?,
+                fmax: raw.preprocessing.fmax.ok_or_else(|| required("fmax"))?,
+                spec_height: raw
+                    .preprocessing
+                    .spec_height
+                    .ok_or_else(|| required("spec_height"))?,
+                resize_factor: raw
+                    .preprocessing
+                    .resize_factor
+                    .ok_or_else(|| required("resize_factor"))?,
+                frame_rate_hz: raw
+                    .preprocessing
+                    .frame_rate_hz
+                    .ok_or_else(|| required("frame_rate_hz"))?,
+                model_time_frames: raw
+                    .preprocessing
+                    .model_time_frames
+                    .ok_or_else(|| required("model_time_frames"))?,
+                pcen_smoothing_constant: raw
+                    .preprocessing
+                    .pcen_smoothing_constant
+                    .ok_or_else(|| required("pcen_smoothing_constant"))?,
+                pcen_gain: raw
+                    .preprocessing
+                    .pcen_gain
+                    .ok_or_else(|| required("pcen_gain"))?,
+                pcen_bias: raw
+                    .preprocessing
+                    .pcen_bias
+                    .ok_or_else(|| required("pcen_bias"))?,
+                pcen_power: raw
+                    .preprocessing
+                    .pcen_power
+                    .ok_or_else(|| required("pcen_power"))?,
+                pcen_eps: raw
+                    .preprocessing
+                    .pcen_eps
+                    .ok_or_else(|| required("pcen_eps"))?,
+                pcen_input_scale: raw
+                    .preprocessing
+                    .pcen_input_scale
+                    .ok_or_else(|| required("pcen_input_scale"))?,
+                spectral_mean_subtraction: raw
+                    .preprocessing
+                    .spectral_mean_subtraction
+                    .ok_or_else(|| required("spectral_mean_subtraction"))?,
+                tail_policy,
+                max_input_duration_s: raw
+                    .preprocessing
+                    .max_input_duration_s
+                    .ok_or_else(|| required("max_input_duration_s"))?,
+            })
         }
         other => {
             return Err(SparrowEngineError::InvalidManifest(format!(
@@ -1281,6 +1499,82 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             return Err(SparrowEngineError::InvalidManifest(
                 "window_samples must be > 0".to_string(),
             ));
+        }
+    }
+
+    if let PreprocessMethod::PcenSpectrogram(config) = &preprocess_method {
+        if config.sample_rate == 0
+            || config.n_fft < 2
+            || !config.n_fft.is_power_of_two()
+            || config.hop_length == 0
+            || config.spec_height == 0
+            || config.model_time_frames == 0
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram dimensions and sample rate must be positive, with power-of-two n_fft"
+                    .to_string(),
+            ));
+        }
+        if !config.center {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram requires center = true".to_string(),
+            ));
+        }
+        if !config.fmin.is_finite()
+            || !config.fmax.is_finite()
+            || config.fmin < 0.0
+            || config.fmax <= config.fmin
+            || config.fmax > config.sample_rate as f32 / 2.0
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram requires finite 0 <= fmin < fmax <= Nyquist".to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("resize_factor", f64::from(config.resize_factor)),
+            ("frame_rate_hz", f64::from(config.frame_rate_hz)),
+            ("pcen_smoothing_constant", config.pcen_smoothing_constant),
+            ("pcen_gain", config.pcen_gain),
+            ("pcen_bias", config.pcen_bias),
+            ("pcen_power", config.pcen_power),
+            ("pcen_eps", config.pcen_eps),
+            ("pcen_input_scale", config.pcen_input_scale),
+            (
+                "max_input_duration_s",
+                f64::from(config.max_input_duration_s),
+            ),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "pcen_spectrogram {name} must be finite and > 0"
+                )));
+            }
+        }
+        if config.pcen_smoothing_constant >= 1.0 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_smoothing_constant must be less than 1".to_string(),
+            ));
+        }
+        if !config.spectral_mean_subtraction {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram requires spectral_mean_subtraction = true".to_string(),
+            ));
+        }
+        let crop_start = f64::from(config.fmin) * config.n_fft as f64 / config.sample_rate as f64;
+        let crop_end = f64::from(config.fmax) * config.n_fft as f64 / config.sample_rate as f64;
+        if (crop_start - crop_start.round()).abs() > 1e-9
+            || (crop_end - crop_end.round()).abs() > 1e-9
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram fmin/fmax must map to integral FFT bins".to_string(),
+            ));
+        }
+        if (crop_end.round() - crop_start.round()) as usize != config.spec_height {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "pcen_spectrogram crop produces {} frequency bins, expected spec_height {}",
+                (crop_end.round() - crop_start.round()) as usize,
+                config.spec_height
+            )));
         }
     }
 
@@ -1656,6 +1950,62 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 frames_per_window,
             }
         }
+        "tf_event_peaks" => {
+            let required = |name: &str| {
+                SparrowEngineError::InvalidManifest(format!(
+                    "tf_event_peaks requires '{name}' field"
+                ))
+            };
+            let anchor = match raw
+                .postprocessing
+                .anchor
+                .as_deref()
+                .ok_or_else(|| required("anchor"))?
+            {
+                "bottom_left" => AudioEventAnchor::BottomLeft,
+                other => {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "unsupported tf_event_peaks anchor '{other}'; only 'bottom_left' is implemented"
+                    )))
+                }
+            };
+            PostprocessMethod::TfEventPeaks(TfEventPeaksConfig {
+                nms_kernel_time: raw
+                    .postprocessing
+                    .nms_kernel_time
+                    .ok_or_else(|| required("nms_kernel_time"))?,
+                nms_kernel_freq: raw
+                    .postprocessing
+                    .nms_kernel_freq
+                    .ok_or_else(|| required("nms_kernel_freq"))?,
+                detection_threshold: raw
+                    .postprocessing
+                    .detection_threshold
+                    .ok_or_else(|| required("detection_threshold"))?,
+                classification_threshold: raw
+                    .postprocessing
+                    .classification_threshold
+                    .ok_or_else(|| required("classification_threshold"))?,
+                top_k_per_second: raw
+                    .postprocessing
+                    .top_k_per_second
+                    .ok_or_else(|| required("top_k_per_second"))?,
+                size_time_scale: raw
+                    .postprocessing
+                    .size_time_scale
+                    .ok_or_else(|| required("size_time_scale"))?,
+                size_frequency_hz_per_unit: raw
+                    .postprocessing
+                    .size_frequency_hz_per_unit
+                    .ok_or_else(|| required("size_frequency_hz_per_unit"))?,
+                anchor,
+                max_classes: raw
+                    .postprocessing
+                    .max_classes
+                    .ok_or_else(|| required("max_classes"))?,
+                batch_size: raw.inference.batch_size.unwrap_or(1),
+            })
+        }
         "embedding" => PostprocessMethod::Embedding {
             normalize: raw.postprocessing.normalize.unwrap_or(true),
         },
@@ -1671,7 +2021,8 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
             (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Sigmoid { .. })
             | (PreprocessMethod::MelSpectrogram { .. }, PostprocessMethod::Softmax)
             | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::Softmax)
-            | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::MultiLabel { .. }) => {}
+            | (PreprocessMethod::RawAudio { .. }, PostprocessMethod::MultiLabel { .. })
+            | (PreprocessMethod::PcenSpectrogram(_), PostprocessMethod::TfEventPeaks(_)) => {}
             (_, PostprocessMethod::Embedding { .. }) => {
                 return Err(SparrowEngineError::InvalidManifest(
                     "audio encoders are not yet supported".to_string(),
@@ -1684,6 +2035,116 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                     raw.postprocessing.method
                 )));
             }
+        }
+    }
+
+    if let (
+        PreprocessMethod::PcenSpectrogram(preprocess),
+        PostprocessMethod::TfEventPeaks(postprocess),
+        InferenceStrategy::SlidingWindow {
+            segment_duration_s,
+            segment_stride_s,
+        },
+    ) = (&preprocess_method, &postprocess_method, inference_strategy)
+    {
+        for (name, value) in [
+            ("detection_threshold", postprocess.detection_threshold),
+            (
+                "classification_threshold",
+                postprocess.classification_threshold,
+            ),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "tf_event_peaks {name} must be finite and in [0,1]"
+                )));
+            }
+        }
+        if postprocess.nms_kernel_time == 0
+            || postprocess.nms_kernel_time.is_multiple_of(2)
+            || postprocess.nms_kernel_freq == 0
+            || postprocess.nms_kernel_freq.is_multiple_of(2)
+            || postprocess.top_k_per_second == 0
+            || postprocess.max_classes == 0
+            || postprocess.batch_size == 0
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks kernels must be positive odd values and top_k_per_second, max_classes, and batch_size must be positive"
+                    .to_string(),
+            ));
+        }
+        if !postprocess.size_time_scale.is_finite()
+            || postprocess.size_time_scale <= 0.0
+            || !postprocess.size_frequency_hz_per_unit.is_finite()
+            || postprocess.size_frequency_hz_per_unit <= 0.0
+        {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks size scales must be finite and > 0".to_string(),
+            ));
+        }
+        if (segment_duration_s - segment_stride_s).abs() > 1e-6 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks requires non-overlapping clips: segment_stride_s must equal segment_duration_s"
+                    .to_string(),
+            ));
+        }
+        let clip_samples = f64::from(segment_duration_s) * preprocess.sample_rate as f64;
+        if (clip_samples - clip_samples.round()).abs() > 1e-6 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks segment_duration_s × sample_rate must be an integer".to_string(),
+            ));
+        }
+        let source_frames = 1 + clip_samples.round() as usize / preprocess.hop_length;
+        let resized_frames = (preprocess.resize_factor as f64 * source_frames as f64) as usize;
+        if resized_frames != preprocess.model_time_frames {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "pcen_spectrogram produces {resized_frames} frames, expected model_time_frames {}",
+                preprocess.model_time_frames
+            )));
+        }
+        let expected_frame_rate = preprocess.sample_rate as f64 * preprocess.resize_factor as f64
+            / preprocess.hop_length as f64;
+        if (expected_frame_rate - f64::from(preprocess.frame_rate_hz)).abs()
+            > expected_frame_rate * 1e-6
+        {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "pcen_spectrogram frame_rate_hz {} does not match derived {expected_frame_rate}",
+                preprocess.frame_rate_hz
+            )));
+        }
+        let expected_model_frames =
+            f64::from(segment_duration_s) * f64::from(preprocess.frame_rate_hz);
+        if (expected_model_frames - preprocess.model_time_frames as f64).abs() > 1e-4 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks clip duration and frame rate do not match model_time_frames"
+                    .to_string(),
+            ));
+        }
+        if preprocess.max_input_duration_s <= segment_duration_s {
+            return Err(SparrowEngineError::InvalidManifest(
+                "pcen_spectrogram max_input_duration_s must exceed one clip duration".to_string(),
+            ));
+        }
+        if precision != Precision::Fp32 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks supports precision = 'fp32' only".to_string(),
+            ));
+        }
+        let Some(trt_config) = &trt else {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks requires [inference.trt] with mode = 'off' and cuda_tf32 = false"
+                    .to_string(),
+            ));
+        };
+        if trt_config.effective_mode() != TrtMode::Off || trt_config.cuda_tf32 {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks requires TensorRT mode = 'off' and cuda_tf32 = false".to_string(),
+            ));
+        }
+        if raw.labels.is_none() {
+            return Err(SparrowEngineError::InvalidManifest(
+                "tf_event_peaks requires a labels section".to_string(),
+            ));
         }
     }
 
@@ -4431,6 +4892,156 @@ file = "labels.txt"
 format = "one_per_line"
 "#
         )
+    }
+
+    fn make_audio_event_toml() -> String {
+        r#"
+[model]
+id = "batdetect2-v2"
+format = "onnx"
+file = "model.onnx"
+
+[preprocessing]
+method = "pcen_spectrogram"
+sample_rate = 256000
+resampler = "scipy_poly"
+n_fft = 512
+hop_length = 128
+window = "hann_periodic"
+center = true
+power = 1
+fmin = 10000.0
+fmax = 120000.0
+spec_height = 220
+resize_factor = 0.5
+resize_interpolation = "torch_bilinear"
+frame_rate_hz = 1000.0
+model_time_frames = 500
+pcen_smoothing_constant = 0.04876562255935639
+pcen_gain = 0.98
+pcen_bias = 2.0
+pcen_power = 0.5
+pcen_eps = 0.000001
+pcen_input_scale = 2147483648.0
+spectral_mean_subtraction = true
+tail_policy = "drop"
+max_input_duration_s = 3600.0
+
+[inference]
+strategy = "sliding_window"
+segment_duration_s = 0.5
+segment_stride_s = 0.5
+precision = "fp32"
+batch_size = 1
+
+[inference.trt]
+mode = "off"
+cuda_tf32 = false
+
+[postprocessing]
+method = "tf_event_peaks"
+nms_kernel_time = 9
+nms_kernel_freq = 9
+detection_threshold = 0.01
+classification_threshold = 0.1
+top_k_per_second = 100
+size_time_scale = 1000.0
+size_frequency_hz_per_unit = 859.375
+anchor = "bottom_left"
+max_classes = 17
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+        .to_string()
+    }
+
+    #[test]
+    fn test_load_audio_event_manifest() {
+        let dir = write_temp_file("manifest.toml", &make_audio_event_toml());
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+
+        assert_eq!(manifest.id, "batdetect2-v2");
+        let PreprocessMethod::PcenSpectrogram(preprocess) = &manifest.preprocess_method else {
+            panic!("expected pcen_spectrogram");
+        };
+        assert_eq!(preprocess.sample_rate, 256_000);
+        assert_eq!(preprocess.n_fft, 512);
+        assert_eq!(preprocess.hop_length, 128);
+        assert_eq!(preprocess.spec_height, 220);
+        assert_eq!(preprocess.model_time_frames, 500);
+        assert_eq!(preprocess.resampler, AudioResampler::ScipyPoly);
+        assert_eq!(preprocess.tail_policy, AudioTailPolicy::Drop);
+
+        let PostprocessMethod::TfEventPeaks(postprocess) = &manifest.postprocess_method else {
+            panic!("expected tf_event_peaks");
+        };
+        assert_eq!(postprocess.nms_kernel_time, 9);
+        assert_eq!(postprocess.nms_kernel_freq, 9);
+        assert_eq!(postprocess.top_k_per_second, 100);
+        assert_eq!(postprocess.max_classes, 17);
+        assert_eq!(postprocess.batch_size, 1);
+        assert_eq!(postprocess.anchor, AudioEventAnchor::BottomLeft);
+        assert_eq!(
+            crate::model_type::derive_model_type(
+                &manifest.preprocess_method,
+                &manifest.postprocess_method,
+                manifest.subtype,
+            ),
+            crate::types::ModelType::AudioEventDetector
+        );
+    }
+
+    #[test]
+    fn test_audio_event_manifest_rejects_invalid_fixed_contract() {
+        for (name, manifest, expected) in [
+            (
+                "overlapping clips",
+                make_audio_event_toml()
+                    .replace("segment_stride_s = 0.5", "segment_stride_s = 0.25"),
+                "non-overlapping",
+            ),
+            (
+                "wrong static frame count",
+                make_audio_event_toml()
+                    .replace("model_time_frames = 500", "model_time_frames = 501"),
+                "produces 500 frames",
+            ),
+            (
+                "non-fp32",
+                make_audio_event_toml().replace("precision = \"fp32\"", "precision = \"fp16\""),
+                "file_fp16",
+            ),
+            (
+                "TensorRT enabled",
+                make_audio_event_toml().replace("mode = \"off\"", "mode = \"on_demand\""),
+                "TensorRT mode",
+            ),
+            (
+                "TF32 enabled",
+                make_audio_event_toml().replace("cuda_tf32 = false", "cuda_tf32 = true"),
+                "cuda_tf32",
+            ),
+            (
+                "even NMS kernel",
+                make_audio_event_toml().replace("nms_kernel_time = 9", "nms_kernel_time = 8"),
+                "positive odd",
+            ),
+            (
+                "wrong crop height",
+                make_audio_event_toml().replace("spec_height = 220", "spec_height = 219"),
+                "crop produces 220",
+            ),
+        ] {
+            let dir = write_temp_file("manifest.toml", &manifest);
+            let err = load_manifest(&dir.path().join("manifest.toml"))
+                .expect_err(&format!("{name} should fail"));
+            assert!(
+                err.to_string().contains(expected),
+                "{name}: expected '{expected}' in '{err}'"
+            );
+        }
     }
 
     #[test]

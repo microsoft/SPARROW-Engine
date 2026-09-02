@@ -164,6 +164,27 @@ pub enum SparrowEngineError {
     #[error("Model '{id}' is an audio model (preprocessing: {method}). Use detect() or classify() for vision models.")]
     IsAudioModel { id: String, method: String },
 
+    #[error("Model '{id}' is not a time-frequency audio event detector (postprocessing: {method}). Use detect_audio_events() only with audio event models.")]
+    NotAnAudioEventModel { id: String, method: String },
+
+    #[error("Model '{id}' is a time-frequency audio event detector (postprocessing: {method}). Use detect_audio_events() instead of detect_audio().")]
+    IsAudioEventModel { id: String, method: String },
+
+    #[error("Model '{id}' clip {clip_index} produced {actual_frames} time frames; expected fixed model shape {expected_frames}")]
+    FixedClipShapeMismatch {
+        id: String,
+        clip_index: usize,
+        expected_frames: usize,
+        actual_frames: usize,
+    },
+
+    #[error("Model '{id}' rejects {duration_s:.3}s audio; maximum supported duration is {max_duration_s:.3}s")]
+    AudioInputTooLong {
+        id: String,
+        duration_s: f32,
+        max_duration_s: f32,
+    },
+
     // -- Image input --
     #[error("Failed to decode image: {0}")]
     ImageDecode(String),

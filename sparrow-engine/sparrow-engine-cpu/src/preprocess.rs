@@ -119,7 +119,9 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
             )?;
             (canvas, scale, pad_x, pad_y, configured_w, configured_h)
         }
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
+        PreprocessMethod::MelSpectrogram { .. }
+        | PreprocessMethod::RawAudio { .. }
+        | PreprocessMethod::PcenSpectrogram(_) => {
             return Err(crate::error::SparrowEngineError::InvalidManifest(format!(
                 "{} preprocessing cannot be used with image preprocess()",
                 config.method.as_str()
@@ -134,7 +136,9 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
         PreprocessMethod::Resize => config.normalization,
         PreprocessMethod::ResizeMinMax => config.normalization,
         PreprocessMethod::ResizeCrop => config.normalization,
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
+        PreprocessMethod::MelSpectrogram { .. }
+        | PreprocessMethod::RawAudio { .. }
+        | PreprocessMethod::PcenSpectrogram(_) => {
             unreachable!()
         }
     };

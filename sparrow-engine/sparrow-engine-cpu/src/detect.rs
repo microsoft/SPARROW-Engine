@@ -823,6 +823,7 @@ fn dispatch_postprocess(
         }
         PostprocessMethod::Sigmoid { .. }
         | PostprocessMethod::MultiLabel { .. }
+        | PostprocessMethod::TfEventPeaks(_)
         | PostprocessMethod::Embedding { .. } => Err(SparrowEngineError::NotADetector {
             id: manifest.id.clone(),
             method: manifest.postprocess_method.as_str().to_string(),

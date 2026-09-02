@@ -392,6 +392,10 @@ fn build_loaded_model_inner(
                 manifest_dir,
             )?))),
         },
+        ModelType::AudioEventDetector => Err(SparrowEngineError::InvalidManifest(format!(
+            "manifest '{}': audio event runtime is not loaded through the legacy audio model path",
+            manifest.id
+        ))),
     }
 }
 
@@ -1466,6 +1470,7 @@ impl Engine {
             ModelType::Classifier => "SPARROW_ENGINE_DEFAULT_CLASSIFIER",
             ModelType::AudioDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_DETECTOR",
             ModelType::AudioClassifier => "SPARROW_ENGINE_DEFAULT_AUDIO_CLASSIFIER",
+            ModelType::AudioEventDetector => "SPARROW_ENGINE_DEFAULT_AUDIO_EVENT_DETECTOR",
             ModelType::ImageEncoder => "SPARROW_ENGINE_DEFAULT_IMAGE_ENCODER",
         };
         if let Ok(val) = std::env::var(env_var) {

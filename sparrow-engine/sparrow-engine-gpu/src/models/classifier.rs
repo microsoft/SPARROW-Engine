@@ -944,7 +944,9 @@ impl ClassifierModel {
                     self.manifest.id
                 )));
             }
-            PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => {
+            PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_) => {
                 // Defense-in-depth: load() rejects audio manifests at validation
                 // time (B6 / S-NEW-3). Aligned to `InvalidManifest` for variant
                 // consistency with the other classify() defense-in-depth arms
