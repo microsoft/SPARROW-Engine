@@ -19,7 +19,9 @@ use crate::{derive_model_type, ModelType};
 pub(crate) fn validate_image_encoder(manifest: &ModelManifest) -> Result<()> {
     if matches!(
         manifest.preprocess_method,
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
+        PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_)
     ) {
         return Err(SparrowEngineError::IsAudioModel {
             id: manifest.id.clone(),

@@ -22,7 +22,7 @@
 //! `engine_dispatch::detect_audio::AudioRange`.
 
 use sparrow_engine_types::error::{Result, SparrowEngineError};
-use sparrow_engine_types::manifest::{ModelManifest, PreprocessMethod};
+use sparrow_engine_types::manifest::{ModelManifest, PostprocessMethod, PreprocessMethod};
 use sparrow_engine_types::types::{AudioDetectOpts, AudioDetectResult, AudioInput, AudioSegment};
 
 use crate::engine::{LoadedModelInner, ModelHandle};
@@ -40,6 +40,21 @@ pub use sparrow_engine_types::AudioRange;
 /// are accepted (raw audio routes through the parallel
 /// [`crate::models::audio_raw::RawAudioModel`]).
 pub(crate) fn validate_audio_model(manifest: &ModelManifest) -> Result<()> {
+    if matches!(
+        (
+            &manifest.preprocess_method,
+            &manifest.postprocess_method
+        ),
+        (
+            PreprocessMethod::PcenSpectrogram(_),
+            PostprocessMethod::TfEventPeaks(_)
+        )
+    ) {
+        return Err(SparrowEngineError::IsAudioEventModel {
+            id: manifest.id.clone(),
+            method: manifest.postprocess_method.as_str().to_string(),
+        });
+    }
     match &manifest.preprocess_method {
         PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. } => Ok(()),
         other => Err(SparrowEngineError::NotAnAudioModel {

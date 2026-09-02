@@ -61,8 +61,8 @@ use sparrow_engine_types::manifest::{
     self, ModelManifest, PipelineManifest, PostprocessMethod, TrtMode,
 };
 use sparrow_engine_types::{
-    derive_model_type, AudioDetectOpts, AudioInput, ClassifyOpts, DetectOpts, ImageInput,
-    ModelInfo, ModelType, PixelFormat, TrtState, TrtStateView, WarmupOutcome,
+    derive_model_type, AudioDetectOpts, AudioEventOpts, AudioInput, ClassifyOpts, DetectOpts,
+    ImageInput, ModelInfo, ModelType, PixelFormat, TrtState, TrtStateView, WarmupOutcome,
 };
 
 // Phase 3.8 Phase C Wave 4b: re-export `Device` + `EngineConfig` at the
@@ -77,6 +77,7 @@ use crate::kernels::letterbox::LetterboxKernel;
 use crate::kernels::resize::ResizeKernel;
 use crate::kernels::resize_crop::ResizeCropKernel;
 use crate::models::audio::{AudioModel, GpuAudioDetectOpts};
+use crate::models::audio_event::AudioEventModel;
 use crate::models::audio_raw::RawAudioModel;
 use crate::models::classifier::{ClassifierModel, JpegDecoder};
 use crate::models::encoder::EncoderModel;
@@ -117,6 +118,7 @@ pub(crate) enum LoadedModelInner {
     Encoder(EncoderModel),
     Tiled(TiledModel),
     Audio(Box<AudioModel>),
+    AudioEvent(Box<AudioEventModel>),
     /// Phase D round 2 B-08: raw-audio classifiers (Perch 2 / perch-v2)
     /// whose ONNX consumes raw f32 samples directly with no mel pipeline.
     /// Held inline (not boxed) because `RawAudioModel` is small (single
@@ -392,9 +394,8 @@ fn build_loaded_model_inner(
                 manifest_dir,
             )?))),
         },
-        ModelType::AudioEventDetector => Err(SparrowEngineError::InvalidManifest(format!(
-            "manifest '{}': audio event runtime is not loaded through the legacy audio model path",
-            manifest.id
+        ModelType::AudioEventDetector => Ok(LoadedModelInner::AudioEvent(Box::new(
+            AudioEventModel::load_from_manifest(ctx, manifest, manifest_dir)?,
         ))),
     }
 }
@@ -651,6 +652,10 @@ fn validate_trt_loaded_model_once(
             let audio = canned_audio_input(&expected.manifest)?;
             model.detect(&audio, &AudioDetectOpts::default(), &expected.labels)?;
         }
+        LoadedModelInner::AudioEvent(model) => {
+            let audio = canned_audio_input(&expected.manifest)?;
+            model.detect(&audio, &AudioEventOpts::default(), &expected.labels)?;
+        }
     }
     Ok(())
 }
@@ -697,6 +702,15 @@ fn canned_audio_input(manifest: &ModelManifest) -> Result<AudioInput> {
             ((*sample_rate as f32) * duration_s.max(0.001)).ceil() as usize
         }
         manifest::PreprocessMethod::RawAudio { window_samples, .. } => *window_samples as usize,
+        manifest::PreprocessMethod::PcenSpectrogram(config) => {
+            let duration_s = match manifest.inference_strategy {
+                manifest::InferenceStrategy::SlidingWindow {
+                    segment_duration_s, ..
+                } => segment_duration_s,
+                _ => 0.5,
+            };
+            (config.sample_rate as f32 * duration_s).round() as usize
+        }
         other => {
             return Err(SparrowEngineError::InvalidManifest(format!(
                 "manifest '{}' is not an audio model (preprocess={})",
@@ -710,6 +724,7 @@ fn canned_audio_input(manifest: &ModelManifest) -> Result<AudioInput> {
     let sample_rate = match &manifest.preprocess_method {
         manifest::PreprocessMethod::MelSpectrogram { sample_rate, .. }
         | manifest::PreprocessMethod::RawAudio { sample_rate, .. } => *sample_rate,
+        manifest::PreprocessMethod::PcenSpectrogram(config) => config.sample_rate,
         _ => unreachable!("non-audio preprocess returned above"),
     };
     Ok(AudioInput::Samples {
@@ -883,6 +898,16 @@ impl Engine {
             }
             _ => Vec::new(),
         };
+        if let PostprocessMethod::TfEventPeaks(config) = &manifest_owned.postprocess_method {
+            if labels.len() != config.max_classes {
+                return Err(SparrowEngineError::InvalidManifest(format!(
+                    "audio event model '{}' expects {} labels, found {}",
+                    manifest_owned.id,
+                    config.max_classes,
+                    labels.len()
+                )));
+            }
+        }
 
         let inner = build_loaded_model_inner(&self.inner.ctx, &manifest_owned, manifest_dir)?;
 

@@ -16,7 +16,9 @@ use crate::models::encoder::PreprocessedImage;
 pub(crate) fn validate_image_encoder(manifest: &ModelManifest) -> Result<()> {
     if matches!(
         manifest.preprocess_method,
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
+        PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_)
     ) {
         return Err(SparrowEngineError::IsAudioModel {
             id: manifest.id.clone(),
@@ -66,7 +68,9 @@ pub fn embed(handle: &ModelHandle, image: &ImageInput) -> Result<EmbedResult> {
             id: inner.manifest.id.clone(),
             method: inner.manifest.postprocess_method.as_str().to_string(),
         }),
-        LoadedModelInner::Audio(_) | LoadedModelInner::AudioRaw(_) => {
+        LoadedModelInner::Audio(_)
+        | LoadedModelInner::AudioRaw(_)
+        | LoadedModelInner::AudioEvent(_) => {
             Err(SparrowEngineError::IsAudioModel {
                 id: inner.manifest.id.clone(),
                 method: inner.manifest.preprocess_method.as_str().to_string(),

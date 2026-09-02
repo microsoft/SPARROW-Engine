@@ -28,6 +28,7 @@ pub mod classify;
 pub mod decode;
 pub mod detect;
 pub mod detect_audio;
+pub mod detect_audio_events;
 pub mod embed;
 pub mod engine;
 pub mod kernels;

@@ -29,6 +29,7 @@
 //! directly without going through `Engine`.
 
 pub mod audio;
+pub mod audio_event;
 pub mod audio_raw;
 pub mod classifier;
 pub mod encoder;

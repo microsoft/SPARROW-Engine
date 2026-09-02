@@ -184,6 +184,22 @@ fn prepare_audio_detection(
 ) -> Result<PreparedAudioDetection> {
     let manifest = &handle.manifest;
 
+    if matches!(
+        (
+            &manifest.preprocess_method,
+            &manifest.postprocess_method
+        ),
+        (
+            PreprocessMethod::PcenSpectrogram(_),
+            PostprocessMethod::TfEventPeaks(_)
+        )
+    ) {
+        return Err(SparrowEngineError::IsAudioEventModel {
+            id: manifest.id.clone(),
+            method: manifest.postprocess_method.as_str().to_string(),
+        });
+    }
+
     // 1. Validate model type — must use one of the audio preprocess methods.
     let sample_rate = match &manifest.preprocess_method {
         PreprocessMethod::MelSpectrogram { sample_rate, .. } => *sample_rate,

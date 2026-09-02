@@ -26,6 +26,7 @@ pub mod audio_ensemble;
 pub mod classify;
 pub mod detect;
 pub mod detect_audio;
+pub mod detect_audio_events;
 pub mod embed;
 pub mod engine;
 pub mod pipeline;

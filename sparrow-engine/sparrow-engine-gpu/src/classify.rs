@@ -23,7 +23,9 @@ use crate::engine::{LoadedModelInner, ModelHandle};
 pub(crate) fn validate_vision_classifier(manifest: &ModelManifest) -> Result<()> {
     if matches!(
         manifest.preprocess_method,
-        PreprocessMethod::MelSpectrogram { .. } | PreprocessMethod::RawAudio { .. }
+        PreprocessMethod::MelSpectrogram { .. }
+            | PreprocessMethod::RawAudio { .. }
+            | PreprocessMethod::PcenSpectrogram(_)
     ) {
         return Err(SparrowEngineError::IsAudioModel {
             id: manifest.id.clone(),
@@ -90,7 +92,9 @@ pub fn classify(
                 method: inner.manifest.postprocess_method.as_str().to_string(),
             })
         }
-        LoadedModelInner::Audio(_) | LoadedModelInner::AudioRaw(_) => {
+        LoadedModelInner::Audio(_)
+        | LoadedModelInner::AudioRaw(_)
+        | LoadedModelInner::AudioEvent(_) => {
             Err(SparrowEngineError::IsAudioModel {
                 id: inner.manifest.id.clone(),
                 method: inner.manifest.preprocess_method.as_str().to_string(),
@@ -124,7 +128,9 @@ pub fn classify_batch(
                 method: inner.manifest.postprocess_method.as_str().to_string(),
             });
         }
-        LoadedModelInner::Audio(_) | LoadedModelInner::AudioRaw(_) => {
+        LoadedModelInner::Audio(_)
+        | LoadedModelInner::AudioRaw(_)
+        | LoadedModelInner::AudioEvent(_) => {
             return Err(SparrowEngineError::IsAudioModel {
                 id: inner.manifest.id.clone(),
                 method: inner.manifest.preprocess_method.as_str().to_string(),

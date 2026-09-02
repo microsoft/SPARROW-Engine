@@ -355,7 +355,7 @@ impl Engine {
         };
 
         // Validate output shape vs postprocessing method.
-        validate_output_shape(&session, &manifest)?;
+        validate_output_shape(&session, &manifest, &labels)?;
 
         let session = Arc::new(Mutex::new(session));
         let active = Arc::new(AtomicBool::new(true));
@@ -1112,7 +1112,11 @@ impl ModelHandle {
 
 /// Validate that the ONNX model's output shape matches the declared
 /// postprocessing method. Rejects non-conforming models at load time.
-fn validate_output_shape(session: &Session, manifest: &ModelManifest) -> Result<()> {
+fn validate_output_shape(
+    session: &Session,
+    manifest: &ModelManifest,
+    labels: &[String],
+) -> Result<()> {
     let method = &manifest.postprocess_method;
     let outputs = session.outputs();
 
@@ -1124,12 +1128,130 @@ fn validate_output_shape(session: &Session, manifest: &ModelManifest) -> Result<
         });
     }
 
+    if let (
+        PreprocessMethod::PcenSpectrogram(preprocess),
+        PostprocessMethod::TfEventPeaks(postprocess),
+    ) = (&manifest.preprocess_method, method)
+    {
+        return validate_audio_event_session(
+            session,
+            &manifest.id,
+            preprocess.spec_height,
+            preprocess.model_time_frames,
+            postprocess.max_classes,
+            labels.len(),
+        );
+    }
+
     if matches!(method, PostprocessMethod::Embedding { .. }) && outputs.len() != 1 {
         return Err(SparrowEngineError::OutputShapeMismatch {
             id: manifest.id.clone(),
             shape: format!("{} outputs", outputs.len()),
             method: method.as_str().to_string(),
         });
+    }
+
+    fn validate_audio_event_session(
+        session: &Session,
+        model_id: &str,
+        height: usize,
+        width: usize,
+        class_count: usize,
+        label_count: usize,
+    ) -> Result<()> {
+        use ort::value::{TensorElementType, ValueType};
+
+        if label_count != class_count {
+            return Err(SparrowEngineError::InvalidManifest(format!(
+                "audio event model '{model_id}' expects {class_count} labels, found {label_count}"
+            )));
+        }
+        let inputs = session.inputs();
+        if inputs.len() != 1 || inputs[0].name() != "spec" {
+            return Err(SparrowEngineError::OutputShapeMismatch {
+                id: model_id.to_string(),
+                shape: format!(
+                    "inputs [{}]",
+                    inputs
+                        .iter()
+                        .map(|input| input.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                method: "tf_event_peaks".to_string(),
+            });
+        }
+        validate_event_outlet(
+            &inputs[0],
+            model_id,
+            "spec",
+            &[1, height as i64, width as i64],
+        )?;
+
+        let outputs = session.outputs();
+        if outputs.len() != 3 {
+            return Err(SparrowEngineError::OutputShapeMismatch {
+                id: model_id.to_string(),
+                shape: format!("{} outputs", outputs.len()),
+                method: "tf_event_peaks".to_string(),
+            });
+        }
+        for (name, dimensions) in [
+            ("detection_probs", vec![1, height as i64, width as i64]),
+            ("size_preds", vec![2, height as i64, width as i64]),
+            (
+                "class_probs",
+                vec![class_count as i64, height as i64, width as i64],
+            ),
+        ] {
+            let output = outputs
+                .iter()
+                .find(|output| output.name() == name)
+                .ok_or_else(|| SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: format!("missing output '{name}'"),
+                    method: "tf_event_peaks".to_string(),
+                })?;
+            validate_event_outlet(output, model_id, name, &dimensions)?;
+        }
+
+        fn validate_event_outlet(
+            outlet: &ort::value::Outlet,
+            model_id: &str,
+            name: &str,
+            trailing_dimensions: &[i64],
+        ) -> Result<()> {
+            let ValueType::Tensor {
+                ty: TensorElementType::Float32,
+                shape,
+                ..
+            } = outlet.dtype()
+            else {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: format!("{name} has dtype {:?}", outlet.dtype()),
+                    method: "tf_event_peaks".to_string(),
+                });
+            };
+            let dimensions: Vec<i64> = shape.iter().copied().collect();
+            let valid_batch = matches!(dimensions.first(), Some(-1 | 1));
+            if dimensions.len() != trailing_dimensions.len() + 1
+                || !valid_batch
+                || !dimensions[1..]
+                    .iter()
+                    .zip(trailing_dimensions)
+                    .all(|(actual, expected)| *actual == -1 || actual == expected)
+            {
+                return Err(SparrowEngineError::OutputShapeMismatch {
+                    id: model_id.to_string(),
+                    shape: format!("{name} {dimensions:?}"),
+                    method: "tf_event_peaks".to_string(),
+                });
+            }
+            Ok(())
+        }
+
+        Ok(())
     }
 
     let output_names: Vec<&str> = outputs.iter().map(|output| output.name()).collect();
