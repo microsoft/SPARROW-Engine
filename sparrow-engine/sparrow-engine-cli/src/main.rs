@@ -54,10 +54,10 @@ use std::time::Duration;
 // this file uses `engine_dispatch::*` paths directly — no backward-compat
 // alias.
 use crate::engine_dispatch::{
-    audio_ensemble, classify, detect, detect_audio, embed, AudioDetectOpts, AudioDetectResult,
-    AudioInput, ClassifyOpts, ClassifyResult, DetectOpts, DetectResult, Device, EmbedResult,
-    Engine, EngineConfig, ImageInput, ModelInfo, ModelType, PipelineResult, SparrowEngineError,
-    TrtState, TrtStateView, TrtWarmupRejection,
+    audio_ensemble, classify, detect, detect_audio, detect_audio_events, embed, AudioDetectOpts,
+    AudioDetectResult, AudioEventOpts, AudioEventResult, AudioInput, ClassifyOpts, ClassifyResult,
+    DetectOpts, DetectResult, Device, EmbedResult, Engine, EngineConfig, ImageInput, ModelInfo,
+    ModelType, PipelineResult, SparrowEngineError, TrtState, TrtStateView, TrtWarmupRejection,
 };
 use clap::{CommandFactory, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -104,6 +104,8 @@ enum Commands {
     Embed(EmbedArgs),
     /// Run audio detection on audio files
     DetectAudio(DetectAudioArgs),
+    /// Detect localized time-frequency events in audio files
+    DetectAudioEvents(DetectAudioEventsArgs),
     /// Run detect -> classify pipeline on images
     Pipeline(PipelineArgs),
     /// Model management commands
@@ -298,6 +300,34 @@ struct DetectAudioArgs {
     /// Recording-level audio frame ensembles reject this override.
     #[arg(long = "segment-duration")]
     segment_duration_s: Option<f32>,
+}
+
+#[derive(clap::Args)]
+struct DetectAudioEventsArgs {
+    /// Input audio files or directories
+    #[arg(required = true)]
+    input: Vec<PathBuf>,
+    /// Audio event model ID. Uses the unique/default audio event model when omitted.
+    #[arg(long)]
+    model: Option<String>,
+    /// Detection confidence threshold
+    #[arg(long)]
+    threshold: Option<f32>,
+    /// Per-class probability threshold
+    #[arg(long)]
+    classification_threshold: Option<f32>,
+    /// Maximum events retained across the recording
+    #[arg(long)]
+    max_events: Option<u32>,
+    /// Print per-file results to stdout
+    #[arg(long)]
+    print: bool,
+    /// Output format for --print
+    #[arg(long, default_value = "json")]
+    format: OutputFormat,
+    /// Recurse into subdirectories
+    #[arg(long)]
+    recursive: bool,
 }
 
 #[derive(clap::Args)]
@@ -511,6 +541,31 @@ struct AudioRangeOutput {
 }
 
 #[derive(Serialize)]
+struct AudioEventDetectOutput {
+    file: String,
+    model_id: String,
+    duration_s: f32,
+    analyzed_duration_s: f32,
+    sample_rate: u32,
+    clip_duration_s: f32,
+    clip_stride_s: f32,
+    processing_time_ms: f32,
+    events: Vec<AudioEventOutput>,
+}
+
+#[derive(Serialize)]
+struct AudioEventOutput {
+    start_time_s: f32,
+    end_time_s: f32,
+    low_freq_hz: f32,
+    high_freq_hz: f32,
+    peak_time_s: f32,
+    peak_freq_hz: f32,
+    confidence: f32,
+    classes: Vec<AudioClassOutput>,
+}
+
+#[derive(Serialize)]
 struct PipelineOutput {
     file: String,
     pipeline_id: String,
@@ -664,6 +719,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::DetectAudio(args)) => {
             cmd_detect_audio(&cli.device, &cli.model_dir, cli.quiet, args)
         }
+        Some(Commands::DetectAudioEvents(args)) => {
+            cmd_detect_audio_events(&cli.device, &cli.model_dir, cli.quiet, args)
+        }
         Some(Commands::Pipeline(args)) => {
             cmd_pipeline(&cli.device, &cli.model_dir, cli.quiet, args)
         }
@@ -691,6 +749,9 @@ fn dispatch_command_with_engine(
         Some(Commands::Classify(args)) => cmd_classify_with_engine(engine, quiet, args),
         Some(Commands::Embed(args)) => cmd_embed_with_engine(engine, quiet, args),
         Some(Commands::DetectAudio(args)) => cmd_detect_audio_with_engine(engine, quiet, args),
+        Some(Commands::DetectAudioEvents(args)) => {
+            cmd_detect_audio_events_with_engine(engine, quiet, args)
+        }
         Some(Commands::Pipeline(args)) => cmd_pipeline_with_engine(engine, quiet, args),
         Some(Commands::Models {
             action: ModelsAction::Verify { model_id, write },
@@ -2124,6 +2185,181 @@ fn audio_merge_gap_s(effective_stride_s: f32, frame_duration_s: Option<f32>) -> 
     frame_duration_s
         .map(|duration| duration * 0.5)
         .unwrap_or(effective_stride_s + 1e-3)
+}
+
+fn cmd_detect_audio_events(
+    device_str: &str,
+    model_dir: &Option<PathBuf>,
+    quiet: bool,
+    args: DetectAudioEventsArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(device_str, model_dir)?;
+    cmd_detect_audio_events_with_engine(&engine, quiet, args)
+}
+
+fn cmd_detect_audio_events_with_engine(
+    engine: &Engine,
+    quiet: bool,
+    args: DetectAudioEventsArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (name, value) in [
+        ("--threshold", args.threshold),
+        (
+            "--classification-threshold",
+            args.classification_threshold,
+        ),
+    ] {
+        if let Some(value) = value {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(format!("{name} must be finite and in [0,1]").into());
+            }
+        }
+    }
+    let files = resolve_audio_inputs(&args.input, args.recursive);
+    if files.is_empty() {
+        return Err("No audio files found.".into());
+    }
+    let model_id = match args.model {
+        Some(model_id) => model_id,
+        None => engine
+            .resolve_default_model(ModelType::AudioEventDetector)
+            .ok_or(
+                "No default audio event model is available; pass --model <id>.",
+            )?,
+    };
+    let handle = engine.get_or_load_model(&model_id)?;
+    let opts = AudioEventOpts {
+        detection_threshold: args.threshold,
+        classification_threshold: args.classification_threshold,
+        max_events: args.max_events,
+    };
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    if args.print && matches!(args.format, OutputFormat::Csv) {
+        writeln!(
+            out,
+            "file,model_id,event_idx,class_rank,start_time_s,end_time_s,low_freq_hz,high_freq_hz,peak_time_s,peak_freq_hz,confidence,class_idx,class,probability"
+        )?;
+    }
+    let total = files.len();
+    let bar = make_progress_bar(total as u64, quiet);
+    let mut errors = 0usize;
+    let mut failures = Vec::new();
+    for file in &files {
+        bar.set_message(file.display().to_string());
+        let audio = AudioInput::FilePath(file.clone());
+        match detect_audio_events::detect_audio_events(&handle, &audio, &opts) {
+            Ok(result) if args.print => {
+                write_audio_event_output(
+                    &mut out,
+                    file,
+                    &model_id,
+                    &result,
+                    &args.format,
+                )?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                record_file_error(&bar, &mut failures, file, &error);
+                errors += 1;
+            }
+        }
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    emit_hidden_failures_if_partial(&bar, &failures, errors, total);
+    if errors == total {
+        return Err(all_files_failed_message(&failures).into());
+    }
+    Ok(())
+}
+
+fn write_audio_event_output(
+    out: &mut impl Write,
+    file: &Path,
+    model_id: &str,
+    result: &AudioEventResult,
+    format: &OutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match format {
+        OutputFormat::Json => {
+            let output = AudioEventDetectOutput {
+                file: file.display().to_string(),
+                model_id: model_id.to_string(),
+                duration_s: result.duration_s,
+                analyzed_duration_s: result.analyzed_duration_s,
+                sample_rate: result.sample_rate,
+                clip_duration_s: result.clip_duration_s,
+                clip_stride_s: result.clip_stride_s,
+                processing_time_ms: result.processing_time_ms,
+                events: result
+                    .events
+                    .iter()
+                    .map(|event| AudioEventOutput {
+                        start_time_s: event.start_time_s,
+                        end_time_s: event.end_time_s,
+                        low_freq_hz: event.low_freq_hz,
+                        high_freq_hz: event.high_freq_hz,
+                        peak_time_s: event.peak_time_s,
+                        peak_freq_hz: event.peak_freq_hz,
+                        confidence: event.confidence,
+                        classes: event
+                            .classes
+                            .iter()
+                            .map(|class| AudioClassOutput {
+                                class_idx: class.class_idx,
+                                label: class.label.clone(),
+                                probability: class.probability,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            };
+            serde_json::to_writer(&mut *out, &output)?;
+            writeln!(out)?;
+        }
+        OutputFormat::Csv => {
+            let file = engine_dispatch::export::csv_escape(&file.display().to_string());
+            let model_id = engine_dispatch::export::csv_escape(model_id);
+            for (event_index, event) in result.events.iter().enumerate() {
+                if event.classes.is_empty() {
+                    writeln!(
+                        out,
+                        "{file},{model_id},{event_index},,{},{},{},{},{},{},{},,,",
+                        event.start_time_s,
+                        event.end_time_s,
+                        event.low_freq_hz,
+                        event.high_freq_hz,
+                        event.peak_time_s,
+                        event.peak_freq_hz,
+                        event.confidence,
+                    )?;
+                    continue;
+                }
+                for (class_rank, class) in event.classes.iter().enumerate() {
+                    let label = class
+                        .label
+                        .as_deref()
+                        .map(engine_dispatch::export::csv_escape)
+                        .unwrap_or_default();
+                    writeln!(
+                        out,
+                        "{file},{model_id},{event_index},{class_rank},{},{},{},{},{},{},{},{},{label},{}",
+                        event.start_time_s,
+                        event.end_time_s,
+                        event.low_freq_hz,
+                        event.high_freq_hz,
+                        event.peak_time_s,
+                        event.peak_freq_hz,
+                        event.confidence,
+                        class.class_idx,
+                        class.probability,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn cmd_detect_audio(

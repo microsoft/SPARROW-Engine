@@ -56,8 +56,8 @@ type PyObject = Py<PyAny>;
 // so `sparrow_engine::SparrowEngineError`, `sparrow_engine::detect::detect`, etc. throughout this
 // file route through the shim.
 use crate::engine_dispatch::{
-    AudioDetectOpts, AudioInput, ClassifyOpts, DetectOpts, Device, Engine, EngineConfig,
-    ImageInput, ModelInfo as NativeModelInfo, ModelType,
+    AudioDetectOpts, AudioEventOpts, AudioInput, ClassifyOpts, DetectOpts, Device, Engine,
+    EngineConfig, ImageInput, ModelInfo as NativeModelInfo, ModelType,
 };
 
 // ---------------------------------------------------------------------------
@@ -561,6 +561,78 @@ impl AudioResult {
     }
 }
 
+#[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
+pub struct AudioEvent {
+        #[pyo3(get)]
+        pub start_time_s: f32,
+        #[pyo3(get)]
+        pub end_time_s: f32,
+        #[pyo3(get)]
+        pub low_freq_hz: f32,
+        #[pyo3(get)]
+        pub high_freq_hz: f32,
+        #[pyo3(get)]
+        pub peak_time_s: f32,
+        #[pyo3(get)]
+        pub peak_freq_hz: f32,
+        #[pyo3(get)]
+        pub confidence: f32,
+        #[pyo3(get)]
+        pub classes: Vec<AudioClass>,
+}
+
+#[pymethods]
+impl AudioEvent {
+    fn __repr__(&self) -> String {
+        format!(
+            "AudioEvent(start={:.4}s, end={:.4}s, low={:.1}Hz, high={:.1}Hz, confidence={:.4})",
+            self.start_time_s,
+            self.end_time_s,
+            self.low_freq_hz,
+            self.high_freq_hz,
+            self.confidence
+        )
+    }
+}
+
+#[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+pub struct AudioEventResult {
+        #[pyo3(get)]
+        pub model_id: String,
+        #[pyo3(get)]
+        pub duration_s: f32,
+        #[pyo3(get)]
+        pub analyzed_duration_s: f32,
+        #[pyo3(get)]
+        pub sample_rate: u32,
+        #[pyo3(get)]
+        pub clip_duration_s: f32,
+        #[pyo3(get)]
+        pub clip_stride_s: f32,
+        #[pyo3(get)]
+        pub processing_time_ms: f32,
+        #[pyo3(get)]
+        pub events: Vec<AudioEvent>,
+}
+
+#[pymethods]
+impl AudioEventResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "AudioEventResult(model_id='{}', duration={:.2}s, analyzed={:.2}s, events={})",
+            self.model_id,
+            self.duration_s,
+            self.analyzed_duration_s,
+            self.events.len()
+        )
+    }
+
+    fn __len__(&self) -> usize {
+        self.events.len()
+    }
+}
+
 /// Model metadata (id, type, default status).
 #[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
@@ -688,6 +760,19 @@ fn convert_audio_segment(s: &sparrow_engine::AudioSegment) -> AudioSegment {
         end_time_s: s.end_time_s,
         confidence: s.confidence,
         classes: s.classes.iter().map(convert_audio_class).collect(),
+    }
+}
+
+fn convert_audio_event(event: &sparrow_engine::AudioEvent) -> AudioEvent {
+    AudioEvent {
+        start_time_s: event.start_time_s,
+        end_time_s: event.end_time_s,
+        low_freq_hz: event.low_freq_hz,
+        high_freq_hz: event.high_freq_hz,
+        peak_time_s: event.peak_time_s,
+        peak_freq_hz: event.peak_freq_hz,
+        confidence: event.confidence,
+        classes: event.classes.iter().map(convert_audio_class).collect(),
     }
 }
 
@@ -1381,6 +1466,83 @@ impl PyEngine {
             }
             if errors == total && total > 0 {
                 return Err(SparrowEngineError::new_err("All files failed processing."));
+            }
+            Ok(results)
+        })
+    }
+
+    /// Detect localized time-frequency events in audio recordings.
+    #[pyo3(signature = (paths, model, detection_threshold=None, classification_threshold=None, max_events=None, progress_callback=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn detect_audio_events(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        model: &str,
+        detection_threshold: Option<f32>,
+        classification_threshold: Option<f32>,
+        max_events: Option<u32>,
+        progress_callback: Option<PyObject>,
+    ) -> PyResult<Vec<AudioEventResult>> {
+        for (name, value) in [
+            ("detection_threshold", detection_threshold),
+            ("classification_threshold", classification_threshold),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                    return Err(PyValueError::new_err(format!(
+                        "{name} must be finite and in [0,1]"
+                    )));
+                }
+            }
+        }
+        let engine = &self.engine;
+        let model_id = model.to_owned();
+        let opts = AudioEventOpts {
+            detection_threshold,
+            classification_threshold,
+            max_events,
+        };
+        let total = paths.len();
+        py.detach(move || {
+            let handle = engine.get_or_load_model(&model_id).map_err(to_pyerr)?;
+            let mut results = Vec::with_capacity(total);
+            let mut errors = 0usize;
+            for (index, path) in paths.iter().enumerate() {
+                let input = AudioInput::FilePath(PathBuf::from(path));
+                match sparrow_engine::detect_audio_events::detect_audio_events(
+                    &handle, &input, &opts,
+                ) {
+                    Ok(result) => results.push(AudioEventResult {
+                        model_id: model_id.clone(),
+                        duration_s: result.duration_s,
+                        analyzed_duration_s: result.analyzed_duration_s,
+                        sample_rate: result.sample_rate,
+                        clip_duration_s: result.clip_duration_s,
+                        clip_stride_s: result.clip_stride_s,
+                        processing_time_ms: result.processing_time_ms,
+                        events: result.events.iter().map(convert_audio_event).collect(),
+                    }),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "sparrow_engine::python",
+                            "skipping {path}: {error}"
+                        );
+                        errors += 1;
+                    }
+                }
+                invoke_progress(progress_callback.as_ref(), index, total, path)?;
+            }
+            if errors > 0 {
+                tracing::warn!(
+                    target: "sparrow_engine::python",
+                    "{errors} file(s) skipped due to errors"
+                );
+            }
+            if errors == total && total > 0 {
+                return Err(SparrowEngineError::new_err(
+                    "All files failed processing.",
+                ));
             }
             Ok(results)
         })
@@ -2278,6 +2440,8 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AudioClass>()?;
     m.add_class::<AudioSegment>()?;
     m.add_class::<AudioResult>()?;
+    m.add_class::<AudioEvent>()?;
+    m.add_class::<AudioEventResult>()?;
     m.add_class::<ModelInfo>()?;
 
     Ok(())

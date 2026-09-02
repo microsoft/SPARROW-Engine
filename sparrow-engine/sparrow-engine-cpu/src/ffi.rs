@@ -12,9 +12,10 @@
 use crate::audio_ensemble::AudioModelHandle;
 use crate::engine::{Device, Engine, EngineConfig, ModelHandle};
 use crate::types::{
-    AudioDetectOpts, AudioDetectResult, AudioInput, ClassifyOpts, ClassifyResult,
-    CropCoordinateSource, DetectOpts, DetectResult, EmbedResult, ImageInput, PipelineFailureKind,
-    PipelineFailureStage, PipelineResult, PipelineStageProvenance, PixelFormat,
+    AudioDetectOpts, AudioDetectResult, AudioEventOpts, AudioEventResult, AudioInput, ClassifyOpts,
+    ClassifyResult, CropCoordinateSource, DetectOpts, DetectResult, EmbedResult, ImageInput,
+    PipelineFailureKind, PipelineFailureStage, PipelineResult, PipelineStageProvenance,
+    PixelFormat,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -296,6 +297,38 @@ pub struct SparrowEngineAudioDetectOpts {
     pub segment_stride_s: f32,
 }
 
+#[repr(C)]
+pub struct SparrowEngineAudioEventOpts {
+    pub detection_threshold: f32,
+    pub classification_threshold: f32,
+    pub max_events: u32,
+}
+
+#[repr(C)]
+pub struct SparrowEngineAudioEvent {
+    pub start_time_s: f32,
+    pub end_time_s: f32,
+    pub low_freq_hz: f32,
+    pub high_freq_hz: f32,
+    pub peak_time_s: f32,
+    pub peak_freq_hz: f32,
+    pub confidence: f32,
+    pub classes: *const SparrowEngineAudioClass,
+    pub classes_len: usize,
+}
+
+#[repr(C)]
+pub struct SparrowEngineAudioEventResult {
+    pub data: *const SparrowEngineAudioEvent,
+    pub len: usize,
+    pub duration_s: f32,
+    pub analyzed_duration_s: f32,
+    pub sample_rate: u32,
+    pub clip_duration_s: f32,
+    pub clip_stride_s: f32,
+    pub processing_time_ms: f32,
+}
+
 /// Pixel format code for raw image buffers.
 ///
 /// Valid values are 0 = RGB, 1 = RGBA, 2 = BGRA, 3 = BGR.
@@ -375,6 +408,22 @@ unsafe fn audio_detect_opts_from_c(opts: *const SparrowEngineAudioDetectOpts) ->
         } else {
             Some(o.segment_stride_s)
         },
+    }
+}
+
+unsafe fn audio_event_opts_from_c(
+    opts: *const SparrowEngineAudioEventOpts,
+) -> AudioEventOpts {
+    if opts.is_null() {
+        return AudioEventOpts::default();
+    }
+    let options = &*opts;
+    AudioEventOpts {
+        detection_threshold: (options.detection_threshold != 0.0)
+            .then_some(options.detection_threshold),
+        classification_threshold: (options.classification_threshold != 0.0)
+            .then_some(options.classification_threshold),
+        max_events: (options.max_events != 0).then_some(options.max_events),
     }
 }
 
@@ -1039,6 +1088,96 @@ fn audio_result_v2_to_c(result: AudioDetectResult) -> *mut SparrowEngineAudioRes
 struct AudioResultV2WithOwner {
     header: SparrowEngineAudioResult_v2,
     _owner: AudioResultV2Owned,
+}
+
+struct AudioEventResultOwned {
+    _labels: Vec<CString>,
+    _classes: Vec<SparrowEngineAudioClass>,
+    events: Vec<SparrowEngineAudioEvent>,
+}
+
+#[repr(C)]
+struct AudioEventResultWithOwner {
+    header: SparrowEngineAudioEventResult,
+    _owner: AudioEventResultOwned,
+}
+
+fn audio_event_result_to_c(result: AudioEventResult) -> *mut SparrowEngineAudioEventResult {
+    let total_class_count = result.events.iter().map(|event| event.classes.len()).sum();
+    let mut labels = Vec::new();
+    let mut label_indices = Vec::with_capacity(result.events.len());
+    for event in &result.events {
+        let mut event_labels = Vec::with_capacity(event.classes.len());
+        for class in &event.classes {
+            if let Some(label) = &class.label {
+                labels.push(CString::new(label.replace('\0', "")).unwrap_or_default());
+                event_labels.push(Some(labels.len() - 1));
+            } else {
+                event_labels.push(None);
+            }
+        }
+        label_indices.push(event_labels);
+    }
+
+    let mut classes = Vec::with_capacity(total_class_count);
+    for (event_index, event) in result.events.iter().enumerate() {
+        for (class_index, class) in event.classes.iter().enumerate() {
+            classes.push(SparrowEngineAudioClass {
+                class_idx: class.class_idx,
+                label: label_indices[event_index][class_index]
+                    .map(|index| labels[index].as_ptr())
+                    .unwrap_or(ptr::null()),
+                probability: class.probability,
+            });
+        }
+    }
+
+    let mut events = Vec::with_capacity(result.events.len());
+    let mut class_offset = 0usize;
+    for event in &result.events {
+        let classes_len = event.classes.len();
+        events.push(SparrowEngineAudioEvent {
+            start_time_s: event.start_time_s,
+            end_time_s: event.end_time_s,
+            low_freq_hz: event.low_freq_hz,
+            high_freq_hz: event.high_freq_hz,
+            peak_time_s: event.peak_time_s,
+            peak_freq_hz: event.peak_freq_hz,
+            confidence: event.confidence,
+            classes: if classes_len == 0 {
+                ptr::null()
+            } else {
+                unsafe { classes.as_ptr().add(class_offset) }
+            },
+            classes_len,
+        });
+        class_offset += classes_len;
+    }
+
+    let owned = AudioEventResultOwned {
+        _labels: labels,
+        _classes: classes,
+        events,
+    };
+    let mut combined = Box::new(AudioEventResultWithOwner {
+        header: SparrowEngineAudioEventResult {
+            data: ptr::null(),
+            len: owned.events.len(),
+            duration_s: result.duration_s,
+            analyzed_duration_s: result.analyzed_duration_s,
+            sample_rate: result.sample_rate,
+            clip_duration_s: result.clip_duration_s,
+            clip_stride_s: result.clip_stride_s,
+            processing_time_ms: result.processing_time_ms,
+        },
+        _owner: owned,
+    });
+    combined.header.data = if combined._owner.events.is_empty() {
+        ptr::null()
+    } else {
+        combined._owner.events.as_ptr()
+    };
+    Box::into_raw(combined) as *mut SparrowEngineAudioEventResult
 }
 
 // ===========================================================================
@@ -1869,6 +2008,48 @@ pub unsafe extern "C" fn sparrow_engine_detect_audio_v2(
     }
 }
 
+/// Detect localized time-frequency events in a WAV file.
+///
+/// # Safety
+/// - `model` must be a valid standard model pointer.
+/// - `audio_path` must be a valid null-terminated UTF-8 path.
+/// - `opts` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_detect_audio_events(
+    model: *const SparrowEngineModel,
+    audio_path: *const c_char,
+    opts: *const SparrowEngineAudioEventOpts,
+) -> *mut SparrowEngineAudioEventResult {
+    clear_last_error();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(
+        || -> Result<*mut SparrowEngineAudioEventResult, String> {
+            let audio_model = ffi_model_handle(model)?;
+            let handle = standard_model_handle(audio_model)?;
+            let path = cstr_to_str(audio_path)?;
+            let input = AudioInput::FilePath(PathBuf::from(path));
+            let options = audio_event_opts_from_c(opts);
+            let result = crate::detect_audio_events::detect_audio_events(
+                handle, &input, &options,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(audio_event_result_to_c(result))
+        },
+    ));
+    match result {
+        Ok(Ok(pointer)) => pointer,
+        Ok(Err(error)) => {
+            set_last_error(error);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error(
+                "internal error: panic in sparrow_engine_detect_audio_events".to_string(),
+            );
+            ptr::null_mut()
+        }
+    }
+}
+
 /// Callback type for streaming audio detection.
 /// Called once per segment that exceeds the confidence threshold.
 /// `user_data` is passed through from the caller (opaque context pointer).
@@ -1984,6 +2165,29 @@ pub unsafe extern "C" fn sparrow_engine_audio_result_v2_free(
     }));
     if result.is_err() {
         set_last_error("internal error: panic in sparrow_engine_audio_result_v2_free".to_string());
+    }
+}
+
+/// Free a result returned by `sparrow_engine_detect_audio_events`.
+///
+/// # Safety
+/// `ptr` must be null or a pointer returned by
+/// `sparrow_engine_detect_audio_events`.
+#[no_mangle]
+pub unsafe extern "C" fn sparrow_engine_audio_event_result_free(
+    ptr: *mut SparrowEngineAudioEventResult,
+) {
+    clear_last_error();
+    if ptr.is_null() {
+        return;
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        drop(Box::from_raw(ptr as *mut AudioEventResultWithOwner));
+    }));
+    if result.is_err() {
+        set_last_error(
+            "internal error: panic in sparrow_engine_audio_event_result_free".to_string(),
+        );
     }
 }
 
@@ -2597,8 +2801,8 @@ pub extern "C" fn sparrow_engine_version() -> *const c_char {
 mod tests {
     use super::*;
     use crate::types::{
-        AudioClass, AudioSegment, BBox, Classification, CropCoordinateSource, Detection,
-        PipelineCropRegion, PipelineDetection, PipelineFailure, PipelineFailureKind,
+        AudioClass, AudioEvent, AudioSegment, BBox, Classification, CropCoordinateSource,
+        Detection, PipelineCropRegion, PipelineDetection, PipelineFailure, PipelineFailureKind,
         PipelineFailureStage, PipelineProvenance,
     };
     use std::ffi::CStr;
@@ -2996,6 +3200,46 @@ mod tests {
             assert!(segments[1].classes.is_null());
 
             sparrow_engine_audio_result_v2_free(ptr);
+        }
+    }
+
+    #[test]
+    fn audio_event_result_to_c_preserves_geometry_and_classes() {
+        let result = AudioEventResult {
+            events: vec![AudioEvent {
+                start_time_s: 1.0,
+                end_time_s: 1.02,
+                low_freq_hz: 20_000.0,
+                high_freq_hz: 45_000.0,
+                peak_time_s: 1.005,
+                peak_freq_hz: 22_000.0,
+                confidence: 0.9,
+                classes: vec![AudioClass {
+                    class_idx: 4,
+                    label: Some("bat".to_string()),
+                    probability: 0.8,
+                }],
+            }],
+            duration_s: 2.0,
+            analyzed_duration_s: 1.5,
+            sample_rate: 256_000,
+            clip_duration_s: 0.5,
+            clip_stride_s: 0.5,
+            processing_time_ms: 3.0,
+        };
+        let pointer = audio_event_result_to_c(result);
+        assert!(!pointer.is_null());
+        unsafe {
+            let header = &*pointer;
+            assert_eq!(header.len, 1);
+            assert_eq!(header.analyzed_duration_s, 1.5);
+            let event = &*header.data;
+            assert_eq!(event.peak_freq_hz, 22_000.0);
+            assert_eq!(event.classes_len, 1);
+            let class = &*event.classes;
+            assert_eq!(class.class_idx, 4);
+            assert_eq!(CStr::from_ptr(class.label).to_str().unwrap(), "bat");
+            sparrow_engine_audio_event_result_free(pointer);
         }
     }
 }

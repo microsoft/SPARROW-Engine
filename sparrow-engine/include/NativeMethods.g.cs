@@ -206,6 +206,17 @@ namespace SparrowEngine.Native
         internal static extern SparrowEngineAudioResult_v2* sparrow_engine_detect_audio_v2(void* model, byte* audio_path, SparrowEngineAudioDetectOpts* opts);
 
         /// <summary>
+        ///  Detect localized time-frequency events in a WAV file.
+        ///
+        ///  # Safety
+        ///  - `model` must be a valid standard model pointer.
+        ///  - `audio_path` must be a valid null-terminated UTF-8 path.
+        ///  - `opts` may be null.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_detect_audio_events", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern SparrowEngineAudioEventResult* sparrow_engine_detect_audio_events(void* model, byte* audio_path, SparrowEngineAudioEventOpts* opts);
+
+        /// <summary>
         ///  Run audio detection with per-segment streaming callback.
         ///
         ///  CPU callback cadence is per-segment: the callback is invoked immediately
@@ -246,6 +257,16 @@ namespace SparrowEngine.Native
         /// </summary>
         [DllImport(__DllName, EntryPoint = "sparrow_engine_audio_result_v2_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void sparrow_engine_audio_result_v2_free(SparrowEngineAudioResult_v2* ptr);
+
+        /// <summary>
+        ///  Free a result returned by `sparrow_engine_detect_audio_events`.
+        ///
+        ///  # Safety
+        ///  `ptr` must be null or a pointer returned by
+        ///  `sparrow_engine_detect_audio_events`.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "sparrow_engine_audio_event_result_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void sparrow_engine_audio_event_result_free(SparrowEngineAudioEventResult* ptr);
 
         /// <summary>
         ///  Free a `SparrowEngineDetections` returned by `sparrow_engine_detect` or `sparrow_engine_detect_raw`.
@@ -692,6 +713,41 @@ namespace SparrowEngine.Native
         public float confidence_threshold;
         public float segment_duration_s;
         public float segment_stride_s;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEngineAudioEventOpts
+    {
+        public float detection_threshold;
+        public float classification_threshold;
+        public uint max_events;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEngineAudioEvent
+    {
+        public float start_time_s;
+        public float end_time_s;
+        public float low_freq_hz;
+        public float high_freq_hz;
+        public float peak_time_s;
+        public float peak_freq_hz;
+        public float confidence;
+        public SparrowEngineAudioClass* classes;
+        public nuint classes_len;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct SparrowEngineAudioEventResult
+    {
+        public SparrowEngineAudioEvent* data;
+        public nuint len;
+        public float duration_s;
+        public float analyzed_duration_s;
+        public uint sample_rate;
+        public float clip_duration_s;
+        public float clip_stride_s;
+        public float processing_time_ms;
     }
 
     /// <summary>

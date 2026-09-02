@@ -342,6 +342,53 @@ pub struct AudioDetectResponse {
     pub segments: Vec<AudioSegmentResponse>,
 }
 
+#[derive(Serialize)]
+pub struct AudioEventResponse {
+    pub start_time_s: f32,
+    pub end_time_s: f32,
+    pub low_freq_hz: f32,
+    pub high_freq_hz: f32,
+    pub peak_time_s: f32,
+    pub peak_freq_hz: f32,
+    pub confidence: f32,
+    pub classes: Vec<AudioClassResponse>,
+}
+
+impl From<crate::engine_dispatch::AudioEvent> for AudioEventResponse {
+    fn from(event: crate::engine_dispatch::AudioEvent) -> Self {
+        Self {
+            start_time_s: event.start_time_s,
+            end_time_s: event.end_time_s,
+            low_freq_hz: event.low_freq_hz,
+            high_freq_hz: event.high_freq_hz,
+            peak_time_s: event.peak_time_s,
+            peak_freq_hz: event.peak_freq_hz,
+            confidence: event.confidence,
+            classes: event
+                .classes
+                .into_iter()
+                .map(|class| AudioClassResponse {
+                    class_idx: class.class_idx,
+                    label: class.label,
+                    probability: class.probability,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct AudioEventDetectResponse {
+    pub model_id: String,
+    pub duration_s: f32,
+    pub analyzed_duration_s: f32,
+    pub sample_rate: u32,
+    pub clip_duration_s: f32,
+    pub clip_stride_s: f32,
+    pub processing_time_ms: f32,
+    pub events: Vec<AudioEventResponse>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

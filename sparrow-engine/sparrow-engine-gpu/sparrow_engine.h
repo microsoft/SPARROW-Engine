@@ -286,6 +286,35 @@ typedef struct SparrowEngineAudioResult_v2 {
   float processing_time_ms;
 } SparrowEngineAudioResult_v2;
 
+typedef struct SparrowEngineAudioEvent {
+  float start_time_s;
+  float end_time_s;
+  float low_freq_hz;
+  float high_freq_hz;
+  float peak_time_s;
+  float peak_freq_hz;
+  float confidence;
+  const struct SparrowEngineAudioClass *classes;
+  uintptr_t classes_len;
+} SparrowEngineAudioEvent;
+
+typedef struct SparrowEngineAudioEventResult {
+  const struct SparrowEngineAudioEvent *data;
+  uintptr_t len;
+  float duration_s;
+  float analyzed_duration_s;
+  uint32_t sample_rate;
+  float clip_duration_s;
+  float clip_stride_s;
+  float processing_time_ms;
+} SparrowEngineAudioEventResult;
+
+typedef struct SparrowEngineAudioEventOpts {
+  float detection_threshold;
+  float classification_threshold;
+  uint32_t max_events;
+} SparrowEngineAudioEventOpts;
+
 /**
  * Callback type for streaming audio detection.
  * Called once per segment that exceeds the confidence threshold.
@@ -566,6 +595,18 @@ struct SparrowEngineAudioResult_v2 *sparrow_engine_detect_audio_v2(const Sparrow
                                                                    const struct SparrowEngineAudioDetectOpts *opts);
 
 /**
+ * Detect localized time-frequency events in a WAV file.
+ *
+ * # Safety
+ * - `model` must be a valid standard model pointer.
+ * - `audio_path` must be a valid null-terminated UTF-8 path.
+ * - `opts` may be null.
+ */
+struct SparrowEngineAudioEventResult *sparrow_engine_detect_audio_events(const SparrowEngineModel *model,
+                                                                         const char *audio_path,
+                                                                         const struct SparrowEngineAudioEventOpts *opts);
+
+/**
  * Run audio detection with per-segment streaming callback.
  *
  * GPU callback cadence is post-detect: the full chunk loop completes first,
@@ -607,6 +648,15 @@ void sparrow_engine_audio_result_free(struct SparrowEngineAudioResult *ptr);
  * `ptr` must be a pointer returned by `sparrow_engine_detect_audio_v2`, or null.
  */
 void sparrow_engine_audio_result_v2_free(struct SparrowEngineAudioResult_v2 *ptr);
+
+/**
+ * Free a result returned by `sparrow_engine_detect_audio_events`.
+ *
+ * # Safety
+ * `ptr` must be null or a pointer returned by
+ * `sparrow_engine_detect_audio_events`.
+ */
+void sparrow_engine_audio_event_result_free(struct SparrowEngineAudioEventResult *ptr);
 
 /**
  * Free a `SparrowEngineDetections` returned by `sparrow_engine_detect` or `sparrow_engine_detect_raw`.

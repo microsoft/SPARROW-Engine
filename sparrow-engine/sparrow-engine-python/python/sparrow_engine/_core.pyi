@@ -132,6 +132,27 @@ class AudioResult:
     segments: list[AudioSegment]
     def __len__(self) -> int: ...
 
+class AudioEvent:
+    start_time_s: float
+    end_time_s: float
+    low_freq_hz: float
+    high_freq_hz: float
+    peak_time_s: float
+    peak_freq_hz: float
+    confidence: float
+    classes: list[AudioClass]
+
+class AudioEventResult:
+    model_id: str
+    duration_s: float
+    analyzed_duration_s: float
+    sample_rate: int
+    clip_duration_s: float
+    clip_stride_s: float
+    processing_time_ms: float
+    events: list[AudioEvent]
+    def __len__(self) -> int: ...
+
 class ModelInfo:
     id: str
     model_type: str
@@ -198,6 +219,15 @@ class PyEngine:
         segment_duration_s: Optional[float] = None,
         progress_callback: Optional[_ProgressCallback] = None,
     ) -> list[AudioResult]: ...
+    def detect_audio_events(
+        self,
+        paths: list[str],
+        model: str,
+        detection_threshold: Optional[float] = None,
+        classification_threshold: Optional[float] = None,
+        max_events: Optional[int] = None,
+        progress_callback: Optional[_ProgressCallback] = None,
+    ) -> list[AudioEventResult]: ...
     def pipeline(
         self,
         paths: list[str],

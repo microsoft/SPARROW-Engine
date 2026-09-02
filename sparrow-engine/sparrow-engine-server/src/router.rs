@@ -29,7 +29,8 @@ pub fn build_router(state: AppState) -> Router {
             .route("/v1/embed/batch", post(handlers::embed::embed_batch))
             .route("/v1/classify", post(handlers::classify::classify))
             .route("/v1/pipeline", post(handlers::pipeline::pipeline))
-            .route("/v1/audio/detect", post(handlers::audio::audio_detect)),
+            .route("/v1/audio/detect", post(handlers::audio::audio_detect))
+            .route("/v1/audio/events", post(handlers::audio_events::audio_events)),
         state.config.request_timeout_secs,
     );
 

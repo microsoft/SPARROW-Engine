@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod audio_events;
 pub mod catalog;
 pub mod classify;
 pub mod detect;
