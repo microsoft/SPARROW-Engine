@@ -355,4 +355,39 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].confidence, 0.15);
     }
+
+    #[test]
+    fn classification_threshold_override_filters_classes() {
+        let mut detection = [0.0; 16];
+        detection[5] = 0.9;
+        let mut classes = [0.0; 48];
+        classes[5] = 0.6;
+        classes[16 + 5] = 0.4;
+        classes[32 + 5] = 0.2;
+        let options = AudioEventOpts {
+            classification_threshold: Some(0.5),
+            ..AudioEventOpts::default()
+        };
+
+        let events = decode_tf_event_clip(
+            TfEventHeads {
+                detection_probs: &detection,
+                size_preds: &[0.0; 32],
+                class_probs: &classes,
+            },
+            &labels(),
+            &preprocess(),
+            &postprocess(),
+            &options,
+            AudioEventClip {
+                start_s: 0.0,
+                duration_s: 0.5,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].classes.len(), 1);
+        assert_eq!(events[0].classes[0].class_idx, 0);
+    }
 }

@@ -10,7 +10,8 @@ use sparrow_engine_types::{AudioInput, Result, SparrowEngineError};
 
 use crate::preprocess_audio;
 
-/// Decoded mono audio resampled with the model-specific SciPy-compatible path.
+/// Decoded mono source audio. Each complete clip is resampled independently,
+/// matching BatDetect2's clip-loader boundary behavior.
 #[derive(Debug)]
 pub struct PreparedPcenAudio {
     pub samples: Vec<f32>,
@@ -106,21 +107,40 @@ impl PcenFrontend {
         }
         let original_sample_rate = decoded.sample_rate;
         let duration_s = decoded.duration_s;
-        let samples = if decoded.sample_rate == self.config.sample_rate {
-            decoded.data
-        } else {
-            scipy_resample_poly(
-                &decoded.data,
-                decoded.sample_rate,
-                self.config.sample_rate,
-            )?
-        };
         Ok(PreparedPcenAudio {
-            samples,
+            samples: decoded.data,
             sample_rate: self.config.sample_rate,
             original_sample_rate,
             duration_s,
         })
+    }
+
+    /// Resample one complete source-rate clip and enforce the fixed model length.
+    pub fn prepare_source_clip(
+        &self,
+        source_samples: &[f32],
+        source_sample_rate: u32,
+    ) -> Result<Vec<f32>> {
+        let mut samples = if source_sample_rate == self.config.sample_rate {
+            source_samples.to_vec()
+        } else {
+            scipy_resample_poly(
+                source_samples,
+                source_sample_rate,
+                self.config.sample_rate,
+            )?
+        };
+        let difference = samples.len().abs_diff(self.clip_samples);
+        if difference > 1 {
+            return Err(SparrowEngineError::AudioPreprocess(format!(
+                "resampled event clip has {} samples, expected {}",
+                samples.len(),
+                self.clip_samples
+            )));
+        }
+        samples.resize(self.clip_samples, 0.0);
+        samples.truncate(self.clip_samples);
+        Ok(samples)
     }
 
     /// Return one model-ready NCHW clip as `[1, 1, spec_height, time_frames]`.
@@ -180,9 +200,9 @@ impl PcenFrontend {
                         "PCEN real FFT failed: {error}"
                     ))
                 })?;
-                for (row, bin) in (self.crop_start..self.crop_end).enumerate() {
-                    output[row * columns + column] = fft_output[bin].norm();
-                }
+            for (row, bin) in (self.crop_start..self.crop_end).enumerate() {
+                output[row * columns + column] = fft_output[bin].norm();
+            }
         }
         Ok((output, rows, columns))
     }
@@ -553,6 +573,31 @@ mod tests {
         assert_eq!(complete_clip_count(127_999, 128_000), 0);
         assert_eq!(complete_clip_count(128_000, 128_000), 1);
         assert_eq!(complete_clip_count(383_999, 128_000), 2);
+    }
+
+    #[test]
+    fn source_clip_resampling_does_not_cross_clip_boundaries() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        let mut first_clip = vec![0.0; 96_000];
+        first_clip[95_999] = 1.0;
+        let mut second_clip = vec![0.0; 96_000];
+        second_clip[0] = -1.0;
+
+        let prepared = frontend.prepare_source_clip(&first_clip, 192_000).unwrap();
+        let independently_resampled =
+            scipy_resample_poly(&first_clip, 192_000, 256_000).unwrap();
+        assert_eq!(prepared, independently_resampled);
+
+        let mut combined = first_clip;
+        combined.extend(second_clip);
+        let whole_recording =
+            scipy_resample_poly(&combined, 192_000, 256_000).unwrap();
+        let maximum_boundary_difference = prepared
+            .iter()
+            .zip(&whole_recording[..prepared.len()])
+            .map(|(separate, whole)| (separate - whole).abs())
+            .fold(0.0f32, f32::max);
+        assert!(maximum_boundary_difference > 1e-4);
     }
 
     #[test]
