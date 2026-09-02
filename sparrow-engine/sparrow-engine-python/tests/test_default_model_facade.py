@@ -1,8 +1,8 @@
-"""Facade tests for the ``model``-optional ``detect`` / ``detect_audio`` path.
+"""Facade tests for model-optional detection functions.
 
-``detect`` and ``detect_audio`` accept an omitted (``None``) model, mirroring
-the ``spe detect`` / ``spe detect-audio`` CLI (Phase 2.5 functionality-
-consistency rule). The resolver precedence is:
+``detect``, ``detect_audio``, and ``detect_audio_events`` accept an omitted
+(``None``) model, mirroring their CLI commands (Phase 2.5 functionality-
+consistency rule). The ordinary detection resolver precedence is:
 
   1. an explicit ``model`` argument, used verbatim;
   2. the catalog default whose ``model_type`` matches the task family
@@ -31,6 +31,7 @@ class RecordingEngine:
         self._models = list(models)
         self.detect_model = None
         self.detect_audio_model = None
+        self.detect_audio_events_model = None
 
     def list_models(self):
         return list(self._models)
@@ -56,6 +57,18 @@ class RecordingEngine:
         progress_callback=None,
     ):
         self.detect_audio_model = model
+        return []
+
+    def detect_audio_events(
+        self,
+        paths,
+        model,
+        detection_threshold=None,
+        classification_threshold=None,
+        max_events=None,
+        progress_callback=None,
+    ):
+        self.detect_audio_events_model = model
         return []
 
 
@@ -218,3 +231,42 @@ def test_detect_audio_falls_back_when_no_default_flagged(monkeypatch) -> None:
     sparrow_engine.detect_audio([])
 
     assert engine.detect_audio_model == "md-audiobirds-v1"
+
+
+# --- detect_audio_events() precedence ---------------------------------------
+
+
+def test_detect_audio_events_explicit_model_used_verbatim(monkeypatch) -> None:
+    engine = RecordingEngine([
+        _model("catalog-events", "audio_event_detector", default=True)
+    ])
+    _install(monkeypatch, engine)
+
+    sparrow_engine.detect_audio_events([], model="custom-events")
+
+    assert engine.detect_audio_events_model == "custom-events"
+
+
+def test_detect_audio_events_uses_catalog_default(monkeypatch) -> None:
+    engine = RecordingEngine([
+        _model("catalog-events", "audio_event_detector", default=True)
+    ])
+    _install(monkeypatch, engine)
+
+    sparrow_engine.detect_audio_events([])
+
+    assert engine.detect_audio_events_model == "catalog-events"
+
+
+def test_detect_audio_events_requires_model_without_default(monkeypatch) -> None:
+    engine = RecordingEngine([
+        _model("ordinary-audio", "audio_detector", default=True)
+    ])
+    _install(monkeypatch, engine)
+
+    try:
+        sparrow_engine.detect_audio_events([])
+    except sparrow_engine.SparrowEngineError as error:
+        assert "No default audio event model" in str(error)
+    else:
+        raise AssertionError("missing audio-event model should raise")

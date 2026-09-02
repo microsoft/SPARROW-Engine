@@ -81,10 +81,10 @@ expect_failure() {
     fi
 }
 
-echo "[1] CPU/GPU 39-symbol ABI and mobile 18-symbol ABI pass together"
+echo "[1] CPU/GPU 41-symbol ABI and mobile 18-symbol ABI pass together"
 run_checker valid --require-flavor all > "$TEST_ROOT/valid.out" 2>&1
-assert_contains "cpu declared=39 built=39" "$TEST_ROOT/valid.out"
-assert_contains "gpu declared=39 built=39" "$TEST_ROOT/valid.out"
+assert_contains "cpu declared=41 built=41" "$TEST_ROOT/valid.out"
+assert_contains "gpu declared=41 built=41" "$TEST_ROOT/valid.out"
 assert_contains "mobile declared=18 built=18" "$TEST_ROOT/valid.out"
 assert_contains "PASS: every checked flavor matches exports.def" "$TEST_ROOT/valid.out"
 
@@ -92,7 +92,7 @@ echo "[2] missing mobile export fails against the mobile definition"
 expect_failure "$TEST_ROOT/mobile-missing.out" mobile_missing --require-flavor all
 assert_contains "mobile cdylib differs from" "$TEST_ROOT/mobile-missing.out"
 
-echo "[3] substituted GPU export fails even when the count stays 39"
+echo "[3] substituted GPU export fails even when the count stays 41"
 expect_failure "$TEST_ROOT/gpu-wrong.out" gpu_wrong --require-flavor all
 assert_contains "gpu cdylib differs from" "$TEST_ROOT/gpu-wrong.out"
 

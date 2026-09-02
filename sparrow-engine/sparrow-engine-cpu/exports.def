@@ -18,8 +18,10 @@ EXPORTS
     sparrow_engine_detect_audio
     sparrow_engine_detect_audio_streaming
     sparrow_engine_detect_audio_v2
+    sparrow_engine_detect_audio_events
     sparrow_engine_detections_free
     sparrow_engine_audio_result_v2_free
+    sparrow_engine_audio_event_result_free
     sparrow_engine_classify_result_free
     sparrow_engine_embedding_free
     sparrow_engine_pipeline_result_free

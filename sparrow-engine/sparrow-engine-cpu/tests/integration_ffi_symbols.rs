@@ -1,7 +1,7 @@
 //
 // Phase 3.8 Phase A S7 closure: when `--features ffi` is on, the cdylib must
-// expose all 39 symbols listed in `exports.def` (37 prior baseline + 2
-// detailed pipeline-result v2 symbols). Without `--features ffi`
+// expose all 41 symbols listed in `exports.def` (39 prior baseline + 2
+// time-frequency audio-event symbols). Without `--features ffi`
 // the cdylib still builds but emits zero `sparrow_engine_*` symbols (the
 // `sparrow_engine_*; local: *;` filter in `exports.map` plus the absence of
 // `pub mod ffi` produce that).
@@ -28,12 +28,13 @@
 
 #[test]
 fn ffi_link_smoke_for_sample_symbols() {
-    // We name 11 of the 39 symbols. If any disappear from `sparrow-engine-cpu/src/ffi.rs`
+    // We name 13 of the 41 symbols. If any disappear from `sparrow-engine-cpu/src/ffi.rs`
     // (e.g., a refactor accidentally drops `#[no_mangle]` or `pub`), this test
     // fails to compile. We pin a function-pointer reference so the compiler has
     // a reason to resolve them.
     use sparrow_engine::ffi::{
-        sparrow_engine_audio_result_v2_free, sparrow_engine_detect_audio_v2, sparrow_engine_embed,
+        sparrow_engine_audio_event_result_free, sparrow_engine_audio_result_v2_free,
+        sparrow_engine_detect_audio_events, sparrow_engine_detect_audio_v2, sparrow_engine_embed,
         sparrow_engine_embedding_free, sparrow_engine_engine_free, sparrow_engine_engine_new,
         sparrow_engine_free_string, sparrow_engine_health, sparrow_engine_last_error,
         sparrow_engine_pipeline_result_v2_free, sparrow_engine_run_pipeline_v2,
@@ -50,6 +51,8 @@ fn ffi_link_smoke_for_sample_symbols() {
     let p9 = sparrow_engine_embedding_free as *const ();
     let p10 = sparrow_engine_run_pipeline_v2 as *const ();
     let p11 = sparrow_engine_pipeline_result_v2_free as *const ();
+    let p12 = sparrow_engine_detect_audio_events as *const ();
+    let p13 = sparrow_engine_audio_event_result_free as *const ();
     assert!(!p1.is_null());
     assert!(!p2.is_null());
     assert!(!p3.is_null());
@@ -61,6 +64,8 @@ fn ffi_link_smoke_for_sample_symbols() {
     assert!(!p9.is_null());
     assert!(!p10.is_null());
     assert!(!p11.is_null());
+    assert!(!p12.is_null());
+    assert!(!p13.is_null());
 }
 
 // -----------------------------------------------------------------------------
@@ -235,8 +240,8 @@ fn cdylib_exports_match_exports_def() {
     // Sanity: count matches the detailed-pipeline ABI baseline.
     assert_eq!(
         expected.len(),
-        39,
-        "exports.def line count drifted from detailed-pipeline ABI baseline (expected 39, got {})",
+        41,
+        "exports.def line count drifted from audio-event ABI baseline (expected 41, got {})",
         expected.len()
     );
     assert_eq!(actual.len(), expected.len());

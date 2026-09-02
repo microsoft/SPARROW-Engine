@@ -212,6 +212,8 @@ _configure_ort_dylib_path()
 
 from sparrow_engine._sparrow_engine_core import (
     AudioClass,
+    AudioEvent,
+    AudioEventResult,
     AudioResult,
     AudioSegment,
     BBox,
@@ -253,6 +255,7 @@ __all__ = [
     "embed_aligned",
     "embed_aligned_with_meta",
     "detect_audio",
+    "detect_audio_events",
     "pipeline",
     "list_models",
     "list_models_extended",
@@ -275,6 +278,8 @@ __all__ = [
     "ClassifyResult",
     "EmbedResult",
     "AudioClass",
+    "AudioEvent",
+    "AudioEventResult",
     "AudioSegment",
     "AudioResult",
     "PipelineCropRegion",
@@ -389,6 +394,7 @@ def _resolve_inputs(
 # classifier.
 _DETECTION_MODEL_TYPES = ("detector", "overhead_detector")
 _AUDIO_MODEL_TYPES = ("audio_detector", "audio_classifier")
+_AUDIO_EVENT_MODEL_TYPES = ("audio_event_detector",)
 
 # Stable per-task fallback ids — the canonical ids the CLI falls back to when
 # ``--model`` is omitted and no catalog default is resolved. The detector id
@@ -692,6 +698,48 @@ def detect_audio(
         threshold,
         stride_s,
         segment_duration_s,
+        progress_callback,
+    )
+
+
+def detect_audio_events(
+    input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
+    model: Optional[str] = None,
+    detection_threshold: Optional[float] = None,
+    classification_threshold: Optional[float] = None,
+    max_events: Optional[int] = None,
+    recursive: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> list[AudioEventResult]:
+    """Detect localized time-frequency events in one or more WAV files.
+
+    ``model`` may be omitted when the catalog has a default
+    ``audio_event_detector``. Unlike ordinary audio detection, there is no
+    hard-coded fallback event model because event taxonomies and geographic
+    scopes are model-specific.
+    """
+    paths = _resolve_inputs(input, _AUDIO_EXTS, recursive=recursive)
+    model_id = model
+    if model_id is None:
+        model_id = next(
+            (
+                info.id
+                for info in _get_engine().list_models()
+                if info.default
+                and info.model_type in _AUDIO_EVENT_MODEL_TYPES
+            ),
+            None,
+        )
+    if model_id is None:
+        raise SparrowEngineError(
+            "No default audio event model is available; pass model='<id>'."
+        )
+    return _get_engine().detect_audio_events(
+        paths,
+        model_id,
+        detection_threshold,
+        classification_threshold,
+        max_events,
         progress_callback,
     )
 
