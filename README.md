@@ -230,7 +230,13 @@ Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Z
 
 **Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-The catalog contains **75 models in total**. Run the downloader without arguments to install the **66 default desktop ONNX models** into `~/.sparrow-engine/models/`, the default model directory used by `spe`, `sparrow-engine-server`, and the Python wheel. The remaining 9 entries—5 mobile TFLite models, 1 mobile cascade descriptor, and 3 opt-in ONNX models (two FP16 precision variants plus the separate BioCLIP 2.5 Huge encoder)—are fetched when named explicitly or with `--all`:
+Download the 66 default desktop ONNX models into
+`~/.sparrow-engine/models`, the default directory used by `spe`,
+`sparrow-engine-server`, and the Python wheel, by running the downloader
+without arguments. The zoo also holds 6 mobile entries (5 TFLite models and 1
+cascade descriptor) and 3 opt-in ONNX models (two FP16 precision variants plus
+the separate BioCLIP 2.5 Huge encoder). Together they form the complete **75-model** catalog;
+non-default entries are fetched when named explicitly or with `--all`:
 
 ```bash
 bash scripts/download_models.sh
