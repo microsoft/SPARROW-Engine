@@ -1,7 +1,7 @@
 #![cfg(feature = "ffi")]
 
 #[test]
-fn gpu_exports_def_has_pipeline_v2_symbol_count_and_matches_cpu() {
+fn gpu_exports_def_has_audio_event_symbol_count_and_matches_cpu() {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
@@ -27,8 +27,8 @@ fn gpu_exports_def_has_pipeline_v2_symbol_count_and_matches_cpu() {
 
     assert_eq!(
         gpu_symbols.len(),
-        39,
-        "GPU exports.def line count drifted from detailed-pipeline ABI baseline"
+        41,
+        "GPU exports.def line count drifted from audio-event ABI baseline"
     );
     assert_eq!(
         gpu_symbols, cpu_symbols,
