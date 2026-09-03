@@ -10,13 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added manifest-driven time-frequency audio event detection on CPU and GPU.
+  The shared Rust frontend implements clip-local SciPy-compatible resampling,
+  periodic-Hann short-time Fourier transform, PCEN, denoising, and resize;
+  the shared decoder returns physical time/frequency events with ranked class
+  probabilities. New CLI, Python, HTTP, and native entry points expose the
+  result without changing `AudioDetectResult`; the CPU/GPU native ABI grows
+  additively from 39 to 41 identical symbols.
 - Added manifest-driven recording-level audio frame ensembles on CPU and GPU.
   `ensemble.toml` can pin cached centered-STFT assets, schedule independently
   phased member graphs, stitch calibrated frame maps, average complete member
   grids, and merge an auxiliary frame map by label name. CLI, Python, HTTP,
   catalog discovery, lazy loading, idle unloading, verification, and the
   existing C audio functions accept the new model kind without changing
-  `AudioDetectResult` or the 39-symbol native ABI.
+  `AudioDetectResult` or any existing native symbol.
 - Added a classifier-owned `[crop]` manifest contract for detector-to-classifier
   pipelines. It preserves legacy edge rounding by default and adds exact
   DeepForest `truncate_extent` windows, context expansion, CPU/GPU crop

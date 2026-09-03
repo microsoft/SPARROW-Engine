@@ -48,18 +48,25 @@ pipe = sparrow_engine.pipeline("photo.jpg", detector="MDV6-yolov10-c",
 
 # Audio detection (WAV input).
 audio = sparrow_engine.detect_audio("recording.wav", model="md-audiobirds-v1")
+
+# Localized time-frequency audio events (WAV input).
+events = sparrow_engine.detect_audio_events(
+    "ultrasonic.wav", model="batdetect2-uk-v2"
+)
 ```
 
 `init(device=..., model_dir=...)` is optional — the engine auto-initializes on
-the first inference call. `detect` / `classify` / `detect_audio` / `pipeline`
-each accept a file path, a directory, or a list of paths, and take an optional
+the first inference call. `detect` / `classify` / `detect_audio` /
+`detect_audio_events` / `pipeline` each accept a file path, a directory, or a
+list of paths, and take an optional
 `progress_callback(index, total, filename)`.
 
-`detect` and `detect_audio` also accept an optional `model`: omit it (or pass
-`None`) to use the catalog default for the task, falling back to
-`MDV6-yolov10-e` (images) / `md-audiobirds-v1` (audio) — the same
-default the `spe detect` / `spe detect-audio` CLI uses when `--model` is
-omitted. `classify`, `embed`, and `pipeline` still require an explicit model.
+`detect`, `detect_audio`, and `detect_audio_events` also accept an optional
+`model`. The first two use their catalog default and stable fallback ID.
+Audio-event detection uses a catalog default when present but has no
+hard-coded fallback because event taxonomies and geographic scopes are
+model-specific. `classify`, `embed`, and `pipeline` still require an explicit
+model.
 
 ## Documentation
 

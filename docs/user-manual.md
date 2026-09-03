@@ -24,7 +24,7 @@ Plain definitions before the first technical sentence.
 | **pipeline** | Detector → crop each box → classifier on each crop. |
 | **flavor** | One of two builds of sparrow-engine: `cpu` (no GPU code) or `gpu` (CUDA EP compiled in). |
 | **cdylib** | A shared library file: `libsparrow_engine.so` on Linux, `sparrow_engine.dll` on Windows, `libsparrow_engine.dylib` on macOS. Both flavors ship this file under the same name. |
-| **C ABI / FFI** | "Foreign Function Interface" — the C-compatible function set that other languages (C#, Python via PyO3) call. Sparrow Engine exports 39 `sparrow_engine_*` functions. |
+| **C ABI / FFI** | "Foreign Function Interface" — the C-compatible function set that other languages (C#, Python via PyO3) call. Sparrow Engine exports 41 `sparrow_engine_*` functions. |
 | **PyO3** | The Rust library that builds Python bindings. The sparrow-engine Python wheel uses it. |
 | **csbindgen / cbindgen** | Auto-generators that turn Rust function signatures into a C# `NativeMethods.g.cs` file (csbindgen) and a C `sparrow_engine.h` header (cbindgen). |
 | **NCHW** | Tensor layout: Batch × Channels × Height × Width. Sparrow Engine mandates this; NHWC models must be re-exported. |
@@ -46,7 +46,7 @@ Plain definitions before the first technical sentence.
        sparrow-engine-types        sparrow-engine-core         sparrow-engine-cpu / sparrow-engine-gpu                  
        (shared data                (shared logic               (engine flavors;                                         
         types — no                  — no ORT, no                each ships libsparrow_engine.so                         
-        ORT, no CUDA)               CUDA)                       with 37 sparrow_engine_* exports)
+        ORT, no CUDA)               CUDA)                       with 41 sparrow_engine_* exports)
                                                                │                                                        
                                  ┌─────────────────────────────┼─────────────────────────────┐                          
                                  │                             │                             │                          
@@ -68,7 +68,7 @@ Two device flavors, never co-located in one binary:
   gpu  → ORT CUDA EP added, Python wheel "sparrow-engine-gpu", CLI binary "spe-gpu"                                     
 ```
 
-Both flavors export the same 39 `sparrow_engine_*` symbols and ship as `libsparrow_engine.so` — Sparrow Studio Local's `[DllImport("sparrow_engine")]` resolves either flavor.
+Both flavors export the same 41 `sparrow_engine_*` symbols and ship as `libsparrow_engine.so` — Sparrow Studio Local's `[DllImport("sparrow_engine")]` resolves either flavor.
 
 ---
 
@@ -581,6 +581,7 @@ Both CLI and Python expose the **same** function set with the same conventions. 
 | Detect | `spe detect` | `sparrow_engine.detect()` | `POST /v1/detect` | `sparrow_engine_detect()` |
 | Classify | `spe classify` | `sparrow_engine.classify()` | `POST /v1/classify` | `sparrow_engine_classify()` |
 | Detect audio | `spe detect-audio` | `sparrow_engine.detect_audio()` | `POST /v1/audio/detect` | `sparrow_engine_detect_audio()` |
+| Detect audio events | `spe detect-audio-events` | `sparrow_engine.detect_audio_events()` | `POST /v1/audio/events` | `sparrow_engine_detect_audio_events()` |
 | Pipeline | `spe pipeline` | `sparrow_engine.pipeline()` | `POST /v1/pipeline` | `sparrow_engine_run_pipeline()` |
 | Embed | `spe embed` | `sparrow_engine.embed()` | `POST /v1/embed` | `sparrow_engine_embed()` |
 | List models | `spe models list` | `sparrow_engine.list_models()` | `GET /v1/models` | `sparrow_engine_list_models()` |
@@ -635,7 +636,7 @@ Both CLI and Python expose the **same** function set with the same conventions. 
 ```
 
 **Why**: the camera-trap + ecology research community uses R and Julia heavily; sparrow-engine's C ABI is already the right substrate for both.
-**What**: planned R + Julia consumers that wrap the existing 39 `sparrow_engine_*` exports. No new Sparrow Engine-side code expected — the cdylib + C header are the integration point.
+**What**: planned R + Julia consumers that wrap the existing 41 `sparrow_engine_*` exports. No new Sparrow Engine-side code expected — the cdylib + C header are the integration point.
 **How (planned)**: both languages call the cdylib directly. R via `.Call` + a thin shim package; Julia via `ccall` (zero extra build artifacts beyond `libsparrow_engine.so` itself).
 
 **Status**: NOT YET STARTED. No timeline. Tracked as user-directed future scope (review-round-1 comment 2026-05-19). When kicked off, file under `docs/master_plan.md § Future consumer surfaces`.
@@ -663,7 +664,9 @@ Global flags:
 Commands:                                                                    
   detect          Object detection on images                                 
   classify        Single-label classification on images                      
+  embed           Image embeddings
   detect-audio    Sliding-window audio detection                             
+  detect-audio-events  Localized time-frequency audio events
   pipeline        detect → classify on each crop                             
   models list     List loaded models                                         
   models info     Show info for one loaded model                             
@@ -675,7 +678,7 @@ Commands:
 ```
 
 **Why**: a CLI that mirrors the Python API one-for-one so scripts and notebooks stay consistent.
-**What**: 9 commands; all batch-capable accept files, directories, or mixed; output goes to stdout (JSON / CSV) or per-file visualization.
+**What**: 11 commands; all batch-capable accept files, directories, or mixed; output goes to stdout (JSON / CSV) or per-file visualization.
 **How**: clap-derived parser; engine is initialized lazily on first inference command.
 
 **Plain words**: "lazy" = the engine doesn't actually load ORT or any model until you run a command that needs it. `spe --help` exits without touching the GPU.
@@ -763,6 +766,39 @@ stitching, and optional auxiliary score-map merging.
 | `--stride` / `--segment-duration` | Runtime overrides for ordinary sliding-window models. Recording-level frame ensembles reject them because member phases are fixed by `ensemble.toml`. |
 
 **Cite**: `sparrow-engine/sparrow-engine-cli/src/main.rs:206-254`.
+
+---
+
+### 5.3.1 `spe detect-audio-events` — localized time-frequency events
+
+```bash
+$ spe detect-audio-events ultrasonic.wav \
+    --model batdetect2-uk-v2 \
+    --threshold 0.01 \
+    --classification-threshold 0.1 \
+    --max-events 200 \
+    --print --format json
+```
+
+**Why**: some acoustic models localize calls on both the time and frequency
+axes rather than assigning one score to a whole window.
+**What**: events contain start/end/peak time in seconds, low/high/peak
+frequency in hertz, detection confidence, and ranked class probabilities.
+**How**: the engine slices complete source-rate clips first, resamples each
+clip independently, runs the manifest-defined PCEN frontend and ONNX graph,
+then applies deterministic peak suppression and top-k decoding.
+
+| Flag | What |
+|------|------|
+| `--model <id>` | Optional only when the catalog contains a default audio-event model. |
+| `--threshold <f>` | Override the event detection threshold. |
+| `--classification-threshold <f>` | Override the per-class probability threshold. |
+| `--max-events <n>` | Truncate the final recording-level event vector. |
+| `--print --format {json,csv}` | Emit per-file results. |
+| `--recursive` | Recurse into input directories. |
+
+Incomplete final clips are omitted; `analyzed_duration_s` reports the duration
+actually processed.
 
 ---
 
@@ -1132,7 +1168,7 @@ $ sparrow-engine-server --unknown     # exit 2, clap error message
 
 ---
 
-### 7.3 Inference endpoints (7)
+### 7.3 Inference endpoints (8)
 
 All inference requests are `multipart/form-data` (there is no JSON-body / base64
 path). All responses are JSON. Every endpoint also accepts the Phase 4
@@ -1147,6 +1183,7 @@ path). All responses are JSON. Every endpoint also accepts the Phase 4
 | `POST /v1/classify` | `model` (req), `top_k` | `image` | `ClassifyResponse` |
 | `POST /v1/pipeline` | `pipeline` OR `detector`+`classifier` (req); `threshold`, `max_detections`, `top_k` | `image` | `PipelineResponse` |
 | `POST /v1/audio/detect` | `model` (req), `threshold`, `segment_duration`, `stride` | `audio` | `AudioDetectResponse` |
+| `POST /v1/audio/events` | `model` (req), `threshold`, `classification_threshold`, `max_events` | `audio` | `AudioEventDetectResponse` |
 
 `POST /v1/pipeline` selects EITHER a named alias (`?pipeline=<id>`, registered
 via `POST /v1/pipelines`) OR an ad-hoc pair (`?detector=<id>&classifier=<id>`) —
@@ -1414,18 +1451,18 @@ sparrow-engine-client (Python package — separate from sparrow-engine)
 ```
                           libsparrow_engine.so / sparrow_engine.dll / libsparrow_engine.dylib          
                                           │                                                            
-                                  37 exported symbols
+                                  41 exported symbols
                                   (all begin with `sparrow_engine_`)                                   
                                           │                                                            
         ┌─────────────────────────────────┼─────────────────────────────────┐                          
         v                                 v                                 v                          
    sparrow_engine.h (auto-generated by      NativeMethods.g.cs (auto-       Avalonia / .NET desktop app
    cbindgen, in repo)              generated by csbindgen)        uses `[DllImport("sparrow_engine")]` 
-                                                                  to call the 37 exports
+                                                                  to call the 41 exports
 ```
 
 **Why**: Sparrow Studio Local is a cross-platform desktop app written in C# (Avalonia). It can't link Rust directly; it needs a stable C ABI.
-**What**: a single shared library with a fixed 39-symbol surface, validated byte-identical across both flavors (G5 acceptance gate).
+**What**: a single shared library with a fixed 41-symbol surface, validated byte-identical across both flavors.
 **How**: `sparrow-engine-cpu/Cargo.toml` and `sparrow-engine-gpu/Cargo.toml` both set `[lib] name = "sparrow_engine"`, producing `libsparrow_engine.so` (or `.dll`/`.dylib`). `cbindgen` emits the C header; `csbindgen` emits the C# P/Invoke file.
 
 **Plain words**: "P/Invoke" = .NET's mechanism for calling native shared libraries. `[DllImport("sparrow_engine")]` tells .NET to load `sparrow_engine.dll` (Windows) or `libsparrow_engine.so` (Linux).
@@ -1434,17 +1471,17 @@ sparrow-engine-client (Python package — separate from sparrow-engine)
 
 ---
 
-### 9.1 The 39 exported functions
+### 9.1 The 41 exported functions
 
 | Category | Functions |
 |----------|-----------|
 | Engine lifecycle + diagnostics (4) | `sparrow_engine_engine_new`, `sparrow_engine_engine_free`, `sparrow_engine_version`, `sparrow_engine_last_error` |
 | Model + pipeline management (7) | `sparrow_engine_load_model`, `sparrow_engine_load_model_by_id`, `sparrow_engine_unload_model`, `sparrow_engine_load_pipeline`, `sparrow_engine_load_pipeline_by_id`, `sparrow_engine_unload_pipeline`, `sparrow_engine_list_models` |
-| Inference (10) | `sparrow_engine_detect`, `sparrow_engine_detect_raw`, `sparrow_engine_detect_batch`, `sparrow_engine_classify`, `sparrow_engine_embed`, `sparrow_engine_run_pipeline`, `sparrow_engine_run_pipeline_v2`, `sparrow_engine_detect_audio`, `sparrow_engine_detect_audio_v2`, `sparrow_engine_detect_audio_streaming` |
-| Result deallocators (10) | `sparrow_engine_detections_free`, `sparrow_engine_classify_result_free`, `sparrow_engine_embedding_free`, `sparrow_engine_pipeline_result_free`, `sparrow_engine_pipeline_result_v2_free`, `sparrow_engine_audio_result_free`, `sparrow_engine_audio_result_v2_free`, `sparrow_engine_hash_result_free`, `sparrow_engine_verify_result_free`, `sparrow_engine_free_string` |
+| Inference (11) | `sparrow_engine_detect`, `sparrow_engine_detect_raw`, `sparrow_engine_detect_batch`, `sparrow_engine_classify`, `sparrow_engine_embed`, `sparrow_engine_run_pipeline`, `sparrow_engine_run_pipeline_v2`, `sparrow_engine_detect_audio`, `sparrow_engine_detect_audio_v2`, `sparrow_engine_detect_audio_streaming`, `sparrow_engine_detect_audio_events` |
+| Result deallocators (11) | `sparrow_engine_detections_free`, `sparrow_engine_classify_result_free`, `sparrow_engine_embedding_free`, `sparrow_engine_pipeline_result_free`, `sparrow_engine_pipeline_result_v2_free`, `sparrow_engine_audio_result_free`, `sparrow_engine_audio_result_v2_free`, `sparrow_engine_audio_event_result_free`, `sparrow_engine_hash_result_free`, `sparrow_engine_verify_result_free`, `sparrow_engine_free_string` |
 | Utility + introspection (8) | `sparrow_engine_health`, `sparrow_engine_hash_file`, `sparrow_engine_day_night`, `sparrow_engine_image_brightness`, `sparrow_engine_verify_model`, `sparrow_engine_engine_verify_model`, `sparrow_engine_engine_model_info`, `sparrow_engine_engine_list_models_extended` |
 
-Total: 39. Both `libsparrow_engine.so` flavors must export this exact set.
+Total: 41. Both `libsparrow_engine.so` flavors must export this exact set.
 
 **Cite**: `sparrow-engine/sparrow-engine-cpu/src/ffi.rs`; G5 gate at `docs/review/phase3.8-phase-c/round_01/acceptance_gates.md`.
 
@@ -1460,6 +1497,7 @@ Returns from sparrow-engine:                          You must call:
   *mut SparrowEnginePipelineResult                ──► sparrow_engine_pipeline_result_free               
   *mut SparrowEnginePipelineResultV2              ──► sparrow_engine_pipeline_result_v2_free
   *mut SparrowEngineAudioResult                   ──► sparrow_engine_audio_result_free                  
+  *mut SparrowEngineAudioEventResult              ──► sparrow_engine_audio_event_result_free
   *mut c_char (strings)                           ──► sparrow_engine_free_string                        
   Verify result                                   ──► sparrow_engine_verify_result_free                 
 
@@ -1498,7 +1536,7 @@ SparrowEnginePipeline  = c_void   (opaque)
 
 ```
 libsparrow_engine.so (CPU flavor):                        libsparrow_engine.so (GPU flavor):                            
-  37 sparrow_engine_* symbols                               37 sparrow_engine_* symbols   ◄── byte-identical
+  41 sparrow_engine_* symbols                               41 sparrow_engine_* symbols   ◄── byte-identical
   sparrow-engine-cpu/Cargo.toml:                            sparrow-engine-gpu/Cargo.toml:                              
     [lib] name = "sparrow_engine"                             [lib] name = "sparrow_engine"                             
   cdylib filename:                                          cdylib filename:                                            
@@ -1506,7 +1544,7 @@ libsparrow_engine.so (CPU flavor):                        libsparrow_engine.so (
 ```
 
 **Why**: Sparrow Studio Local's `[DllImport("sparrow_engine")]` must resolve regardless of which flavor is installed.
-**What**: the cdylib filename invariant + the 39-symbol invariant + the byte-identical-signature invariant (the implementation differs, but the symbol table is the same).
+**What**: the cdylib filename invariant + the 41-symbol invariant + the byte-identical-signature invariant (the implementation differs, but the symbol table is the same).
 **How**: G5 acceptance gate diffs `nm -D` output between the two `libsparrow_engine.so` files; a mismatch fails the gate.
 
 **Practical constraint**: never co-locate both flavors in the same `target/release/`. Per-flavor target dirs (`target-cpu/`, `target-gpu/`) are mandatory. Phase 3.8 Phase C's `scripts/build_all_flavors.sh` enforces this.
@@ -2396,7 +2434,7 @@ Linux side (sparrow-engine-dev):                  Windows side (Sparrow Local):
 │ libsparrow_engine.{so,dylib}     │              │ sparrow_engine.dll (build)           │                              
 │ sparrow_engine.h (cbindgen)      │              │ NativeMethods.g.cs                   │                              
 │ NativeMethods.g.cs (csbindgen)   │  port ─►     │ Avalonia desktop app                 │                              
-│ 37 sparrow_engine_* exports      │              │ [DllImport("sparrow_engine")]        │
+│ 41 sparrow_engine_* exports      │              │ [DllImport("sparrow_engine")]        │
 │ G5 invariant                     │              │ G5-equivalent check                  │                              
 └──────────────────────────────────┘              └──────────────────────────────────────┘                              
 ```
@@ -2461,10 +2499,10 @@ If defect is in sparrow-engine (not Sparrow app):
 |--------|-------|
 | Workspace crates | 7 (types, core, cpu, gpu, server, cli, python) |
 | Device flavors | 2 (cpu, gpu — mutually exclusive at build time) |
-| C ABI exports | 39 `sparrow_engine_*` symbols (byte-identical across flavors) |
-| HTTP endpoints | 15 (5 inference + 8 management + 2 health) |
-| CLI commands | 9 (detect, classify, detect-audio, pipeline, models, device, init, hash, day-night) |
-| Python public functions | 14 |
+| C ABI exports | 41 `sparrow_engine_*` symbols (byte-identical across flavors) |
+| HTTP endpoints | 18 (8 inference + 8 management + 2 health) |
+| CLI commands | 11 (detect, classify, embed, detect-audio, detect-audio-events, pipeline, models, device, init, hash, day-night) |
+| Python public functions | 21 |
 | Catalog models (production) | 9 image/audio + 1 pipeline alias + 2 legacy + 2 quarantined (NHWC, yolo_v5) |
 | `SPARROW_ENGINE_*` env vars (server) | 14 |
 | Install paths | 4 (from-source, GH Releases, pip, Docker) |

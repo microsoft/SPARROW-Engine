@@ -7,7 +7,7 @@ ABI rules.
 
 Source of truth: `sparrow-engine/sparrow-engine-cpu/src/ffi.rs` +
 `sparrow-engine/sparrow-engine-cpu/exports.def` (the GPU flavor mirrors it
-exactly). Both flavors export the **same 39 symbols**; a G5 acceptance gate
+exactly). Both flavors export the **same 41 symbols**; an acceptance gate
 (`tests/integration_ffi_symbols.rs`) asserts the count and the CPU/GPU parity.
 
 ## Design principles
@@ -29,7 +29,7 @@ exactly). Both flavors export the **same 39 symbols**; a G5 acceptance gate
   alongside the old one (see `sparrow_engine_detect_audio` /
   `sparrow_engine_detect_audio_v2`). Old symbols are retained for ABI stability.
 
-## Exported symbols (39)
+## Exported symbols (41)
 
 ### Engine lifecycle + diagnostics (4)
 `sparrow_engine_engine_new`, `sparrow_engine_engine_free`,
@@ -41,19 +41,21 @@ exactly). Both flavors export the **same 39 symbols**; a G5 acceptance gate
 `sparrow_engine_load_pipeline_by_id`, `sparrow_engine_unload_pipeline`,
 `sparrow_engine_list_models`
 
-### Inference (10)
+### Inference (11)
 `sparrow_engine_detect`, `sparrow_engine_detect_raw`,
 `sparrow_engine_detect_batch`, `sparrow_engine_classify`,
 `sparrow_engine_embed`, `sparrow_engine_run_pipeline`,
 `sparrow_engine_run_pipeline_v2`,
 `sparrow_engine_detect_audio`, `sparrow_engine_detect_audio_v2`,
-`sparrow_engine_detect_audio_streaming`
+`sparrow_engine_detect_audio_streaming`,
+`sparrow_engine_detect_audio_events`
 
-### Result deallocators (10) — call exactly one, matching the producer
+### Result deallocators (11) — call exactly one, matching the producer
 `sparrow_engine_detections_free`, `sparrow_engine_classify_result_free`,
 `sparrow_engine_embedding_free`, `sparrow_engine_pipeline_result_free`,
 `sparrow_engine_pipeline_result_v2_free`,
 `sparrow_engine_audio_result_free`, `sparrow_engine_audio_result_v2_free`,
+`sparrow_engine_audio_event_result_free`,
 `sparrow_engine_hash_result_free`, `sparrow_engine_verify_result_free`,
 `sparrow_engine_free_string`
 
@@ -74,6 +76,7 @@ exactly). Both flavors export the **same 39 symbols**; a G5 acceptance gate
 | `sparrow_engine_run_pipeline_v2` | `sparrow_engine_pipeline_result_v2_free` |
 | `sparrow_engine_detect_audio` | `sparrow_engine_audio_result_free` |
 | `sparrow_engine_detect_audio_v2` / `_streaming` | `sparrow_engine_audio_result_v2_free` |
+| `sparrow_engine_detect_audio_events` | `sparrow_engine_audio_event_result_free` |
 | `sparrow_engine_hash_file` | `sparrow_engine_hash_result_free` |
 | `sparrow_engine_verify_model` / `_engine_verify_model` | `sparrow_engine_verify_result_free` |
 | functions returning a `char*` | `sparrow_engine_free_string` |
@@ -81,7 +84,7 @@ exactly). Both flavors export the **same 39 symbols**; a G5 acceptance gate
 
 ## Stability
 
-The 39-symbol set + signatures are a **stable contract**, evolved only by
+The 41-symbol set + signatures are a **stable contract**, evolved only by
 adding `_v2` symbols. The G5 gate blocks any accidental drift in the export set.
 Removing or re-signing an existing symbol is a breaking change and would be
 tagged in the repo `CHANGELOG.md`.
