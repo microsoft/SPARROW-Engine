@@ -66,7 +66,7 @@ jobs:
     name: Preflight — installer .ps1 BOM guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Verify installer/*.ps1 files start with UTF-8 BOM if non-ASCII
         run: python3 installer/check_ps1_bom.py
 
@@ -104,7 +104,7 @@ jobs:
     # downstream's own `if:` interacts with needs.* results.)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Compare tag, package metadata, and installer defaults
         shell: bash
         run: |
@@ -368,10 +368,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check-installer-ps1-bom, check-version-consistency]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build CPU wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           manylinux: 2_28
           working-directory: sparrow-engine/sparrow-engine-python
@@ -407,7 +407,7 @@ jobs:
               || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheel-cpu-linux
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -428,12 +428,12 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wheel-cpu-linux
           path: dist
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -451,14 +451,14 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Build CPU wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: sparrow-engine/sparrow-engine-python
           command: build
@@ -481,7 +481,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheel-cpu-macos-arm64
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -492,14 +492,14 @@ jobs:
     runs-on: windows-latest
     needs: [check-installer-ps1-bom, check-version-consistency]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Build CPU wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: sparrow-engine/sparrow-engine-python
           command: build
@@ -523,7 +523,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheel-cpu-windows
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -570,7 +570,7 @@ jobs:
             "patchelf>=0.14"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
         run: |
@@ -625,7 +625,7 @@ jobs:
               || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheel-gpu-linux
           path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
@@ -643,13 +643,13 @@ jobs:
     # `load-dynamic`, so libonnxruntime is dlopen'd at runtime. None of
     # these crates needs the CUDA SDK at compile time.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
 
       - name: Install maturin
         shell: bash
@@ -681,7 +681,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheel-gpu-windows
           path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
@@ -696,12 +696,12 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wheel-gpu-windows
           path: dist
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
 
@@ -738,7 +738,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: wheel-cpu-*
           path: dist
@@ -776,7 +776,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: wheel-cpu-*
           path: dist
@@ -825,7 +825,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: wheel-gpu-*
           path: dist
@@ -872,7 +872,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: wheel-gpu-*
           path: dist
@@ -908,7 +908,7 @@ jobs:
       # manylinux_2_28 = glibc 2.28 floor, matches build-cpu-linux's wheel target.
       image: quay.io/pypa/manylinux_2_28_x86_64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
         run: |
@@ -956,7 +956,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-cpu-linux
           path: |
@@ -991,7 +991,7 @@ jobs:
       # consumer with glibc >= 2.28.
       image: quay.io/pypa/manylinux_2_28_x86_64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
         run: |
@@ -1075,7 +1075,7 @@ jobs:
           ln -sf /usr/bin/python3.11 /usr/local/bin/python3
           ln -sf /usr/bin/python3.11 /usr/local/bin/python
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Verify CUDA toolkit matches cudarc build ABI
         working-directory: sparrow-engine
@@ -1145,7 +1145,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-gpu-linux
           path: |
@@ -1160,9 +1160,9 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
@@ -1209,7 +1209,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-cpu-macos-arm64
           path: |
@@ -1222,9 +1222,9 @@ jobs:
     runs-on: windows-latest
     needs: [check-installer-ps1-bom, check-version-consistency]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
@@ -1254,7 +1254,7 @@ jobs:
             --no-default-features --features cpu
 
       - name: Configure MSVC developer command prompt
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       # Windows DLL link verification: dumpbin (MSVC) lists imports.
       - name: Hard gate — no onnxruntime.dll in import table (load-dynamic invariant)
@@ -1285,7 +1285,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-cpu-windows
           path: |
@@ -1323,28 +1323,28 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       # Two registry logins: Docker Hub for the runtime image push,
       # GHCR for the buildcache read+write (kept private).
       - name: Login to Docker Hub (runtime image destination)
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GHCR (buildcache only)
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: sparrow-engine
           file: sparrow-engine/docker/Dockerfile.cpu
@@ -1385,19 +1385,19 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to Docker Hub (runtime image destination)
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GHCR (buildcache only)
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1407,7 +1407,7 @@ jobs:
       # Default runner has 14GB free disk; GPU image build needs ~6-8GB
       # working space (2GB base + layers + buildkit cache mounts).
       - name: Free runner disk space (cuDNN base is ~2GB)
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false  # keep nodejs/python — buildx needs them
           android: true
@@ -1417,7 +1417,7 @@ jobs:
           docker-images: false  # we need docker
 
       - id: push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: sparrow-engine
           file: sparrow-engine/docker/Dockerfile.gpu
@@ -1474,7 +1474,7 @@ jobs:
       # uses standard GITHUB_TOKEN scoped to contents:write.
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: dist
@@ -1495,7 +1495,7 @@ jobs:
             exit 1
           fi
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           # Soft-fail when Windows tarball is missing — see job-level if
           # gate above. When build-cli-windows starts succeeding, the
