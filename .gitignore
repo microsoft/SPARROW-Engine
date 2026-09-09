@@ -64,6 +64,7 @@ sparrow-studio-server/
 .gitconfig
 .github/*
 !.github/workflows/
+!.github/dependabot.yml
 .npmrc
 .yarnrc
 .yarnrc.yml
