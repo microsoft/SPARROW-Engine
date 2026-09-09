@@ -13,8 +13,8 @@
 # checksums published by the Zenodo record API.
 #
 # Usage:
-#   bash scripts/download_models.sh                     # 66 desktop ONNX models -> ~/.sparrow-engine/models/
-#   bash scripts/download_models.sh --all               # all 75 (incl. mobile .tflite + cascade)
+#   bash scripts/download_models.sh                     # default hosted desktop ONNX models
+#   bash scripts/download_models.sh --all               # all hosted runtime packages
 #   bash scripts/download_models.sh --dest /path        # custom destination dir
 #   bash scripts/download_models.sh MDV6-yolov10-e ...  # specific model(s) only
 #   bash scripts/download_models.sh --list              # show available models (from catalog)
@@ -109,20 +109,35 @@ for m in sorted(models, key=lambda m: (m["domain"], m["task"], m["id"])):
         last = grp
     fam = ",".join(m.get("family", []))
     fam = f"  ({fam})" if fam else ""
-    # Mark non-default artifacts so users know they need --all / an explicit
-    # name to fetch them: mobile formats, and precision variants of a model
-    # that is already in the default set.
-    if m.get("format") != "onnx":
-        tag = f"  [{m.get('format')}, mobile — needs --all or explicit name]"
+    hosting = m.get("hosting_status", "pending_rights")
+    if hosting in {"link_only", "pending_rights"}:
+        source = m.get("original_source_url", "the original project")
+        tag = f"  [{hosting}; weights unavailable from Sparrow — {source}]"
+    elif m.get("format") != "onnx":
+        tag = f"  [{m.get('format')} — needs --all or explicit name]"
     elif m.get("flavor"):
         tag = f"  [{m.get('flavor')} variant — needs --all or explicit name]"
+    elif hosting == "hosted_restricted":
+        tag = "  [hosted with usage restrictions]"
     else:
         tag = ""
     print(f"  {m['id']:<{w}}  {m['license']}{fam}{tag}")
-n_onnx = sum(1 for m in models if m.get("format") == "onnx" and not m.get("flavor"))
-print(f"\n{len(models)} models total; {n_onnx} desktop ONNX models fetched by default.")
-print("Mobile .tflite / cascade artifacts and precision variants (e.g. onnx-fp16)")
-print("are fetched only when named explicitly or with --all.")
+hosted = {"hosted", "hosted_restricted"}
+n_runtime = sum(1 for m in models if m.get("hosting_status") in hosted)
+n_onnx = sum(
+    1 for m in models
+    if m.get("hosting_status") in hosted
+    and m.get("format") == "onnx"
+    and not m.get("flavor")
+)
+n_metadata = len(models) - n_runtime
+print(
+    f"\n{len(models)} catalog entries: {n_runtime} hosted runtime packages and "
+    f"{n_metadata} metadata-only entries."
+)
+print(f"{n_onnx} hosted desktop ONNX models are fetched by default.")
+print("Hosted TFLite, cascade, ensemble, and precision variants require --all")
+print("or an explicit name. Link-only and pending-rights entries are never fetched.")
 PY
       exit 0
       ;;
@@ -143,10 +158,12 @@ done
 
 # ---- Resolve the selection against the catalog (id or alias) ----
 # Emits `id<TAB>zip` per resolved model. Unknown ids abort with a clear error.
-# With no selection: default to desktop ONNX models only (format == "onnx")
-# excluding precision variants (any entry carrying a `flavor`, e.g. onnx-fp16);
-# `--all` (SPARROW_ALL=1) expands to every catalog entry. Explicitly named
-# models are always fetched regardless of format or flavor.
+# With no selection: default to hosted desktop ONNX models only
+# (format == "onnx"), excluding precision variants (any entry carrying a
+# `flavor`, e.g. onnx-fp16). `--all` expands to every hosted or
+# hosted-restricted runtime package. Link-only and pending-rights entries are
+# never downloaded by Sparrow, even when named explicitly or combined with
+# --force, --no-verify, aliases, or a record override.
 RESOLVED="$(
   SPARROW_ALL="$ALL" python3 - "$CATALOG" "${SELECTED[@]+"${SELECTED[@]}"}" <<'PY'
 import os, sys, tomllib
@@ -160,16 +177,22 @@ for m in models:
         alias[a] = m["id"]
 
 selected = sys.argv[2:]
+hosted = {"hosted", "hosted_restricted"}
 if not selected:
     if os.environ.get("SPARROW_ALL") == "1":
-        chosen = list(by_id)
+        chosen = [
+            m["id"] for m in models
+            if m.get("hosting_status") in hosted
+        ]
     else:
         chosen = [
             m["id"] for m in models
-            if m.get("format") == "onnx" and not m.get("flavor")
+            if m.get("hosting_status") in hosted
+            and m.get("format") == "onnx"
+            and not m.get("flavor")
         ]
 else:
-    chosen, unknown = [], []
+    chosen, unknown, unavailable = [], [], []
     for s in selected:
         if s in by_id:
             rid = s
@@ -179,11 +202,25 @@ else:
         else:
             unknown.append(s)
             continue
+        model = by_id[rid]
+        if model.get("hosting_status") not in hosted:
+            unavailable.append(model)
+            continue
         if rid not in chosen:
             chosen.append(rid)
     if unknown:
         print("ERROR: unknown model id(s): " + ", ".join(unknown), file=sys.stderr)
         print("Run with --list to see available models.", file=sys.stderr)
+        sys.exit(1)
+    if unavailable:
+        for model in unavailable:
+            status = model.get("hosting_status", "pending_rights")
+            source = model.get("original_source_url", "<source unavailable>")
+            print(
+                f"ERROR: {model['id']} is {status}; Sparrow does not distribute "
+                f"its model payload. Obtain it from: {source}",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
 for rid in chosen:

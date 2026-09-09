@@ -67,11 +67,24 @@ import tomllib
 from pathlib import Path
 DOMAINS = {"camera_trap", "acoustics", "overhead", "marine_imagery", "general"}
 TASKS = {"detector", "classifier", "encoder", "cascade"}
-FORMATS = {"onnx", "tflite", "cascade"}
+FORMATS = {"onnx", "tflite", "cascade", "ensemble"}
 REQ = ("id", "domain", "task", "format", "status", "license", "zip")
 CANON_AI4G = "Microsoft AI for Good Lab (AI4G)"
 GEO_SCOPES = {"global", "regional", "foundational"}
 AI4G_RELS = {"first_party", "third_party", "unverified"}
+HOSTING = {"hosted", "hosted_restricted", "link_only", "pending_rights"}
+HOSTED = {"hosted", "hosted_restricted"}
+RIGHTS = {
+    "verified", "conditional", "unverified", "conflicting",
+    "first_party_pending", "not_applicable",
+}
+COMMERCIAL = {"allowed", "prohibited", "unverified"}
+CONVERSION = {"verified", "conditional", "pending", "not_applicable"}
+RIGHTS_REQ = (
+    "hosting_status", "rights_status", "commercial_use_status",
+    "commercial_use", "rights_record", "rights_holder",
+    "license_source_url", "original_source_url", "conversion_permission",
+)
 META_REQ = ("geo_scope", "geo_regions", "developer", "ai4g_relationship")
 SLUG = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
 
@@ -81,8 +94,8 @@ def _nonempty_str(v):
 with open(sys.argv[1], "rb") as f:
     c = tomllib.load(f)
 errs = []
-if c.get("schema_version") != "1.1":
-    errs.append(f"schema_version {c.get('schema_version')!r} != '1.1'")
+if c.get("schema_version") != "1.2":
+    errs.append(f"schema_version {c.get('schema_version')!r} != '1.2'")
 models = c.get("model", [])
 if not models:
     errs.append("no [[model]] entries")
@@ -92,6 +105,9 @@ for m in models:
     for k in REQ:
         if k not in m:
             errs.append(f"{mid}: missing '{k}'")
+    for k in RIGHTS_REQ:
+        if k not in m:
+            errs.append(f"{mid}: missing rights metadata '{k}'")
     if m.get("domain") not in DOMAINS:
         errs.append(f"{mid}: bad domain {m.get('domain')!r}")
     if m.get("task") not in TASKS:
@@ -103,6 +119,37 @@ for m in models:
     exp = f"{m.get('domain')}__{m.get('task')}__{mid}.zip"
     if m.get("zip") != exp:
         errs.append(f"{mid}: zip {m.get('zip')!r} != {exp!r}")
+    hosting = m.get("hosting_status")
+    rights = m.get("rights_status")
+    commercial = m.get("commercial_use_status")
+    conversion = m.get("conversion_permission")
+    if hosting not in HOSTING:
+        errs.append(f"{mid}: bad hosting_status {hosting!r}")
+    if rights not in RIGHTS:
+        errs.append(f"{mid}: bad rights_status {rights!r}")
+    if commercial not in COMMERCIAL:
+        errs.append(f"{mid}: bad commercial_use_status {commercial!r}")
+    if conversion not in CONVERSION:
+        errs.append(f"{mid}: bad conversion_permission {conversion!r}")
+    if not isinstance(m.get("commercial_use"), bool):
+        errs.append(f"{mid}: commercial_use must be a Boolean")
+    elif m["commercial_use"] != (commercial == "allowed"):
+        errs.append(f"{mid}: commercial_use disagrees with commercial_use_status")
+    for field in ("rights_record", "rights_holder"):
+        if not _nonempty_str(m.get(field)):
+            errs.append(f"{mid}: empty {field}")
+    for field in ("license_source_url", "original_source_url"):
+        value = m.get(field)
+        if not _nonempty_str(value) or not value.startswith(("http://", "https://")):
+            errs.append(f"{mid}: invalid {field}")
+    if hosting in HOSTED and rights not in {"verified", "conditional", "not_applicable"}:
+        errs.append(f"{mid}: hosted payload lacks resolved rights")
+    if hosting in HOSTED and conversion not in {"verified", "conditional", "not_applicable"}:
+        errs.append(f"{mid}: hosted payload lacks resolved conversion permission")
+    if hosting == "pending_rights":
+        errs.append(f"{mid}: pending_rights must be link_only in a publication catalog")
+    if rights == "not_applicable" and m.get("format") != "cascade":
+        errs.append(f"{mid}: not_applicable rights require a weightless cascade")
     ids.append(mid)
     aliases += m.get("alias", [])
 # --- schema 1.1 metadata validation (per-record) ---
@@ -188,15 +235,17 @@ canonical_catalog = (repo_dir / "scripts" / "catalog.toml").resolve()
 if catalog_path == canonical_catalog:
     public_root = repo_dir.parent
     total = len(models)
+    hosted_models = [m for m in models if m.get("hosting_status") in HOSTED]
     default_onnx_count = sum(
-        m.get("format") == "onnx" and not m.get("flavor") for m in models
+        m.get("format") == "onnx" and not m.get("flavor") for m in hosted_models
     )
     opt_in_onnx_count = sum(
-        m.get("format") == "onnx" and bool(m.get("flavor")) for m in models
+        m.get("format") == "onnx" and bool(m.get("flavor")) for m in hosted_models
     )
-    tflite_count = sum(m.get("format") == "tflite" for m in models)
-    cascade_count = sum(m.get("format") == "cascade" for m in models)
-    mobile_count = tflite_count + cascade_count
+    tflite_count = sum(m.get("format") == "tflite" for m in hosted_models)
+    cascade_count = sum(m.get("format") == "cascade" for m in hosted_models)
+    ensemble_count = sum(m.get("format") == "ensemble" for m in hosted_models)
+    metadata_count = total - len(hosted_models)
     record = str(z.get("record", ""))
     version = str(z.get("version", ""))
     concept_doi = str(z.get("concept_doi", ""))
@@ -218,16 +267,19 @@ if catalog_path == canonical_catalog:
 
     require(
         readme,
-        f"Download the {default_onnx_count} default desktop ONNX models",
+        f"Download the {default_onnx_count} default hosted desktop ONNX models",
         "README",
     )
-    require(readme, f"zoo also holds {mobile_count} mobile", "README")
     require(
         readme,
         f"and {opt_in_onnx_count} opt-in ONNX models",
         "README",
     )
-    require(readme, f"complete **{total}-model** catalog", "README")
+    require(readme, f"{tflite_count} mobile TFLite", "README")
+    require(readme, f"{cascade_count} cascade", "README")
+    require(readme, f"{ensemble_count} recording-level ensemble", "README")
+    require(readme, f"{metadata_count} link-only", "README")
+    require(readme, f"complete **{total}-entry** catalog", "README")
     require(readme, f"10.5281/zenodo.{record}", "README")
     require(readme, f"(v{version})", "README")
     require(readme, concept_doi, "README")
@@ -237,12 +289,8 @@ if catalog_path == canonical_catalog:
     require(catalogue, f"(v{version},", "generated catalogue")
     require(catalogue, concept_doi, "generated catalogue")
 
-    require(
-        downloader,
-        f"# {default_onnx_count} desktop ONNX models",
-        "downloader help",
-    )
-    require(downloader, f"# all {total} (incl.", "downloader help")
+    require(downloader, "# default hosted desktop ONNX models", "downloader help")
+    require(downloader, "# all hosted runtime packages", "downloader help")
 if errs:
     print("FAIL")
     for e in errs:
@@ -456,7 +504,7 @@ PY
     else
       pass "$dir → catalog id '$mid'"
     fi
-  done < <(find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name ensemble.toml \) 2>/dev/null | sort)
+  done < <(find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name pipeline.toml -o -name ensemble.toml \) 2>/dev/null | sort)
   [[ $found -eq 0 ]] && skip "no model descriptors under $MODEL_DIR (run download_models.sh first)"
 fi
 echo ""
@@ -471,7 +519,7 @@ for cand in "$REPO_DIR/target/release/spe" "$REPO_DIR/target/debug/spe" "$(comma
 done
 if [[ -z "$SPE" ]]; then
   skip "no spe binary found (build with cargo, or install)"
-elif ! find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name ensemble.toml \) 2>/dev/null | grep -q .; then
+elif ! find -L "$MODEL_DIR" -maxdepth 2 \( -name manifest.toml -o -name pipeline.toml -o -name ensemble.toml \) 2>/dev/null | grep -q .; then
   skip "no models on disk to load"
 else
   # Source the shared ORT discovery env INSIDE a subshell so its

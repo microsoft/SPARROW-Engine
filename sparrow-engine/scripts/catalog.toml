@@ -11,8 +11,14 @@
 #   onnx    — desktop model, loadable by spe / server / Python (ONNX Runtime).
 #   tflite  — mobile-only variant, loaded by sparrow-engine-mobile, NOT desktop.
 #   cascade — a small pipeline descriptor referencing other models (no weights).
-# `download_models.sh` fetches ONLY `format = "onnx"` models by default; tflite
-# and cascade artifacts are fetched on demand (named explicitly or via --all).
+#   ensemble — a recording-level descriptor plus multiple ONNX/DSP resources.
+# `hosting_status` controls distribution independently from model support:
+#   hosted / hosted_restricted — Sparrow distributes the runtime package.
+#   link_only — Sparrow publishes metadata; obtain weights from the original.
+#   pending_rights — internal working state; forbidden in a release catalog.
+# `download_models.sh` fetches only hosted, unflavored ONNX models by default.
+# Other hosted formats are fetched on demand. Link-only and pending-rights
+# entries are never downloaded by Sparrow.
 #
 # Zenodo stores per-model ZIPs named "<domain>__<task>__<id>.zip" (Zenodo has no
 # real folders; the "__" delimiter groups them when the file list is sorted).
@@ -26,7 +32,7 @@
 # `alias` lists prior ids a model was known by, so consumers pinned to an old
 # name still resolve (e.g. MDV5a was "Species_Net_MDV5a" before v0.10.0).
 
-schema_version = "1.1"
+schema_version = "1.2"
 
 [zenodo]
 record = "22018132"
@@ -44,7 +50,7 @@ family = ["MegaDetector"]
 version = "v5a"
 status = "active"
 alias = ["Species_Net_MDV5a"]
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MDV5a.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -52,7 +58,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "first_party_pending"
+rights_record = "model-zoo-rights-adjudication-v1#1"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "MegaDetector v5 (MDv5a), Morris / Beery et al.; https://github.com/agentmorris/MegaDetector/releases/tag/v5.0"
 
 [[model]]
@@ -72,6 +88,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#2"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -92,6 +118,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#3"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 yolov10-c TFLite conversion; inherits MDV6-yolov10-c; https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md"
 
 [[model]]
@@ -111,6 +147,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#4"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -120,7 +166,7 @@ task = "detector"
 format = "onnx"
 family = ["DeepFaune"]
 status = "active"
-license = "AGPL-3.0 AND CC-BY-SA-4.0"
+license = "CC-BY-SA-4.0"
 zip = "camera_trap__detector__deepfaune-yolo8s.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -129,6 +175,16 @@ geo_regions = []
 developer = "DeepFaune consortium (CNRS and OFB)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#5"
+rights_holder = "DeepFaune consortium (CNRS and OFB)"
+license_source_url = "https://plmlab.math.cnrs.fr/deepfaune/software"
+original_source_url = "https://plmlab.math.cnrs.fr/deepfaune/software"
+conversion_permission = "verified"
+restrictions = ["attribution", "sharealike"]
+framework_licenses = ["AGPL-3.0"]
 reference = "DeepFaune detector (YOLOv8s), Rigoudy et al. 2023; https://plmlab.math.cnrs.fr/deepfaune/software; model parameters: https://pbil.univ-lyon1.fr/software/download/deepfaune/v1.3/deepfaune-yolov8s_960.pt"
 
 [[model]]
@@ -138,7 +194,7 @@ task = "detector"
 format = "onnx"
 family = ["MegaDetector"]
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__european_mammals.zip"
 display_name = "MD European Mammals"
 species_direct = true
@@ -146,7 +202,17 @@ geo_scope = "regional"
 geo_regions = ["europe"]
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "first_party_pending"
+rights_record = "model-zoo-rights-adjudication-v1#6"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://huggingface.co/Addax-Data-Science"
+original_source_url = "https://huggingface.co/Addax-Data-Science"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (European mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
@@ -156,7 +222,7 @@ task = "detector"
 format = "onnx"
 family = ["MegaDetector"]
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__north_american_mammals.zip"
 display_name = "MD North American Mammals"
 species_direct = true
@@ -164,7 +230,17 @@ geo_scope = "regional"
 geo_regions = ["north_america"]
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "first_party_pending"
+rights_record = "model-zoo-rights-adjudication-v1#7"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://huggingface.co/Addax-Data-Science"
+original_source_url = "https://huggingface.co/Addax-Data-Science"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (North American mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 
 [[model]]
@@ -174,7 +250,7 @@ task = "detector"
 format = "onnx"
 family = ["MegaDetector"]
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__sub_saharan.zip"
 display_name = "MD Sub-Saharan Mammals"
 species_direct = true
@@ -184,7 +260,17 @@ developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 
 # --- MegaDetector variants added v0.12.0 (ONB-2) ---
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "first_party_pending"
+rights_record = "model-zoo-rights-adjudication-v1#8"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://huggingface.co/Addax-Data-Science"
+original_source_url = "https://huggingface.co/Addax-Data-Science"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "Microsoft AI for Good Lab (AI4G) regional YOLO detector (Sub-Saharan mammals); canonical upstream URL UNVERIFIED; Sparrow redistribution DOI: https://doi.org/10.5281/zenodo.20563673"
 [[model]]
 id = "MDV5b"
@@ -194,7 +280,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v5b"
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MDV5b.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -202,7 +288,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "first_party_pending"
+rights_record = "model-zoo-rights-adjudication-v1#9"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "MegaDetector v5 (MDv5b), Morris / Beery et al.; https://github.com/agentmorris/MegaDetector/releases/tag/v5.0"
 
 [[model]]
@@ -213,7 +309,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-redwood"
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MD1000-redwood.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -221,7 +317,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Dan Morris / MegaDetector project"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#10"
+rights_holder = "Dan Morris / MegaDetector project"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "MegaDetector v1000 redwood, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
@@ -232,7 +338,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-spruce"
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MD1000-spruce.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -240,7 +346,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Dan Morris / MegaDetector project"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#11"
+rights_holder = "Dan Morris / MegaDetector project"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "MegaDetector v1000 spruce, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
@@ -251,7 +367,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-larch"
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MD1000-larch.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -259,7 +375,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Dan Morris / MegaDetector project"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#12"
+rights_holder = "Dan Morris / MegaDetector project"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["AGPL-3.0"]
 reference = "MegaDetector v1000 larch, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
@@ -270,7 +396,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-cedar"
 status = "active"
-license = "GPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MD1000-cedar.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -278,7 +404,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Dan Morris / MegaDetector project"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#13"
+rights_holder = "Dan Morris / MegaDetector project"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["GPL-3.0"]
 reference = "MegaDetector v1000 cedar, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
@@ -289,7 +425,7 @@ format = "onnx"
 family = ["MegaDetector"]
 version = "v1000-sorrel"
 status = "active"
-license = "AGPL-3.0"
+license = "UNVERIFIED"
 zip = "camera_trap__detector__MD1000-sorrel.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -297,7 +433,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Dan Morris / MegaDetector project"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#14"
+rights_holder = "Dan Morris / MegaDetector project"
+license_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+original_source_url = "https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
+conversion_permission = "pending"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = ["AGPL-3.0"]
 reference = "MegaDetector v1000 sorrel, Morris / MegaDetector team; https://github.com/agentmorris/MegaDetector/releases/tag/v1000.0; release notes: https://raw.githubusercontent.com/agentmorris/MegaDetector/main/docs/release-notes/mdv1000-release.md"
 
 [[model]]
@@ -317,6 +463,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#15"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -336,6 +492,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#16"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -357,6 +523,16 @@ ai4g_relationship = "first_party"
 
 # --- MegaDetector MIT variants added v0.13.0 (ONB-2; WongKinYiu/YOLO framework) ---
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#17"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["copyleft", "source_offer"]
+framework_licenses = []
 reference = "MegaDetector V6 model zoo, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-mit-yolov9-c"
@@ -375,6 +551,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#18"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -396,6 +582,16 @@ ai4g_relationship = "first_party"
 
 # --- MegaDetector Apache-2.0 RT-DETRv2 variants added v0.14.0 (ONB-2-APA; lyuwenyu/RT-DETR framework) ---
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#19"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "MegaDetector V6 MIT YOLO-MIT variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 [[model]]
 id = "MDV6-apa-rtdetr-c"
@@ -414,6 +610,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#20"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 [[model]]
@@ -433,6 +639,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#21"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/microsoft/MegaDetector/main/README.md"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "MegaDetector V6 Apache RT-DETR variant, Microsoft AI for Good Lab (AI4G); https://raw.githubusercontent.com/microsoft/MegaDetector/main/docs/model_zoo.md; weights DOI: https://doi.org/10.5281/zenodo.15398270"
 
 # ============================ Camera Trap — Classifier ==========================
@@ -452,6 +668,16 @@ geo_locality = "Amazon basin"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#22"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+original_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Microsoft AI for Good Lab (AI4G), Biodiversity model-zoo classifier table (AI4G-Amazon-V2 v2): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
@@ -469,6 +695,16 @@ geo_locality = "Serengeti, Tanzania"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#23"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+original_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Microsoft AI for Good Lab (AI4G), Biodiversity model-zoo classifier table (AI4G-Serengeti): https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
@@ -485,6 +721,16 @@ geo_regions = ["europe"]
 developer = "DeepFaune consortium (CNRS and OFB)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#24"
+rights_holder = "DeepFaune consortium (CNRS and OFB)"
+license_source_url = "https://plmlab.math.cnrs.fr/deepfaune/software"
+original_source_url = "https://plmlab.math.cnrs.fr/deepfaune/software"
+conversion_permission = "verified"
+restrictions = ["attribution", "sharealike"]
+framework_licenses = []
 reference = "Microsoft Biodiversity model-zoo classifier table (Deepfaune-classification v1.3) and Rigoudy et al. 2023, DOI 10.1007/s10344-023-01742-7: https://microsoft.github.io/Biodiversity/model_zoo/classifiers/"
 
 [[model]]
@@ -494,14 +740,24 @@ task = "classifier"
 format = "onnx"
 family = ["DeepFaune"]
 status = "active"
-license = "CC0-1.0"
+license = "CC-BY-NC-SA-4.0"
 zip = "camera_trap__classifier__Deepfaune-New-England.zip"
 geo_scope = "regional"
 geo_regions = ["north_america"]
 geo_locality = "New England, USA"
 developer = "Clarfeld et al. / USGS"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#25"
+rights_holder = "Clarfeld et al. / USGS"
+license_source_url = "https://www.sciencebase.gov/catalog/item/67ae17fcd34e3f09c0e0f002"
+original_source_url = "https://www.sciencebase.gov/catalog/item/67ae17fcd34e3f09c0e0f002"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Clarfeld et al. 2025, DeepFaune New England, USGS software release, DOI 10.5066/P13T4EKE: https://code.usgs.gov/vtcfwru/deepfaune-new-england"
 
 [[model]]
@@ -511,7 +767,7 @@ task = "classifier"
 format = "onnx"
 family = ["SpeciesNet"]
 status = "active"
-license = "Apache-2.0"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__SpeciesNet-Crop.zip"
 geo_scope = "global"
 geo_regions = []
@@ -519,7 +775,17 @@ developer = "Google Research / SpeciesNet"
 ai4g_relationship = "third_party"
 
 # ---- AddaxAI PyTorch classifiers (ONB-1, Zenodo v0.11.0) ----
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#26"
+rights_holder = "Google Research / SpeciesNet"
+license_source_url = "https://github.com/google/cameratrapai"
+original_source_url = "https://github.com/google/cameratrapai"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Google SpeciesNet / cameratrapai repository; Gadot et al. 2024, DOI 10.1049/cvi2.12318: https://github.com/google/cameratrapai"
 
 [[model]]
@@ -529,7 +795,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "MIT"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__southwest-usa-v3.zip"
 display_name = "southwest-usa-v3-SDZWA"
 geo_scope = "regional"
@@ -537,7 +803,17 @@ geo_regions = ["north_america"]
 geo_locality = "Southwest USA"
 developer = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#27"
+rights_holder = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
+license_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Southwest_USA_v3"
+original_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Southwest_USA_v3"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "San Diego Zoo Wildlife Alliance, Southwest USA v3 model card: https://huggingface.co/Addax-Data-Science/Southwest_USA_v3"
 
 [[model]]
@@ -547,7 +823,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "MIT"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__peruvian-andes.zip"
 display_name = "peruvian-andes-SDZWA"
 geo_scope = "regional"
@@ -555,7 +831,17 @@ geo_regions = ["south_america"]
 geo_locality = "Peruvian Andes"
 developer = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#28"
+rights_holder = "Kyra Swanson / San Diego Zoo Wildlife Alliance"
+license_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Peruvian_Andes"
+original_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Peruvian_Andes"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "San Diego Zoo Wildlife Alliance, Peruvian Andes model card: https://huggingface.co/Addax-Data-Science/Peruvian_Andes"
 
 [[model]]
@@ -574,6 +860,16 @@ geo_locality = "eastern and southern drylands"
 developer = "Addax Data Science"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#29"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/sub_saharan_drylands_v1.pt"
+original_source_url = "https://huggingface.co/Addax-Data-Science/sub_saharan_drylands_v1.pt"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Addax Data Science, Sub-Saharan Drylands model card: https://huggingface.co/Addax-Data-Science/sub_saharan_drylands_v1.pt"
 
 [[model]]
@@ -592,6 +888,16 @@ developer = "Hex Data"
 owner = "OSI-Panthera"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#30"
+rights_holder = "Hex Data"
+license_source_url = "https://huggingface.co/Hex-Data/Panthera"
+original_source_url = "https://huggingface.co/Hex-Data/Panthera"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Hex·Data / OSI-Panthera, Panthera model card: https://huggingface.co/Hex-Data/Panthera"
 
 [[model]]
@@ -601,7 +907,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "MIT"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__gifu-japan.zip"
 display_name = "gifu-japan-GifuUniversity"
 geo_scope = "regional"
@@ -610,7 +916,17 @@ geo_locality = "Gifu Prefecture, Japan"
 developer = "Gifu University"
 owner = "Masaki Ando"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#31"
+rights_holder = "Gifu University"
+license_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Japan_Gifu_v0.2"
+original_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Japan_Gifu_v0.2"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Gifu University, Japan Gifu v0.2 model card: https://huggingface.co/Addax-Data-Science/Japan_Gifu_v0.2"
 
 [[model]]
@@ -630,6 +946,16 @@ developer = "Addax Data Science"
 owner = "USDA Forest Service Institute of Pacific Islands Forestry and The Nature Conservancy"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#32"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial"]
+framework_licenses = []
 reference = "Addax Data Science, Hawaii AI Puaa v1.0 model card: https://huggingface.co/Addax-Data-Science/HWI-ADS-v1"
 
 [[model]]
@@ -649,6 +975,16 @@ developer = "Addax Data Science"
 owner = "Wildlife Conservation Trust, India"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#33"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/IND-ADS-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/IND-ADS-v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial"]
+framework_licenses = []
 reference = "Addax Data Science / Wildlife Conservation Trust India, Central Indian Landscapes model card: https://huggingface.co/Addax-Data-Science/IND-ADS-v1"
 
 [[model]]
@@ -668,6 +1004,16 @@ developer = "Addax Data Science"
 owner = "Charles Darwin University, Territory Natural Resource Management, and Warddeken Land Management"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#34"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/ANT-ADS-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/ANT-ADS-v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial"]
+framework_licenses = []
 reference = "Addax Data Science / Charles Darwin University / Territory Natural Resource Management / Warddeken Land Management, Top End Savanna model card: https://huggingface.co/Addax-Data-Science/ANT-ADS-v1"
 
 [[model]]
@@ -687,6 +1033,16 @@ developer = "Addax Data Science"
 owner = "Parks Victoria"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#35"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/VIC-ADS-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/VIC-ADS-v1"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Addax Data Science. VIC-ADS-v1 (Parks Victoria classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/VIC-ADS-v1"
 
 [[model]]
@@ -696,7 +1052,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI", "SpeciesNet"]
 status = "active"
-license = "Apache-2.0"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__sw-borderlands.zip"
 display_name = "sw-borderlands-Addax"
 geo_scope = "regional"
@@ -705,7 +1061,17 @@ geo_locality = "USA-Mexico borderlands"
 developer = "Addax Data Science"
 owner = "Tohono O'odham Nation and University of Arizona"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#36"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/SBUSA-ADS-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/SBUSA-ADS-v1"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Addax Data Science. SBUSA-ADS-v1 (Southwestern Borderlands USA classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/SBUSA-ADS-v1"
 
 [[model]]
@@ -715,7 +1081,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI", "SpeciesNet"]
 status = "active"
-license = "Apache-2.0"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__ahdrift.zip"
 display_name = "ahdrift-OSU-ColumbusZoo-Addax"
 geo_scope = "regional"
@@ -723,7 +1089,17 @@ geo_regions = ["north_america"]
 geo_locality = "Midwest USA"
 developer = "Ohio State University, Columbus Zoo and Aquarium, and Addax Data Science"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#37"
+rights_holder = "Ohio State University, Columbus Zoo and Aquarium, and Addax Data Science"
+license_source_url = "https://huggingface.co/api/models/Addax-Data-Science/AHDRIFT-v1"
+original_source_url = "https://huggingface.co/api/models/Addax-Data-Science/AHDRIFT-v1"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Addax Data Science. AHDRIFT-v1 (AHDriFT-ID Midwest US classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AHDRIFT-v1"
 
 [[model]]
@@ -743,6 +1119,16 @@ developer = "Hugo Magaldi / One Forest Vision initiative"
 owner = "MNHN and One Forest Vision partners"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#38"
+rights_holder = "Hugo Magaldi / One Forest Vision initiative"
+license_source_url = "https://github.com/MNHN-OFVI/DeepForestVision"
+original_source_url = "https://github.com/MNHN-OFVI/DeepForestVision"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "MNHN-OFVI. AFR-DFV-v1 / DeepForestVision classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v1; original project: https://github.com/MNHN-OFVI/DeepForestVision"
 
 [[model]]
@@ -760,6 +1146,16 @@ geo_regions = ["australia"]
 developer = "Australian Wildlife Conservancy"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#39"
+rights_holder = "Australian Wildlife Conservancy"
+license_source_url = "https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
+original_source_url = "https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Australian Wildlife Conservancy. AWC135-AWC-v1 / Australian Wildlife Classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AWC135-AWC-v1; source license: https://github.com/Australian-Wildlife-Conservancy-AWC/awc-wildlife-classifier/blob/main/LICENSE"
 
 [[model]]
@@ -779,6 +1175,16 @@ developer = "Addax Data Science"
 owner = "Desert Lion Conservation and Smart Parks"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#40"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/Namib-Desert-v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/Namib-Desert-v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Addax Data Science. Namib-Desert-v1 (Namibian Desert classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Namib-Desert-v1"
 
 [[model]]
@@ -798,6 +1204,16 @@ developer = "Addax Data Science"
 owner = "Iranian Cheetah Society"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#41"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/Iran_v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/Iran_v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Addax Data Science. Iran_v1 (Iran classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Iran_v1"
 
 [[model]]
@@ -816,6 +1232,16 @@ developer = "Addax Data Science"
 owner = "New Zealand Department of Conservation"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#42"
+rights_holder = "Addax Data Science"
+license_source_url = "https://huggingface.co/Addax-Data-Science/New_Zealand_v1"
+original_source_url = "https://huggingface.co/Addax-Data-Science/New_Zealand_v1"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Addax Data Science / New Zealand Department of Conservation. New_Zealand_v1 (New Zealand invasives classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/New_Zealand_v1"
 
 [[model]]
@@ -836,6 +1262,16 @@ ai4g_relationship = "third_party"
 
 # single-label (softmax) classifier — engine softmax image-classifier support
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#43"
+rights_holder = "Prakash Palanivelu Rajmohan and Renuka Sharma / WildObs"
+license_source_url = "https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
+original_source_url = "https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "WildObs. WetTropics_WildObs (Queensland Wet Tropics classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/WetTropics_WildObs"
 [[model]]
 id = "nz-species"
@@ -844,7 +1280,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "CC-BY-NC-SA-4.0"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__nz-species.zip"
 display_name = "nz-species-wekaResearch"
 geo_scope = "regional"
@@ -855,6 +1291,16 @@ ai4g_relationship = "third_party"
 
 # ONB-3: AddaxAI TF/Keras classifiers (tf2onnx from .h5/.keras; softmax stripped -> engine softmax)
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#44"
+rights_holder = "wekaResearch / Olly Powell"
+license_source_url = "https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
+original_source_url = "https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "New Zealand Department of Conservation / wekaResearch. NZS-WEK-v3-03 (New Zealand Species v3.03 classifier). Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NZS-WEK-v3-03"
 [[model]]
 id = "tropicam-ai"
@@ -863,7 +1309,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "CC-BY-NC-ND-4.0"
+license = "CONFLICTING"
 zip = "camera_trap__classifier__tropicam-ai.zip"
 display_name = "tropicam-ai-MNCN-CSIC"
 geo_scope = "regional"
@@ -872,6 +1318,16 @@ geo_locality = "Brazil, Peru, French Guiana, and Costa Rica"
 developer = "Andrea Zampetti / MNCN-CSIC"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conflicting"
+rights_record = "model-zoo-rights-adjudication-v1#45"
+rights_holder = "Andrea Zampetti / MNCN-CSIC"
+license_source_url = "https://zenodo.org/api/records/17589043"
+original_source_url = "https://zenodo.org/api/records/17589043"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "no_derivatives"]
+framework_licenses = []
 reference = "Andrea Zampetti / MNCN-CSIC. NEO-MNCN-v1-0 / TropiCam-AI v1.0 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NEO-MNCN-v1-0; original project: https://github.com/andrewzamp/TropiCam-AI"
 
 [[model]]
@@ -889,6 +1345,16 @@ geo_locality = "Terai lowlands, Nepal"
 developer = "Alexander Merdian-Tarko / TeraiNet"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#46"
+rights_holder = "Alexander Merdian-Tarko / TeraiNet"
+license_source_url = "https://github.com/alexvmt/TeraiNet"
+original_source_url = "https://github.com/alexvmt/TeraiNet"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Alexander Merdian-Tarko. TeraiNet (Terai Nepal classifier). Hugging Face model repository: https://huggingface.co/alexvmt/TeraiNet; project details: https://github.com/alexvmt/TeraiNet"
 
 [[model]]
@@ -898,7 +1364,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI", "MEWC"]
 status = "active"
-license = "CC-BY-4.0"
+license = "CC-BY-NC-4.0"
 zip = "camera_trap__classifier__tasmanian-vertebrates.zip"
 display_name = "tasmanian-vertebrates-MEWC"
 geo_scope = "regional"
@@ -906,7 +1372,17 @@ geo_regions = ["australia"]
 geo_locality = "Tasmania"
 developer = "Barry Brook / MEWC / University of Tasmania"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#47"
+rights_holder = "Barry Brook / MEWC / University of Tasmania"
+license_source_url = "https://github.com/zaandahl/mewc"
+original_source_url = "https://github.com/zaandahl/mewc"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial"]
+framework_licenses = []
 reference = "MEWC. Tasmanian_vertebrates classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Tasmanian_vertebrates; MEWC source: https://github.com/zaandahl/mewc"
 
 [[model]]
@@ -916,7 +1392,7 @@ task = "classifier"
 format = "onnx"
 family = ["AddaxAI"]
 status = "active"
-license = "MIT"
+license = "UNVERIFIED"
 zip = "camera_trap__classifier__peruvian-amazon-sdzwa.zip"
 display_name = "peruvian-amazon-SDZWA"
 geo_scope = "regional"
@@ -924,7 +1400,17 @@ geo_regions = ["south_america"]
 geo_locality = "Peruvian Amazon"
 developer = "Mathias Tobler / San Diego Zoo Wildlife Alliance"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "unverified"
+rights_record = "model-zoo-rights-adjudication-v1#48"
+rights_holder = "Mathias Tobler / San Diego Zoo Wildlife Alliance"
+license_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Peruvian_Amazon"
+original_source_url = "https://huggingface.co/api/models/Addax-Data-Science/Peruvian_Amazon"
+conversion_permission = "pending"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "San Diego Zoo Wildlife Alliance. Peruvian_Amazon classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/Peruvian_Amazon"
 
 # ============================ Acoustics — Detector ==============================
@@ -945,6 +1431,16 @@ geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#49"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/"
+original_source_url = "https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Microsoft AI for Good Lab (AI4G). MegaDetector-Acoustic / MD_AudioBirds_V1. Source: https://github.com/microsoft/MegaDetector-Acoustic; model-zoo page: https://microsoft.github.io/Biodiversity/model_zoo/bioacoustics/. Cite: Hernandez et al. 2024, Pytorch-Wildlife: A Collaborative Deep Learning Framework for Conservation, arXiv:2405.12930."
 
 [[model]]
@@ -966,6 +1462,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#50"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.21.0: orca-detector-dclde2026-v5. Zenodo. https://doi.org/10.5281/zenodo.21346269. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
@@ -989,6 +1495,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#51"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Converted TFLite FP16 variant of orca-detector-dclde2026-v5. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 [[model]]
@@ -1012,6 +1528,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#52"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Converted TFLite INT8 variant of orca-detector-dclde2026-v5. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 # ============================ Acoustics — Classifier ============================
@@ -1032,6 +1558,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#53"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project. Sparrow Engine model zoo v0.5.0: orca-ecotype-dclde2026-v1. Zenodo. https://doi.org/10.5281/zenodo.20563673. Upstream/challenge context: DCLDE 2026 killer whale detection and ecotype classification dataset/challenge."
 
 [[model]]
@@ -1050,6 +1586,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#54"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Converted TFLite FP16 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
@@ -1068,6 +1614,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#55"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Converted TFLite INT8 variant of orca-ecotype-dclde2026-v1. Reference the ONNX sibling: Microsoft AI for Good Lab (AI4G) and Microsoft Pytorch-Wildlife project, Sparrow Engine model zoo v0.5.0, https://doi.org/10.5281/zenodo.20563673."
 
 [[model]]
@@ -1084,6 +1640,16 @@ geo_regions = []
 developer = "Google Research (Hamer et al.)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#56"
+rights_holder = "Google Research (Hamer et al.)"
+license_source_url = "https://arxiv.org/abs/2508.04665"
+original_source_url = "https://arxiv.org/abs/2508.04665"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
 
 [[model]]
@@ -1102,6 +1668,16 @@ display_name = "BuzzDetect Acoustic Event Classifier"
 developer = "OSU Bee Lab; YAMNet backbone by Google"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#57"
+rights_holder = "OSU Bee Lab; YAMNet backbone by Google"
+license_source_url = "https://github.com/tensorflow/models/tree/master/research/audioset/yamnet"
+original_source_url = "https://github.com/tensorflow/models/tree/master/research/audioset/yamnet"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "OSU Bee Lab BuzzDetect v1.0.1, source revision a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6: https://github.com/OSU-Bee-Lab/buzzdetect/tree/a06f36f7d65ade8d4ff3845bb1cac2ba46c357e6. YAMNet: https://github.com/tensorflow/models/tree/master/research/audioset/yamnet."
 
 # FP16 variant of perch-v2. Same labels and same top-1 predictions (76/76 on the
@@ -1125,6 +1701,16 @@ geo_regions = []
 developer = "Google Research (Hamer et al.)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#58"
+rights_holder = "Google Research (Hamer et al.)"
+license_source_url = "https://arxiv.org/abs/2508.04665"
+original_source_url = "https://arxiv.org/abs/2508.04665"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "FP16-converted variant of perch-v2. Reference the FP32 sibling: Google Research. Perch / Perch 2 bioacoustics model. Source: https://github.com/google-research/perch. Cite: van Merriënboer, Dumoulin, Hamer et al., Perch 2.0: The Bittern Lesson for Bioacoustics, arXiv:2508.04665, https://arxiv.org/abs/2508.04665."
 
 # ============================ Acoustics — Cascade ===============================
@@ -1144,6 +1730,16 @@ geo_locality = "Pacific Northwest and Salish Sea"
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "not_applicable"
+rights_record = "model-zoo-rights-adjudication-v1#59"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+original_source_url = "https://zenodo.org/records/22018132/files/acoustics__detector__orca-detector-dclde2026-v5.zip"
+conversion_permission = "not_applicable"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Pipeline descriptor combining orca-detector-v5-fp16-tflite and orca-ecotype-melinput-fp16-tflite. Cite both component model references; updated for Sparrow Engine model zoo v0.21.0, https://doi.org/10.5281/zenodo.21346269."
 
 # ============================ Overhead — Detector ===============================
@@ -1164,6 +1760,16 @@ geo_locality = "aerial savanna"
 developer = "University of Liege, Gembloux Agro-Bio Tech (Delplanque et al.)"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#60"
+rights_holder = "University of Liege, Gembloux Agro-Bio Tech (Delplanque et al.)"
+license_source_url = "https://raw.githubusercontent.com/Alexandre-Delplanque/HerdNet/main/README.md"
+original_source_url = "https://raw.githubusercontent.com/Alexandre-Delplanque/HerdNet/main/README.md"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike", "academic_research_only"]
+framework_licenses = []
 reference = "Delplanque, A., Foucher, S., Théau, J., Bussière, E., Vermeulen, C., and Lejeune, P. From crowd to herd counting: How to precisely detect and count African mammals using aerial imagery and deep learning? ISPRS Journal of Photogrammetry and Remote Sensing 197 (2023), 167-180. https://doi.org/10.1016/j.isprsjprs.2023.01.025. Source: https://github.com/Alexandre-Delplanque/HerdNet."
 
 [[model]]
@@ -1173,7 +1779,7 @@ task = "detector"
 format = "onnx"
 family = []
 status = "active"
-license = "MIT"
+license = "CC-BY-NC-SA-4.0"
 zip = "overhead__detector__OWL.zip"
 species_direct = false
 detector_gate_class = "animal"
@@ -1181,7 +1787,17 @@ geo_scope = "global"
 geo_regions = []
 developer = "Microsoft AI for Good Lab (AI4G)"
 ai4g_relationship = "first_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#61"
+rights_holder = "Microsoft AI for Good Lab (AI4G)"
+license_source_url = "https://zenodo.org/api/records/20802844"
+original_source_url = "https://zenodo.org/api/records/20802844"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Source (MIT): https://github.com/microsoft/MegaDetector-Overhead (Microsoft AI for Good Lab (AI4G))."
 
 [[model]]
@@ -1202,6 +1818,16 @@ display_name = "Imageomics MMLA Aerial Wildlife Detector"
 developer = "Imageomics Institute (Jenna Kline, The Ohio State University)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#62"
+rights_holder = "Imageomics Institute (Jenna Kline, The Ohio State University)"
+license_source_url = "https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca"
+original_source_url = "https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Kline, J., et al. MMLA: Multi-Environment, Multi-Species, Low-Altitude Aerial Footage Dataset. arXiv:2504.07744. https://arxiv.org/abs/2504.07744. Source revision 7930ec0d758400bdc04e355fc4565ba67b36cdca: https://huggingface.co/imageomics/mmla/tree/7930ec0d758400bdc04e355fc4565ba67b36cdca"
 
 [[model]]
@@ -1222,6 +1848,16 @@ display_name = "DeepForest Tree-Crown Detector"
 developer = "DeepForest project / Weecology"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#63"
+rights_holder = "DeepForest project / Weecology"
+license_source_url = "https://huggingface.co/weecology/deepforest-tree/tree/cc21436bc5d572dde8ff5f93c1e71a32f563cace"
+original_source_url = "https://huggingface.co/weecology/deepforest-tree/tree/cc21436bc5d572dde8ff5f93c1e71a32f563cace"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Weinstein et al., DeepForest. Pinned model revision cc21436bc5d572dde8ff5f93c1e71a32f563cace: https://huggingface.co/weecology/deepforest-tree/tree/cc21436bc5d572dde8ff5f93c1e71a32f563cace."
 
 [[model]]
@@ -1242,6 +1878,16 @@ display_name = "DeepForest Aerial Bird Detector"
 developer = "DeepForest project / Weecology"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#64"
+rights_holder = "DeepForest project / Weecology"
+license_source_url = "https://huggingface.co/weecology/deepforest-bird/tree/bf68705a43f85cdf82148448467b68d60cf1ae80"
+original_source_url = "https://huggingface.co/weecology/deepforest-bird/tree/bf68705a43f85cdf82148448467b68d60cf1ae80"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "DeepForest aerial bird detector, pinned model revision bf68705a43f85cdf82148448467b68d60cf1ae80: https://huggingface.co/weecology/deepforest-bird/tree/bf68705a43f85cdf82148448467b68d60cf1ae80."
 
 [[model]]
@@ -1251,7 +1897,7 @@ task = "detector"
 format = "onnx"
 family = ["DuckNet", "RetinaNet"]
 status = "active"
-license = "CC-BY-NC-SA-4.0"
+license = "UNVERIFIED"
 zip = "overhead__detector__ducknet.zip"
 description = "DuckNet RetinaNet detector for nine North American waterfowl classes in UAV imagery."
 species_direct = false
@@ -1263,6 +1909,16 @@ display_name = "DuckNet Waterfowl Detector"
 developer = "DuckNet authors: Loken, Ringelman, Mini, James, and Mitchell"
 ai4g_relationship = "third_party"
 commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#65"
+rights_holder = "DuckNet authors: Loken, Ringelman, Mini, James, and Mitchell"
+license_source_url = "https://github.com/mkmitchell/DuckNet/tree/68a5ff0440383b7452d7a5f51c5735c83c01cc58"
+original_source_url = "https://github.com/mkmitchell/DuckNet/tree/68a5ff0440383b7452d7a5f51c5735c83c01cc58"
+conversion_permission = "pending"
+restrictions = ["attribution", "noncommercial", "sharealike"]
+framework_licenses = []
 reference = "Loken, Z. J., Ringelman, K. M., Mini, A., James, D., and Mitchell, M. (2025). DuckNet: an open-source deep learning tool for waterfowl species identification in UAV imagery. https://doi.org/10.1002/rse2.70028. Source revision 68a5ff0440383b7452d7a5f51c5735c83c01cc58: https://github.com/mkmitchell/DuckNet/tree/68a5ff0440383b7452d7a5f51c5735c83c01cc58."
 
 # ============================ Marine Imagery — Detector ========================
@@ -1285,6 +1941,16 @@ display_name = "FathomNet MBARI 315k Detector"
 developer = "CVisionAI / Monterey Bay Aquarium Research Institute (MBARI)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#66"
+rights_holder = "CVisionAI / Monterey Bay Aquarium Research Institute (MBARI)"
+license_source_url = "https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8"
+original_source_url = "https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "FathomNet MBARI Monterey Bay 315k YOLOv8 model, source revision f4a839a78214441e32bee1928839fa7578c2bcd8: https://huggingface.co/FathomNet/MBARI-315k-yolov8/tree/f4a839a78214441e32bee1928839fa7578c2bcd8"
 
 [[model]]
@@ -1304,6 +1970,16 @@ display_name = "FathomNet VME Detector"
 developer = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#67"
+rights_holder = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
+license_source_url = "https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0"
+original_source_url = "https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "FathomNet vulnerable marine ecosystems model, source revision dffb2d9c6178bab0be813752e06b474b9b6515a0: https://huggingface.co/FathomNet/vulnerable-marine-ecosystems/tree/dffb2d9c6178bab0be813752e06b474b9b6515a0"
 
 [[model]]
@@ -1323,6 +1999,16 @@ display_name = "FathomNet Trash Detector"
 developer = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#68"
+rights_holder = "FathomNet / Monterey Bay Aquarium Research Institute (MBARI)"
+license_source_url = "https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762"
+original_source_url = "https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "FathomNet trash detector, source revision 1604489392f409ab57dc82a831c7e22031dc6762: https://huggingface.co/FathomNet/trash-detector/tree/1604489392f409ab57dc82a831c7e22031dc6762"
 
 [[model]]
@@ -1344,6 +2030,16 @@ display_name = "FathomNet MegaFishDetector YOLOv5s 640"
 developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#69"
+rights_holder = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+license_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+original_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
 
 [[model]]
@@ -1365,6 +2061,16 @@ display_name = "FathomNet MegaFishDetector YOLOv5m 1280"
 developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#70"
+rights_holder = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+license_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+original_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
 
 [[model]]
@@ -1386,6 +2092,16 @@ display_name = "FathomNet MegaFishDetector YOLOv5l 640"
 developer = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#71"
+rights_holder = "WARPLab, Woods Hole Oceanographic Institution; distributed via FathomNet"
+license_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+original_source_url = "https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Yang, D., Cai, L., Jamieson, S., and Girdhar, Y. Biological Hotspot Mapping in Coral Reefs with Robotic Visual Surveys. CV4Animals at CVPR 2023. arXiv:2305.02330. Source revision ea16af9d508cdcf0151f89422358e6019fb05f36: https://huggingface.co/FathomNet/megafishdetector/tree/ea16af9d508cdcf0151f89422358e6019fb05f36"
 
 # ============================ General — Encoder ============================
@@ -1405,6 +2121,16 @@ geo_regions = []
 developer = "Imageomics Institute and Ohio State University"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#72"
+rights_holder = "Imageomics Institute and Ohio State University"
+license_source_url = "https://huggingface.co/imageomics/bioclip-2"
+original_source_url = "https://huggingface.co/imageomics/bioclip-2"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
 
 # FP16 variant of bioclip-2. Same graph and same 768-d cosine embedding space
@@ -1428,6 +2154,16 @@ geo_regions = []
 developer = "Imageomics Institute and Ohio State University"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#73"
+rights_holder = "Imageomics Institute and Ohio State University"
+license_source_url = "https://huggingface.co/imageomics/bioclip-2"
+original_source_url = "https://huggingface.co/imageomics/bioclip-2"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "FP16-converted variant of bioclip-2. Reference the FP32 sibling: Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. Model: imageomics/bioclip-2, Hugging Face, DOI https://doi.org/10.57967/hf/5765, https://huggingface.co/imageomics/bioclip-2."
 
 # BioCLIP 2.5 is a separate 1024-d embedding space, not an in-place upgrade of
@@ -1451,6 +2187,16 @@ geo_regions = []
 developer = "Imageomics Institute and Ohio State University"
 ai4g_relationship = "third_party"
 commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "model-zoo-rights-adjudication-v1#74"
+rights_holder = "Imageomics Institute and Ohio State University"
+license_source_url = "https://huggingface.co/imageomics/bioclip-2.5-vith14"
+original_source_url = "https://huggingface.co/imageomics/bioclip-2.5-vith14"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = []
 reference = "Gu, J., Stevens, S., Campolongo, E. G., Thompson, M. J., Zhang, N., Wu, J., Kopanev, A., Mai, Z., White, A. E., Balhoff, J., Dahdul, W. M., Rubenstein, D., Lapp, H., Berger-Wolf, T., Chao, W.-L., and Su, Y. BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning. NeurIPS 2025. https://arxiv.org/abs/2505.23883. BioCLIP 2.5 Huge model v1.0.0, pinned revision 191d741545e4c741cdef4b22c6eb69c945c1e592: https://huggingface.co/imageomics/bioclip-2.5-vith14."
 
 [[model]]
@@ -1467,5 +2213,157 @@ geo_scope = "foundational"
 geo_regions = []
 developer = "Meta AI"
 ai4g_relationship = "third_party"
-commercial_use = true
+commercial_use = false
+commercial_use_status = "unverified"
+hosting_status = "link_only"
+rights_status = "conditional"
+rights_record = "model-zoo-rights-adjudication-v1#75"
+rights_holder = "Meta AI"
+license_source_url = "https://huggingface.co/api/models/facebook/dinov3-vitl16-pretrain-lvd1689m"
+original_source_url = "https://huggingface.co/api/models/facebook/dinov3-vitl16-pretrain-lvd1689m"
+conversion_permission = "pending"
+restrictions = ["custom_agreement", "attribution", "prohibited_uses", "trade_controls", "flow_down"]
+framework_licenses = []
 reference = "Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., et al. DINOv3. Meta AI, 2025. https://arxiv.org/abs/2508.10104. Model: facebook/dinov3-vitl16-pretrain-lvd1689m (LVD-1689M pretrain, ViT-L/16, 1024-d), Hugging Face, https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m. License: DINOv3 License (custom Meta license)."
+
+# ===================== Admitted release candidates =====================
+
+[[model]]
+id = "plantclef-dinov2"
+domain = "general"
+task = "classifier"
+format = "onnx"
+family = ["PlantCLEF", "DINOv2"]
+version = "plantclef2024-full-finetune-ema"
+status = "active"
+license = "CC-BY-4.0"
+zip = "general__classifier__plantclef-dinov2.zip"
+geo_scope = "global"
+geo_regions = []
+display_name = "PlantCLEF 2024 DINOv2 Plant Classifier"
+developer = "PlantNet / CIRAD / Inria / LifeCLEF"
+ai4g_relationship = "third_party"
+commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "plantclef-2024-zenodo-10848263"
+rights_holder = "PlantNet / CIRAD / Inria / LifeCLEF"
+license_source_url = "https://zenodo.org/records/10848263"
+original_source_url = "https://zenodo.org/records/10848263"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+framework_licenses = ["Apache-2.0"]
+reference = "PlantCLEF 2024 pretrained single-plant classifiers, PlantNet / CIRAD / Inria / LifeCLEF; source record https://zenodo.org/records/10848263"
+
+[[model]]
+id = "deepforest-neon-species"
+domain = "overhead"
+task = "classifier"
+format = "onnx"
+family = ["DeepForest"]
+version = "cropmodel-tree-species-3efe2a25"
+status = "active"
+license = "MIT"
+zip = "overhead__classifier__deepforest-neon-species.zip"
+geo_scope = "regional"
+geo_regions = ["north_america"]
+geo_locality = "29 NEON sites"
+display_name = "DeepForest NEON Tree-Species Classifier"
+developer = "Weecology / GatorSense"
+ai4g_relationship = "third_party"
+commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "weecology-cropmodel-tree-species-3efe2a25"
+rights_holder = "Weecology / GatorSense"
+license_source_url = "https://huggingface.co/weecology/cropmodel-tree-species"
+original_source_url = "https://huggingface.co/weecology/cropmodel-tree-species"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+reference = "Weecology cropmodel-tree-species, pinned revision 3efe2a257d042f2ec01a92dbe5e00e446d56a410; https://huggingface.co/weecology/cropmodel-tree-species"
+
+[[model]]
+id = "deepforest-tree-species"
+domain = "overhead"
+task = "cascade"
+format = "cascade"
+family = ["DeepForest"]
+status = "active"
+license = "MIT"
+zip = "overhead__cascade__deepforest-tree-species.zip"
+geo_scope = "regional"
+geo_regions = ["north_america"]
+geo_locality = "29 NEON sites"
+display_name = "DeepForest Tree-Species Pipeline"
+developer = "Sparrow Engine / Weecology / GatorSense"
+ai4g_relationship = "third_party"
+commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "not_applicable"
+rights_record = "sparrow-deepforest-tree-species-pipeline-v1"
+rights_holder = "Sparrow Engine descriptor; component rights remain with their owners"
+license_source_url = "https://github.com/microsoft/SPARROW-Engine"
+original_source_url = "https://github.com/microsoft/SPARROW-Engine"
+conversion_permission = "not_applicable"
+restrictions = ["component model terms apply"]
+reference = "Manifest-driven composition of deepforest-tree and deepforest-neon-species; component packages carry their own source and licence records."
+
+[[model]]
+id = "hawkears-v2"
+domain = "acoustics"
+task = "classifier"
+format = "ensemble"
+family = ["HawkEars"]
+version = "2.2.0"
+status = "active"
+license = "MIT"
+zip = "acoustics__classifier__hawkears-v2.zip"
+geo_scope = "regional"
+geo_regions = ["north_america"]
+geo_locality = "Canada and the northern United States"
+display_name = "HawkEars 2.2 Bird Audio Ensemble"
+developer = "Jan Huus and HawkEars contributors"
+ai4g_relationship = "third_party"
+commercial_use = true
+commercial_use_status = "allowed"
+hosting_status = "hosted"
+rights_status = "verified"
+rights_record = "hawkears-2.2.0-britekit-1.6.0"
+rights_holder = "Jan Huus and HawkEars / BriteKit contributors"
+license_source_url = "https://github.com/jhuus/HawkEars/blob/bc558066bdafb6fbea842336de80bf3b82813f63/LICENSE"
+original_source_url = "https://github.com/jhuus/HawkEars"
+conversion_permission = "verified"
+restrictions = ["attribution"]
+reference = "HawkEars 2.2.0, revision bc558066bdafb6fbea842336de80bf3b82813f63; BriteKit 1.6.0, revision 58ddce6f885bcb94cbe221f42f476773a12137d5."
+
+[[model]]
+id = "batdetect2-uk-v2"
+domain = "acoustics"
+task = "detector"
+format = "onnx"
+family = ["BatDetect2"]
+version = "2.0.0b3"
+status = "active"
+license = "CC-BY-NC-4.0"
+zip = "acoustics__detector__batdetect2-uk-v2.zip"
+species_direct = true
+geo_scope = "regional"
+geo_regions = ["united_kingdom"]
+geo_locality = "United Kingdom"
+display_name = "BatDetect2 v2 UK Bat Call Detector"
+developer = "BatDetect2 contributors"
+ai4g_relationship = "third_party"
+commercial_use = false
+commercial_use_status = "prohibited"
+hosting_status = "hosted_restricted"
+rights_status = "verified"
+rights_record = "batdetect2-v2.0.0b3-cc-by-nc-4.0"
+rights_holder = "BatDetect2 contributors"
+license_source_url = "https://github.com/macaodha/batdetect2/blob/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d/LICENSE.md"
+original_source_url = "https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d"
+conversion_permission = "verified"
+restrictions = ["attribution", "noncommercial"]
+reference = "macaodha/batdetect2 v2.0.0b3; https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d"

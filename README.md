@@ -24,7 +24,7 @@ cd -
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The public model zoo contains **75 models**: 69 ONNX models, 5 mobile TFLite models, and 1 mobile cascade descriptor. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The public model-zoo catalog contains **80 entries**: 52 hosted runtime packages and 28 link-only metadata packages. The hosted set contains 44 ONNX models, 5 mobile TFLite models, 2 cascade descriptors, and 1 recording-level ensemble. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -230,13 +230,15 @@ Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Z
 
 **Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 66 default desktop ONNX models into
+Download the 41 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
-without arguments. The zoo also holds 6 mobile entries (5 TFLite models and 1
-cascade descriptor) and 3 opt-in ONNX models (two FP16 precision variants plus
-the separate BioCLIP 2.5 Huge encoder). Together they form the complete **75-model** catalog;
-non-default entries are fetched when named explicitly or with `--all`:
+without arguments. The hosted set also holds 5 mobile TFLite models, 2 cascade
+descriptors, 1 recording-level ensemble, and 3 opt-in ONNX models. Together
+with 28 link-only entries, they form the complete **80-entry** catalog.
+Non-default hosted entries are fetched when named explicitly or with `--all`.
+Link-only entries remain discoverable but must be obtained from their original
+source:
 
 ```bash
 bash scripts/download_models.sh
@@ -261,9 +263,13 @@ spe models list                                 # confirms catalog discovery
 spe detect --model MDV6-yolov10-e --print image.jpg
 ```
 
-The downloader verifies MD5 per model (against the Zenodo record API), is idempotent (skip-if-present unless `--force`), and unpacks into the layout Sparrow Engine expects (`<dir>/<model_id>/manifest.toml` + `model.onnx` + `labels.txt`).
+The downloader verifies MD5 per hosted package (against the Zenodo record API),
+is idempotent (skip-if-present unless `--force`), and unpacks runtime
+descriptors (`manifest.toml`, `pipeline.toml`, or `ensemble.toml`) plus their
+declared assets. Link-only entries fail with the original source URL; aliases,
+`--force`, `--no-verify`, and record overrides cannot bypass that routing.
 
-### Complete 75-model catalogue
+### Complete 80-entry catalogue
 
 The index below is generated from
 [`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
@@ -275,129 +281,151 @@ developer/owner details, and source citations.
 
 | Area | Models |
 |---|---:|
-| Camera trap | 48 |
-| Acoustics | 11 |
-| Overhead | 6 |
-| Marine imagery | 6 |
-| General | 4 |
-| **Total** | **75** |
+| Camera Trap | 48 |
+| Acoustics | 13 |
+| Overhead | 8 |
+| Marine Imagery | 6 |
+| General | 5 |
+| **Total** | **80** |
 
-Formats: **69 ONNX**, **5 TFLite**, and **1 cascade descriptor**.
+Formats: **72 ONNX**, **5 TFLite**, **2 cascade descriptor**, **1 recording-level ensemble**.
+
+Counts include metadata-only entries. Hosted and hosted-restricted packages contain runtime artifacts; link-only and pending-rights entries do not. Each model retains its recorded licence terms.
 
 #### Camera Trap — Detectors (21)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `MDV5a` | MDV5a | MegaDetector | onnx · v5a | AGPL-3.0 | Yes |
-| `MDV6-yolov10-c` | MDV6-yolov10-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
-| `MDV6-yolov10-c-tflite` | MDV6-yolov10-c-tflite | MegaDetector | tflite-fp16 · v6 | AGPL-3.0 | Yes |
-| `MDV6-yolov10-e` | MDV6-yolov10-e | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
-| `deepfaune-yolo8s` | deepfaune-yolo8s | DeepFaune | onnx | AGPL-3.0 AND CC-BY-SA-4.0 | Yes |
-| `european_mammals` | MD European Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
-| `north_american_mammals` | MD North American Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
-| `sub_saharan` | MD Sub-Saharan Mammals | MegaDetector | onnx | AGPL-3.0 | Yes |
-| `MDV5b` | MDV5b | MegaDetector | onnx · v5b | AGPL-3.0 | Yes |
-| `MD1000-redwood` | MD1000-redwood | MegaDetector | onnx · v1000-redwood | AGPL-3.0 | Yes |
-| `MD1000-spruce` | MD1000-spruce | MegaDetector | onnx · v1000-spruce | AGPL-3.0 | Yes |
-| `MD1000-larch` | MD1000-larch | MegaDetector | onnx · v1000-larch | AGPL-3.0 | Yes |
-| `MD1000-cedar` | MD1000-cedar | MegaDetector | onnx · v1000-cedar | GPL-3.0 | Yes |
-| `MD1000-sorrel` | MD1000-sorrel | MegaDetector | onnx · v1000-sorrel | AGPL-3.0 | Yes |
-| `MDV6-yolov9-c` | MDV6-yolov9-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
-| `MDV6-yolov9-e` | MDV6-yolov9-e | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
-| `MDV6-rtdetr-c` | MDV6-rtdetr-c | MegaDetector | onnx · v6 | AGPL-3.0 | Yes |
-| `MDV6-mit-yolov9-c` | MDV6-mit-yolov9-c | MegaDetector | onnx · v6 | MIT | Yes |
-| `MDV6-mit-yolov9-e` | MDV6-mit-yolov9-e | MegaDetector | onnx · v6 | MIT | Yes |
-| `MDV6-apa-rtdetr-c` | MDV6-apa-rtdetr-c | MegaDetector | onnx · v6 | Apache-2.0 | Yes |
-| `MDV6-apa-rtdetr-e` | MDV6-apa-rtdetr-e | MegaDetector | onnx · v6 | Apache-2.0 | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `MDV5a` | MDV5a | MegaDetector | onnx · v5a | UNVERIFIED | Link-only | unverified |
+| `MDV6-yolov10-c` | MDV6-yolov10-c | MegaDetector | onnx · v6 | AGPL-3.0 | Hosted | allowed |
+| `MDV6-yolov10-c-tflite` | MDV6-yolov10-c-tflite | MegaDetector | tflite-fp16 · v6 | AGPL-3.0 | Hosted | allowed |
+| `MDV6-yolov10-e` | MDV6-yolov10-e | MegaDetector | onnx · v6 | AGPL-3.0 | Hosted | allowed |
+| `deepfaune-yolo8s` | deepfaune-yolo8s | DeepFaune | onnx | CC-BY-SA-4.0 | Hosted-restricted | allowed |
+| `european_mammals` | MD European Mammals | MegaDetector | onnx | UNVERIFIED | Link-only | unverified |
+| `north_american_mammals` | MD North American Mammals | MegaDetector | onnx | UNVERIFIED | Link-only | unverified |
+| `sub_saharan` | MD Sub-Saharan Mammals | MegaDetector | onnx | UNVERIFIED | Link-only | unverified |
+| `MDV5b` | MDV5b | MegaDetector | onnx · v5b | UNVERIFIED | Link-only | unverified |
+| `MD1000-redwood` | MD1000-redwood | MegaDetector | onnx · v1000-redwood | UNVERIFIED | Link-only | unverified |
+| `MD1000-spruce` | MD1000-spruce | MegaDetector | onnx · v1000-spruce | UNVERIFIED | Link-only | unverified |
+| `MD1000-larch` | MD1000-larch | MegaDetector | onnx · v1000-larch | UNVERIFIED | Link-only | unverified |
+| `MD1000-cedar` | MD1000-cedar | MegaDetector | onnx · v1000-cedar | UNVERIFIED | Link-only | unverified |
+| `MD1000-sorrel` | MD1000-sorrel | MegaDetector | onnx · v1000-sorrel | UNVERIFIED | Link-only | unverified |
+| `MDV6-yolov9-c` | MDV6-yolov9-c | MegaDetector | onnx · v6 | AGPL-3.0 | Hosted | allowed |
+| `MDV6-yolov9-e` | MDV6-yolov9-e | MegaDetector | onnx · v6 | AGPL-3.0 | Hosted | allowed |
+| `MDV6-rtdetr-c` | MDV6-rtdetr-c | MegaDetector | onnx · v6 | AGPL-3.0 | Hosted | allowed |
+| `MDV6-mit-yolov9-c` | MDV6-mit-yolov9-c | MegaDetector | onnx · v6 | MIT | Hosted | allowed |
+| `MDV6-mit-yolov9-e` | MDV6-mit-yolov9-e | MegaDetector | onnx · v6 | MIT | Hosted | allowed |
+| `MDV6-apa-rtdetr-c` | MDV6-apa-rtdetr-c | MegaDetector | onnx · v6 | Apache-2.0 | Hosted | allowed |
+| `MDV6-apa-rtdetr-e` | MDV6-apa-rtdetr-e | MegaDetector | onnx · v6 | Apache-2.0 | Hosted | allowed |
 
 #### Camera Trap — Classifiers (27)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `AI4G-Amazon-V2` | AI4G-Amazon-V2 | AI4G | onnx | MIT | Yes |
-| `AI4G-Serengeti` | AI4G-Serengeti | AI4G | onnx | MIT | Yes |
-| `Deepfaune-Europe` | Deepfaune-Europe | DeepFaune | onnx | CC-BY-SA-4.0 | Yes |
-| `Deepfaune-New-England` | Deepfaune-New-England | DeepFaune | onnx | CC0-1.0 | Yes |
-| `SpeciesNet-Crop` | SpeciesNet-Crop | SpeciesNet | onnx | Apache-2.0 | Yes |
-| `southwest-usa-v3` | southwest-usa-v3-SDZWA | AddaxAI | onnx | MIT | Yes |
-| `peruvian-andes` | peruvian-andes-SDZWA | AddaxAI | onnx | MIT | Yes |
-| `sub-saharan-drylands` | sub-saharan-drylands-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `manas-panthera` | manas-panthera | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `gifu-japan` | gifu-japan-GifuUniversity | AddaxAI | onnx | MIT | Yes |
-| `hawaii-puaa` | hawaii-puaa-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
-| `central-india` | central-india-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
-| `top-end-savanna` | top-end-savanna-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | No |
-| `parks-victoria` | parks-victoria-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
-| `sw-borderlands` | sw-borderlands-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
-| `ahdrift` | ahdrift-OSU-ColumbusZoo-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Yes |
-| `deep-forest-vision` | deep-forest-vision-MNHN-OFVI | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `awc135` | awc135-AWC | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `namibian` | namibian-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `iran` | iran-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `nz-invasives` | nz-invasives-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `queensland` | queensland-WildObs | AddaxAI, SpeciesNet | onnx | CC-BY-4.0 | Yes |
-| `nz-species` | nz-species-wekaResearch | AddaxAI | onnx | CC-BY-NC-SA-4.0 | No |
-| `tropicam-ai` | tropicam-ai-MNCN-CSIC | AddaxAI | onnx | CC-BY-NC-ND-4.0 | No |
-| `terai-nepal` | terai-nepal | AddaxAI, MEWC | onnx | MIT | Yes |
-| `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-4.0 | Yes |
-| `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | MIT | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `AI4G-Amazon-V2` | AI4G-Amazon-V2 | AI4G | onnx | MIT | Hosted | allowed |
+| `AI4G-Serengeti` | AI4G-Serengeti | AI4G | onnx | MIT | Hosted | allowed |
+| `Deepfaune-Europe` | Deepfaune-Europe | DeepFaune | onnx | CC-BY-SA-4.0 | Hosted-restricted | allowed |
+| `Deepfaune-New-England` | Deepfaune-New-England | DeepFaune | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `SpeciesNet-Crop` | SpeciesNet-Crop | SpeciesNet | onnx | UNVERIFIED | Link-only | unverified |
+| `southwest-usa-v3` | southwest-usa-v3-SDZWA | AddaxAI | onnx | UNVERIFIED | Link-only | unverified |
+| `peruvian-andes` | peruvian-andes-SDZWA | AddaxAI | onnx | UNVERIFIED | Link-only | unverified |
+| `sub-saharan-drylands` | sub-saharan-drylands-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Link-only | non-commercial |
+| `manas-panthera` | manas-panthera | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `gifu-japan` | gifu-japan-GifuUniversity | AddaxAI | onnx | UNVERIFIED | Link-only | unverified |
+| `hawaii-puaa` | hawaii-puaa-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Link-only | non-commercial |
+| `central-india` | central-india-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Link-only | non-commercial |
+| `top-end-savanna` | top-end-savanna-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Link-only | non-commercial |
+| `parks-victoria` | parks-victoria-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Hosted | allowed |
+| `sw-borderlands` | sw-borderlands-Addax | AddaxAI, SpeciesNet | onnx | UNVERIFIED | Link-only | unverified |
+| `ahdrift` | ahdrift-OSU-ColumbusZoo-Addax | AddaxAI, SpeciesNet | onnx | UNVERIFIED | Link-only | unverified |
+| `deep-forest-vision` | deep-forest-vision-MNHN-OFVI | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `awc135` | awc135-AWC | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `namibian` | namibian-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Link-only | non-commercial |
+| `iran` | iran-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Link-only | non-commercial |
+| `nz-invasives` | nz-invasives-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Link-only | non-commercial |
+| `queensland` | queensland-WildObs | AddaxAI, SpeciesNet | onnx | CC-BY-4.0 | Hosted | allowed |
+| `nz-species` | nz-species-wekaResearch | AddaxAI | onnx | UNVERIFIED | Link-only | non-commercial |
+| `tropicam-ai` | tropicam-ai-MNCN-CSIC | AddaxAI | onnx | CONFLICTING | Link-only | non-commercial |
+| `terai-nepal` | terai-nepal | AddaxAI, MEWC | onnx | MIT | Hosted | allowed |
+| `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-NC-4.0 | Hosted-restricted | non-commercial |
+| `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | UNVERIFIED | Link-only | unverified |
 
-#### Acoustics — Detectors (4)
+#### Acoustics — Detectors (5)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `md-audiobirds-v1` | md-audiobirds-v1 | — | onnx | MIT | Yes |
-| `orca-detector-dclde2026-v5` | orca-detector-dclde2026-v5 | DCLDE-orca | onnx · v5 | MIT | Yes |
-| `orca-detector-v5-fp16-tflite` | orca-detector-v5-fp16-tflite | DCLDE-orca | tflite-fp16 · v5 | MIT | Yes |
-| `orca-detector-v5-int8-tflite` | orca-detector-v5-int8-tflite | DCLDE-orca | tflite-int8 · v5 | MIT | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `md-audiobirds-v1` | md-audiobirds-v1 | — | onnx | MIT | Hosted | allowed |
+| `orca-detector-dclde2026-v5` | orca-detector-dclde2026-v5 | DCLDE-orca | onnx · v5 | MIT | Hosted | allowed |
+| `orca-detector-v5-fp16-tflite` | orca-detector-v5-fp16-tflite | DCLDE-orca | tflite-fp16 · v5 | MIT | Hosted | allowed |
+| `orca-detector-v5-int8-tflite` | orca-detector-v5-int8-tflite | DCLDE-orca | tflite-int8 · v5 | MIT | Hosted | allowed |
+| `batdetect2-uk-v2` | BatDetect2 v2 UK Bat Call Detector | BatDetect2 | onnx · 2.0.0b3 | CC-BY-NC-4.0 | Hosted-restricted | non-commercial |
 
-#### Acoustics — Classifiers (6)
+#### Acoustics — Classifiers (7)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `orca-ecotype-dclde2026-v1` | orca-ecotype-dclde2026-v1 | DCLDE-orca | onnx · v1 | MIT | Yes |
-| `orca-ecotype-melinput-fp16-tflite` | orca-ecotype-melinput-fp16-tflite | DCLDE-orca | tflite-fp16 | MIT | Yes |
-| `orca-ecotype-melinput-int8-tflite` | orca-ecotype-melinput-int8-tflite | DCLDE-orca | tflite-int8 | MIT | Yes |
-| `perch-v2` | perch-v2 | — | onnx | Apache-2.0 | Yes |
-| `buzzdetect` | BuzzDetect Acoustic Event Classifier | BuzzDetect, YAMNet | onnx | MIT AND Apache-2.0 | Yes |
-| `perch-v2-fp16` | perch-v2-fp16 | — | onnx-fp16 | Apache-2.0 | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `orca-ecotype-dclde2026-v1` | orca-ecotype-dclde2026-v1 | DCLDE-orca | onnx · v1 | MIT | Hosted | allowed |
+| `orca-ecotype-melinput-fp16-tflite` | orca-ecotype-melinput-fp16-tflite | DCLDE-orca | tflite-fp16 | MIT | Hosted | allowed |
+| `orca-ecotype-melinput-int8-tflite` | orca-ecotype-melinput-int8-tflite | DCLDE-orca | tflite-int8 | MIT | Hosted | allowed |
+| `perch-v2` | perch-v2 | — | onnx | Apache-2.0 | Hosted | allowed |
+| `buzzdetect` | BuzzDetect Acoustic Event Classifier | BuzzDetect, YAMNet | onnx | MIT AND Apache-2.0 | Hosted | allowed |
+| `perch-v2-fp16` | perch-v2-fp16 | — | onnx-fp16 | Apache-2.0 | Hosted | allowed |
+| `hawkears-v2` | HawkEars 2.2 Bird Audio Ensemble | HawkEars | ensemble · 2.2.0 | MIT | Hosted | allowed |
 
 #### Acoustics — Cascade (1)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `orca-cascade` | orca-cascade | DCLDE-orca | cascade | MIT | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `orca-cascade` | orca-cascade | DCLDE-orca | cascade | MIT | Hosted | allowed |
 
 #### Overhead — Detectors (6)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `HerdNet_General_Dataset_2022` | HerdNet_General_Dataset_2022 | — | onnx | CC-BY-NC-SA-4.0 | No |
-| `OWL` | OWL | — | onnx | MIT | Yes |
-| `imageomics-mmla` | Imageomics MMLA Aerial Wildlife Detector | Imageomics, YOLO11 | onnx | MIT | Yes |
-| `deepforest-tree` | DeepForest Tree-Crown Detector | DeepForest, RetinaNet | onnx | MIT | Yes |
-| `deepforest-bird` | DeepForest Aerial Bird Detector | DeepForest, RetinaNet | onnx | MIT | Yes |
-| `ducknet` | DuckNet Waterfowl Detector | DuckNet, RetinaNet | onnx | CC-BY-NC-SA-4.0 | No |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `HerdNet_General_Dataset_2022` | HerdNet\_General\_Dataset\_2022 | — | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `OWL` | OWL | — | onnx | CC-BY-NC-SA-4.0 | Hosted-restricted | non-commercial |
+| `imageomics-mmla` | Imageomics MMLA Aerial Wildlife Detector | Imageomics, YOLO11 | onnx | MIT | Hosted | allowed |
+| `deepforest-tree` | DeepForest Tree-Crown Detector | DeepForest, RetinaNet | onnx | MIT | Hosted | allowed |
+| `deepforest-bird` | DeepForest Aerial Bird Detector | DeepForest, RetinaNet | onnx | MIT | Hosted | allowed |
+| `ducknet` | DuckNet Waterfowl Detector | DuckNet, RetinaNet | onnx | UNVERIFIED | Link-only | non-commercial |
 
 #### Marine Imagery — Detectors (6)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `fathomnet-mbari-315k` | FathomNet MBARI 315k Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
-| `fathomnet-vme` | FathomNet VME Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
-| `fathomnet-trash` | FathomNet Trash Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Yes |
-| `fathomnet-megafish-yolov5s-640` | FathomNet MegaFishDetector YOLOv5s 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
-| `fathomnet-megafish-yolov5m-1280` | FathomNet MegaFishDetector YOLOv5m 1280 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
-| `fathomnet-megafish-yolov5l-640` | FathomNet MegaFishDetector YOLOv5l 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `fathomnet-mbari-315k` | FathomNet MBARI 315k Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Hosted | allowed |
+| `fathomnet-vme` | FathomNet VME Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Hosted | allowed |
+| `fathomnet-trash` | FathomNet Trash Detector | FathomNet, YOLOv8 | onnx | CC-BY-4.0 | Hosted | allowed |
+| `fathomnet-megafish-yolov5s-640` | FathomNet MegaFishDetector YOLOv5s 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Hosted | allowed |
+| `fathomnet-megafish-yolov5m-1280` | FathomNet MegaFishDetector YOLOv5m 1280 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Hosted | allowed |
+| `fathomnet-megafish-yolov5l-640` | FathomNet MegaFishDetector YOLOv5l 640 | FathomNet, MegaFishDetector, YOLOv5 | onnx · v0 | MIT | Hosted | allowed |
 
 #### General — Encoders (4)
 
-| Model ID | Display name | Family | Format | Licence | Commercial use |
-|---|---|---|---|---|:---:|
-| `bioclip-2` | bioclip-2 | BioCLIP | onnx · v2 | MIT | Yes |
-| `bioclip-2-fp16` | bioclip-2-fp16 | BioCLIP | onnx-fp16 · v2 | MIT | Yes |
-| `bioclip-25` | BioCLIP 2.5 Huge | BioCLIP | onnx-fp16 · 1.0.0 | MIT | Yes |
-| `dinov3-vitl16` | dinov3-vitl16 | DINOv3 | onnx · vitl16-lvd1689m | DINOv3 License | Yes |
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `bioclip-2` | bioclip-2 | BioCLIP | onnx · v2 | MIT | Hosted | allowed |
+| `bioclip-2-fp16` | bioclip-2-fp16 | BioCLIP | onnx-fp16 · v2 | MIT | Hosted | allowed |
+| `bioclip-25` | BioCLIP 2.5 Huge | BioCLIP | onnx-fp16 · 1.0.0 | MIT | Hosted | allowed |
+| `dinov3-vitl16` | dinov3-vitl16 | DINOv3 | onnx · vitl16-lvd1689m | DINOv3 License | Link-only | unverified |
+
+#### General — Classifiers (1)
+
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `plantclef-dinov2` | PlantCLEF 2024 DINOv2 Plant Classifier | PlantCLEF, DINOv2 | onnx · plantclef2024-full-finetune-ema | CC-BY-4.0 | Hosted | allowed |
+
+#### Overhead — Classifiers (1)
+
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `deepforest-neon-species` | DeepForest NEON Tree-Species Classifier | DeepForest | onnx · cropmodel-tree-species-3efe2a25 | MIT | Hosted | allowed |
+
+#### Overhead — Cascade (1)
+
+| Model ID | Display name | Family | Format | Licence | Hosting | Commercial use |
+|---|---|---|---|---|---|---|
+| `deepforest-tree-species` | DeepForest Tree-Species Pipeline | DeepForest | cascade | MIT | Hosted | allowed |
 
 <!-- END GENERATED MODEL ZOO INDEX -->
 

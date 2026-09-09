@@ -20,7 +20,7 @@ FILE_URL_FRAGMENT_TWO="/records/999/files/$ZIP_NAME_TWO"
 mkdir -p "$FAKE_BIN" "$TEST_ROOT/home"
 
 cat > "$CATALOG" <<'EOF'
-schema_version = "1.1"
+schema_version = "1.2"
 
 [zenodo]
 record = "999"
@@ -34,6 +34,8 @@ task = "classifier"
 format = "onnx"
 license = "MIT"
 zip = "camera_trap__classifier__test-model.zip"
+hosting_status = "hosted"
+original_source_url = "https://example.test/test-model"
 
 [[model]]
 id = "test-model-two"
@@ -42,6 +44,19 @@ task = "classifier"
 format = "onnx"
 license = "MIT"
 zip = "camera_trap__classifier__test-model-two.zip"
+hosting_status = "hosted_restricted"
+original_source_url = "https://example.test/test-model-two"
+
+[[model]]
+id = "link-only-model"
+alias = ["old-link-only-model"]
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+license = "UNVERIFIED"
+zip = "camera_trap__classifier__link-only-model.zip"
+hosting_status = "link_only"
+original_source_url = "https://example.test/original-model"
 EOF
 
 python3 - "$FAKE_ZIP" "$FAKE_ZIP_TWO" <<'PY'
@@ -363,5 +378,63 @@ run_downloader valid_both --dest "$multi_success" test-model test-model-two \
 assert_contains "$FILE_URL_FRAGMENT" "$FAKE_CURL_LOG"
 assert_contains "$FILE_URL_FRAGMENT_TWO" "$FAKE_CURL_LOG"
 assert_contains "Downloaded 2 model(s)" "$TEST_ROOT/multi-success.out"
+
+echo "[17] --list distinguishes hosted and metadata-only entries"
+run_downloader valid_both --list > "$TEST_ROOT/list.out" 2>&1
+assert_contains "3 catalog entries: 2 hosted runtime packages and 1 metadata-only entries" \
+  "$TEST_ROOT/list.out"
+assert_contains "link_only; weights unavailable from Sparrow" "$TEST_ROOT/list.out"
+assert_contains "https://example.test/original-model" "$TEST_ROOT/list.out"
+
+echo "[18] an explicit link-only id fails before any network access"
+link_only="$TEST_ROOT/link-only"
+reset_log
+expect_failure "$TEST_ROOT/link-only.out" valid --dest "$link_only" link-only-model
+assert_contains "link-only-model is link_only" "$TEST_ROOT/link-only.out"
+assert_contains "https://example.test/original-model" "$TEST_ROOT/link-only.out"
+[[ ! -s "$FAKE_CURL_LOG" ]] || fail "link-only selection reached the network"
+assert_file_absent "$link_only/link-only-model"
+
+echo "[19] aliases cannot bypass link-only routing"
+reset_log
+expect_failure "$TEST_ROOT/link-only-alias.out" valid \
+  --dest "$link_only" old-link-only-model
+assert_contains "resolving to 'link-only-model'" "$TEST_ROOT/link-only-alias.out"
+assert_contains "Sparrow does not distribute its model payload" \
+  "$TEST_ROOT/link-only-alias.out"
+[[ ! -s "$FAKE_CURL_LOG" ]] || fail "link-only alias reached the network"
+
+echo "[20] force, no-verify, and record overrides cannot bypass link-only routing"
+reset_log
+if env \
+  HOME="$TEST_ROOT/home" \
+  PATH="$FAKE_BIN:$PATH" \
+  FAKE_API_MODE=valid \
+  FAKE_API_MD5="$EXPECTED_MD5" \
+  FAKE_API_MD5_TWO="$EXPECTED_MD5_TWO" \
+  FAKE_CURL_LOG="$FAKE_CURL_LOG" \
+  FAKE_ZIP="$FAKE_ZIP" \
+  FAKE_ZIP_TWO="$FAKE_ZIP_TWO" \
+  FAKE_ZIP_NAME="$ZIP_NAME" \
+  FAKE_ZIP_NAME_TWO="$ZIP_NAME_TWO" \
+  SPARROW_CATALOG="$CATALOG" \
+  ZENODO_RECORD=123456 \
+  bash "$DOWNLOADER" --force --no-verify --dest "$link_only" link-only-model \
+  > "$TEST_ROOT/link-only-flags.out" 2>&1; then
+  fail "link-only routing was bypassed by force/no-verify/record override"
+fi
+assert_contains "Sparrow does not distribute its model payload" \
+  "$TEST_ROOT/link-only-flags.out"
+[[ ! -s "$FAKE_CURL_LOG" ]] || fail "link-only flags reached the network"
+
+echo "[21] --all downloads hosted packages and excludes metadata-only entries"
+all_dir="$TEST_ROOT/all"
+reset_log
+run_downloader valid_both --all --dest "$all_dir" > "$TEST_ROOT/all.out" 2>&1
+[[ -f "$all_dir/test-model/manifest.toml" ]] || fail "hosted model missing"
+[[ -f "$all_dir/test-model-two/manifest.toml" ]] || fail "restricted model missing"
+assert_file_absent "$all_dir/link-only-model"
+assert_contains "Models:        2 of 3 (all)" "$TEST_ROOT/all.out"
+assert_absent "link-only-model.zip" "$FAKE_CURL_LOG"
 
 echo "download_models fail-closed tests: PASS"
