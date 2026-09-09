@@ -295,7 +295,7 @@ if catalog_path == canonical_catalog:
     require(readme, f"(v{version})", "README")
     require(readme, concept_doi, "README")
 
-    require(catalogue, f"**{total} models**", "generated catalogue")
+    require(catalogue, f"**{total} catalog entries**", "generated catalogue")
     require(catalogue, f"records/{record}", "generated catalogue")
     require(catalogue, f"(v{version},", "generated catalogue")
     require(catalogue, concept_doi, "generated catalogue")

@@ -397,7 +397,7 @@ echo "[17] --list distinguishes hosted and metadata-only entries"
 run_downloader valid_both --list > "$TEST_ROOT/list.out" 2>&1
 assert_contains "4 catalog entries: 2 published hosted runtime packages, 1 metadata-only entries, and 1 candidates" \
   "$TEST_ROOT/list.out"
-assert_contains "link_only; weights unavailable from Sparrow" "$TEST_ROOT/list.out"
+assert_contains "link_only; source/contact" "$TEST_ROOT/list.out"
 assert_contains "https://example.test/original-model" "$TEST_ROOT/list.out"
 assert_contains "candidate; not yet published" "$TEST_ROOT/list.out"
 
@@ -406,7 +406,8 @@ link_only="$TEST_ROOT/link-only"
 reset_log
 expect_failure "$TEST_ROOT/link-only.out" valid --dest "$link_only" link-only-model
 assert_contains "link-only-model is link_only" "$TEST_ROOT/link-only.out"
-assert_contains "https://example.test/original-model" "$TEST_ROOT/link-only.out"
+assert_contains "Original source or contact route: https://example.test/original-model" \
+  "$TEST_ROOT/link-only.out"
 [[ ! -s "$FAKE_CURL_LOG" ]] || fail "link-only selection reached the network"
 assert_file_absent "$link_only/link-only-model"
 

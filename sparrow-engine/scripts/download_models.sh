@@ -114,7 +114,7 @@ for m in sorted(models, key=lambda m: (m["domain"], m["task"], m["id"])):
         tag = f"  [{m.get('status', 'unpublished')}; not yet published]"
     elif hosting in {"link_only", "pending_rights"}:
         source = m.get("original_source_url", "the original project")
-        tag = f"  [{hosting}; weights unavailable from Sparrow — {source}]"
+        tag = f"  [{hosting}; source/contact — {source}]"
     elif m.get("format") != "onnx":
         tag = f"  [{m.get('format')} — needs --all or explicit name]"
     elif m.get("flavor"):
@@ -241,7 +241,7 @@ else:
             source = model.get("original_source_url", "<source unavailable>")
             print(
                 f"ERROR: {model['id']} is {status}; Sparrow does not distribute "
-                f"its model payload. Obtain it from: {source}",
+                f"its model payload. Original source or contact route: {source}",
                 file=sys.stderr,
             )
         sys.exit(1)
