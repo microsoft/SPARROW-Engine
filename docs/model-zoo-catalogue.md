@@ -1,5 +1,11 @@
 # Sparrow Engine — Model Zoo Catalogue
 
+> **Unpublished v0.30.0 release candidate.** The 80 entries below include five
+> locally admitted candidates that are not present in Zenodo record `22018132`.
+> That record remains the 75-entry v0.29.0 base. Candidate entries stay
+> unavailable through `download_models.sh` until the new record is published
+> and their catalog status is changed to `active`.
+>
 > Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **80 models**, Zenodo record [`22018132`](https://zenodo.org/records/22018132) (v0.29.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license catalogue**: each model has its own recorded weight terms. Hosted packages include runtime artifacts; link-only and pending-rights packages contain compliance metadata and original-source links, not runnable weights.
@@ -9,6 +15,10 @@ This is a **multi-license catalogue**: each model has its own recorded weight te
 **80 catalog entries** · 72 ONNX · 5 TFLite · 2 cascade · 1 ensemble · 44 commercial-use allowed · 18 non-commercial · 18 commercial-use unverified.
 
 **Hosting:** 42 hosted · 10 hosted-restricted · 28 link-only · 0 pending-rights. Format counts include supported upstream formats for metadata-only entries; they are not counts of downloadable weight files.
+
+**Current published availability:** 38 hosted · 9 hosted-restricted · 28
+link-only · 5 release candidates. Candidate hosting labels describe the
+planned v0.30.0 package, not availability from record `22018132`.
 
 | Area | Detectors | Classifiers | Encoders | Cascades | Total |
 |---|---:|---:|---:|---:|---:|

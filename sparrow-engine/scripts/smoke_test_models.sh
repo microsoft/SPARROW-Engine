@@ -68,6 +68,7 @@ from pathlib import Path
 DOMAINS = {"camera_trap", "acoustics", "overhead", "marine_imagery", "general"}
 TASKS = {"detector", "classifier", "encoder", "cascade"}
 FORMATS = {"onnx", "tflite", "cascade", "ensemble"}
+STATUSES = {"active", "candidate"}
 REQ = ("id", "domain", "task", "format", "status", "license", "zip")
 CANON_AI4G = "Microsoft AI for Good Lab (AI4G)"
 GEO_SCOPES = {"global", "regional", "foundational"}
@@ -116,6 +117,8 @@ for m in models:
         # `format` drives the default (onnx-only) download set; a typo here
         # silently drops an ONNX model from the default 18.
         errs.append(f"{mid}: bad format {m.get('format')!r} (want one of {sorted(FORMATS)})")
+    if m.get("status") not in STATUSES:
+        errs.append(f"{mid}: bad status {m.get('status')!r}")
     exp = f"{m.get('domain')}__{m.get('task')}__{mid}.zip"
     if m.get("zip") != exp:
         errs.append(f"{mid}: zip {m.get('zip')!r} != {exp!r}")
@@ -235,7 +238,11 @@ canonical_catalog = (repo_dir / "scripts" / "catalog.toml").resolve()
 if catalog_path == canonical_catalog:
     public_root = repo_dir.parent
     total = len(models)
-    hosted_models = [m for m in models if m.get("hosting_status") in HOSTED]
+    hosted_models = [
+        m for m in models
+        if m.get("status") == "active" and m.get("hosting_status") in HOSTED
+    ]
+    candidate_count = sum(m.get("status") == "candidate" for m in models)
     default_onnx_count = sum(
         m.get("format") == "onnx" and not m.get("flavor") for m in hosted_models
     )
@@ -245,7 +252,10 @@ if catalog_path == canonical_catalog:
     tflite_count = sum(m.get("format") == "tflite" for m in hosted_models)
     cascade_count = sum(m.get("format") == "cascade" for m in hosted_models)
     ensemble_count = sum(m.get("format") == "ensemble" for m in hosted_models)
-    metadata_count = total - len(hosted_models)
+    metadata_count = sum(
+        m.get("status") == "active" and m.get("hosting_status") not in HOSTED
+        for m in models
+    )
     record = str(z.get("record", ""))
     version = str(z.get("version", ""))
     concept_doi = str(z.get("concept_doi", ""))
@@ -279,6 +289,7 @@ if catalog_path == canonical_catalog:
     require(readme, f"{cascade_count} cascade", "README")
     require(readme, f"{ensemble_count} recording-level ensemble", "README")
     require(readme, f"{metadata_count} link-only", "README")
+    require(readme, f"{candidate_count} release-candidate", "README")
     require(readme, f"complete **{total}-entry** catalog", "README")
     require(readme, f"10.5281/zenodo.{record}", "README")
     require(readme, f"(v{version})", "README")
@@ -481,6 +492,8 @@ else
 import sys, tomllib
 d = tomllib.load(open(sys.argv[1], "rb"))
 print(
+    d.get("pipeline", {}).get("id", "")
+    or
     d.get("model", {}).get("id", "")
     or d.get("ensemble", {}).get("id", "")
     or d.get("id", "")

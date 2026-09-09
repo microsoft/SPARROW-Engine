@@ -110,7 +110,9 @@ for m in sorted(models, key=lambda m: (m["domain"], m["task"], m["id"])):
     fam = ",".join(m.get("family", []))
     fam = f"  ({fam})" if fam else ""
     hosting = m.get("hosting_status", "pending_rights")
-    if hosting in {"link_only", "pending_rights"}:
+    if m.get("status") != "active":
+        tag = f"  [{m.get('status', 'unpublished')}; not yet published]"
+    elif hosting in {"link_only", "pending_rights"}:
         source = m.get("original_source_url", "the original project")
         tag = f"  [{hosting}; weights unavailable from Sparrow — {source}]"
     elif m.get("format") != "onnx":
@@ -123,17 +125,25 @@ for m in sorted(models, key=lambda m: (m["domain"], m["task"], m["id"])):
         tag = ""
     print(f"  {m['id']:<{w}}  {m['license']}{fam}{tag}")
 hosted = {"hosted", "hosted_restricted"}
-n_runtime = sum(1 for m in models if m.get("hosting_status") in hosted)
+n_runtime = sum(
+    1 for m in models
+    if m.get("status") == "active" and m.get("hosting_status") in hosted
+)
+n_candidates = sum(1 for m in models if m.get("status") != "active")
 n_onnx = sum(
     1 for m in models
-    if m.get("hosting_status") in hosted
+    if m.get("status") == "active"
+    and m.get("hosting_status") in hosted
     and m.get("format") == "onnx"
     and not m.get("flavor")
 )
-n_metadata = len(models) - n_runtime
+n_metadata = sum(
+    1 for m in models
+    if m.get("status") == "active" and m.get("hosting_status") not in hosted
+)
 print(
-    f"\n{len(models)} catalog entries: {n_runtime} hosted runtime packages and "
-    f"{n_metadata} metadata-only entries."
+    f"\n{len(models)} catalog entries: {n_runtime} published hosted runtime "
+    f"packages, {n_metadata} metadata-only entries, and {n_candidates} candidates."
 )
 print(f"{n_onnx} hosted desktop ONNX models are fetched by default.")
 print("Hosted TFLite, cascade, ensemble, and precision variants require --all")
@@ -182,17 +192,19 @@ if not selected:
     if os.environ.get("SPARROW_ALL") == "1":
         chosen = [
             m["id"] for m in models
-            if m.get("hosting_status") in hosted
+            if m.get("status") == "active"
+            and m.get("hosting_status") in hosted
         ]
     else:
         chosen = [
             m["id"] for m in models
-            if m.get("hosting_status") in hosted
+            if m.get("status") == "active"
+            and m.get("hosting_status") in hosted
             and m.get("format") == "onnx"
             and not m.get("flavor")
         ]
 else:
-    chosen, unknown, unavailable = [], [], []
+    chosen, unknown, unavailable, candidates = [], [], [], []
     for s in selected:
         if s in by_id:
             rid = s
@@ -203,6 +215,9 @@ else:
             unknown.append(s)
             continue
         model = by_id[rid]
+        if model.get("status") != "active":
+            candidates.append(model)
+            continue
         if model.get("hosting_status") not in hosted:
             unavailable.append(model)
             continue
@@ -211,6 +226,14 @@ else:
     if unknown:
         print("ERROR: unknown model id(s): " + ", ".join(unknown), file=sys.stderr)
         print("Run with --list to see available models.", file=sys.stderr)
+        sys.exit(1)
+    if candidates:
+        for model in candidates:
+            print(
+                f"ERROR: {model['id']} is a {model.get('status', 'candidate')} "
+                "catalog entry and is not present in the published model-zoo record.",
+                file=sys.stderr,
+            )
         sys.exit(1)
     if unavailable:
         for model in unavailable:

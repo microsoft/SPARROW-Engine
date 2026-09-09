@@ -24,7 +24,7 @@ cd -
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The public model-zoo catalog contains **80 entries**: 52 hosted runtime packages and 28 link-only metadata packages. The hosted set contains 44 ONNX models, 5 mobile TFLite models, 2 cascade descriptors, and 1 recording-level ensemble. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo remains v0.29.0 with 75 archives. This branch stages an **unpublished 80-entry v0.30.0 candidate**: 47 currently downloadable runtime packages, 28 link-only metadata entries, and 5 admitted packages that remain marked as release candidates until the new Zenodo version exists. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full candidate catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -230,15 +230,16 @@ Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Z
 
 **Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 41 default hosted desktop ONNX models into
+Download the 38 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
-without arguments. The hosted set also holds 5 mobile TFLite models, 2 cascade
-descriptors, 1 recording-level ensemble, and 3 opt-in ONNX models. Together
-with 28 link-only entries, they form the complete **80-entry** catalog.
-Non-default hosted entries are fetched when named explicitly or with `--all`.
-Link-only entries remain discoverable but must be obtained from their original
-source:
+without arguments. The current published hosted set also holds 5 mobile TFLite models, 1 cascade descriptor, 0 recording-level ensemble packages, and 3 opt-in ONNX models. Together with
+28 link-only entries and 5 release-candidate entries, they form this branch's
+complete **80-entry** catalog. The recording-level ensemble and second
+cascade are among the five candidates and cannot be downloaded from v0.29.0.
+Non-default published entries are fetched when named explicitly or with
+`--all`. Link-only entries remain discoverable but must be obtained from
+their original source:
 
 ```bash
 bash scripts/download_models.sh
@@ -247,7 +248,7 @@ bash scripts/download_models.sh
 Or just specific models:
 
 ```bash
-bash scripts/download_models.sh MDV6-yolov10-e SpeciesNet-Crop
+bash scripts/download_models.sh MDV6-yolov10-e AI4G-Amazon-V2
 bash scripts/download_models.sh --list          # list available model IDs
 bash scripts/download_models.sh --dest /custom/path
 ```
@@ -269,13 +270,18 @@ descriptors (`manifest.toml`, `pipeline.toml`, or `ensemble.toml`) plus their
 declared assets. Link-only entries fail with the original source URL; aliases,
 `--force`, `--no-verify`, and record overrides cannot bypass that routing.
 
-### Complete 80-entry catalogue
+### Unpublished 80-entry release-candidate catalogue
 
 The index below is generated from
 [`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
 the source of truth used by `download_models.sh`. The
 [full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
 developer/owner details, and source citations.
+
+The five rows whose catalog status is `candidate` are admitted locally but are
+not present in the linked v0.29.0 Zenodo record. The downloader rejects them
+before network access until a verified v0.30.0 record is published and the
+rows are activated.
 
 <!-- BEGIN GENERATED MODEL ZOO INDEX -->
 

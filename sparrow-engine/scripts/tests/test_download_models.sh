@@ -32,6 +32,7 @@ id = "test-model"
 domain = "camera_trap"
 task = "classifier"
 format = "onnx"
+status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__test-model.zip"
 hosting_status = "hosted"
@@ -42,6 +43,7 @@ id = "test-model-two"
 domain = "camera_trap"
 task = "classifier"
 format = "onnx"
+status = "active"
 license = "MIT"
 zip = "camera_trap__classifier__test-model-two.zip"
 hosting_status = "hosted_restricted"
@@ -53,10 +55,22 @@ alias = ["old-link-only-model"]
 domain = "camera_trap"
 task = "classifier"
 format = "onnx"
+status = "active"
 license = "UNVERIFIED"
 zip = "camera_trap__classifier__link-only-model.zip"
 hosting_status = "link_only"
 original_source_url = "https://example.test/original-model"
+
+[[model]]
+id = "candidate-model"
+domain = "camera_trap"
+task = "classifier"
+format = "onnx"
+status = "candidate"
+license = "MIT"
+zip = "camera_trap__classifier__candidate-model.zip"
+hosting_status = "hosted"
+original_source_url = "https://example.test/candidate-model"
 EOF
 
 python3 - "$FAKE_ZIP" "$FAKE_ZIP_TWO" <<'PY'
@@ -381,10 +395,11 @@ assert_contains "Downloaded 2 model(s)" "$TEST_ROOT/multi-success.out"
 
 echo "[17] --list distinguishes hosted and metadata-only entries"
 run_downloader valid_both --list > "$TEST_ROOT/list.out" 2>&1
-assert_contains "3 catalog entries: 2 hosted runtime packages and 1 metadata-only entries" \
+assert_contains "4 catalog entries: 2 published hosted runtime packages, 1 metadata-only entries, and 1 candidates" \
   "$TEST_ROOT/list.out"
 assert_contains "link_only; weights unavailable from Sparrow" "$TEST_ROOT/list.out"
 assert_contains "https://example.test/original-model" "$TEST_ROOT/list.out"
+assert_contains "candidate; not yet published" "$TEST_ROOT/list.out"
 
 echo "[18] an explicit link-only id fails before any network access"
 link_only="$TEST_ROOT/link-only"
@@ -434,7 +449,18 @@ run_downloader valid_both --all --dest "$all_dir" > "$TEST_ROOT/all.out" 2>&1
 [[ -f "$all_dir/test-model/manifest.toml" ]] || fail "hosted model missing"
 [[ -f "$all_dir/test-model-two/manifest.toml" ]] || fail "restricted model missing"
 assert_file_absent "$all_dir/link-only-model"
-assert_contains "Models:        2 of 3 (all)" "$TEST_ROOT/all.out"
+assert_contains "Models:        2 of 4 (all)" "$TEST_ROOT/all.out"
 assert_absent "link-only-model.zip" "$FAKE_CURL_LOG"
+assert_absent "candidate-model.zip" "$FAKE_CURL_LOG"
+
+echo "[22] explicit candidates fail before network access"
+reset_log
+expect_failure "$TEST_ROOT/candidate.out" valid \
+  --dest "$TEST_ROOT/candidate" candidate-model
+assert_contains "candidate-model is a candidate catalog entry" \
+  "$TEST_ROOT/candidate.out"
+assert_contains "not present in the published model-zoo record" \
+  "$TEST_ROOT/candidate.out"
+[[ ! -s "$FAKE_CURL_LOG" ]] || fail "candidate selection reached the network"
 
 echo "download_models fail-closed tests: PASS"
