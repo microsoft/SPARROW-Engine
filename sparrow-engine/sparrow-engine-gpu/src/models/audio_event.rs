@@ -10,20 +10,18 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::TensorRef;
 use sparrow_engine_core::postprocess_events::{
-    decode_tf_event_clip, AudioEventClip, TfEventHeads,
+    decode_tf_event_clip, project_events_to_recording, AudioEventClip, TfEventHeads,
 };
 use sparrow_engine_core::preprocess_pcen::{complete_clip_count, PcenFrontend};
 use sparrow_engine_types::manifest::{
-    InferenceStrategy, ModelManifest, PcenSpectrogramConfig, PostprocessMethod,
-    Precision, PreprocessMethod, TfEventPeaksConfig,
+    InferenceStrategy, ModelManifest, PcenSpectrogramConfig, PostprocessMethod, Precision,
+    PreprocessMethod, TfEventPeaksConfig,
 };
 use sparrow_engine_types::{
     AudioEventOpts, AudioEventResult, AudioInput, Result, SparrowEngineError,
 };
 
-use crate::trt::ep::{
-    manifest_cache_material, CudaEpConfig, GpuIdentity, TrtEpBuilder,
-};
+use crate::trt::ep::{manifest_cache_material, CudaEpConfig, GpuIdentity, TrtEpBuilder};
 
 pub struct AudioEventModel {
     session: Mutex<Session>,
@@ -109,14 +107,10 @@ impl AudioEventModel {
         let session = Session::builder()
             .map_err(|error| SparrowEngineError::Ort(format!("ort Session::builder: {error}")))?
             .with_optimization_level(GraphOptimizationLevel::All)
-            .map_err(|error| {
-                SparrowEngineError::Ort(format!("with_optimization_level: {error}"))
-            })?
+            .map_err(|error| SparrowEngineError::Ort(format!("with_optimization_level: {error}")))?
             .with_execution_providers(providers)
             .map_err(|error| {
-                SparrowEngineError::Ort(format!(
-                    "with_execution_providers(CUDA, CPU): {error}"
-                ))
+                SparrowEngineError::Ort(format!("with_execution_providers(CUDA, CPU): {error}"))
             })?
             .commit_from_file(&onnx_path)
             .map_err(|error| {
@@ -158,9 +152,9 @@ impl AudioEventModel {
         }
         let started = Instant::now();
         let prepared = self.frontend.prepare_audio(audio, &self.model_id)?;
-        let source_clip_samples =
-            (f64::from(self.clip_duration_s) * prepared.original_sample_rate as f64).round()
-                as usize;
+        let source_clip_samples = (f64::from(self.clip_duration_s)
+            * prepared.original_sample_rate as f64)
+            .round() as usize;
         let clip_count = complete_clip_count(prepared.samples.len(), source_clip_samples);
         let mut events = Vec::new();
 
@@ -170,9 +164,7 @@ impl AudioEventModel {
                 &prepared.samples[start_sample..start_sample + source_clip_samples],
                 prepared.original_sample_rate,
             )?;
-            let tensor = self
-                .frontend
-                .preprocess_clip(&clip)?;
+            let tensor = self.frontend.preprocess_clip(&clip)?;
             let input = Array4::from_shape_vec(
                 (
                     1,
@@ -192,9 +184,7 @@ impl AudioEventModel {
                 .session
                 .lock()
                 .map_err(|_| SparrowEngineError::Ort("audio event session lock poisoned".into()))?;
-            let outputs = session
-                .run(ort::inputs![input_value])
-                .map_err(ort_error)?;
+            let outputs = session.run(ort::inputs![input_value]).map_err(ort_error)?;
             let detection: ArrayViewD<'_, f32> = outputs[self.output_indices.0]
                 .try_extract_array::<f32>()
                 .map_err(ort_error)?;
@@ -236,6 +226,7 @@ impl AudioEventModel {
                 },
             )?);
         }
+        project_events_to_recording(&mut events, prepared.duration_s, prepared.sample_rate)?;
         if let Some(max_events) = opts.max_events {
             events.truncate(max_events as usize);
         }

@@ -16,6 +16,49 @@ pub struct AudioEventClip {
     pub duration_s: f32,
 }
 
+/// Bound aggregated events to the recording, not to individual inference clips.
+///
+/// Keep valid cross-clip extents, event order, confidence, and class rankings.
+pub fn project_events_to_recording(
+    events: &mut [AudioEvent],
+    duration_s: f32,
+    sample_rate: u32,
+) -> Result<()> {
+    if !duration_s.is_finite() || duration_s < 0.0 || sample_rate == 0 {
+        return Err(SparrowEngineError::AudioPreprocess(format!(
+            "audio event recording bounds require a finite non-negative duration and positive sample rate, got {duration_s}s at {sample_rate}Hz"
+        )));
+    }
+    for (index, event) in events.iter().enumerate() {
+        if ![
+            event.start_time_s,
+            event.peak_time_s,
+            event.end_time_s,
+            event.low_freq_hz,
+            event.peak_freq_hz,
+            event.high_freq_hz,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+        {
+            return Err(SparrowEngineError::Ort(format!(
+                "audio event {index} has non-finite recording coordinates"
+            )));
+        }
+    }
+
+    let nyquist_hz = sample_rate as f32 / 2.0;
+    for event in events {
+        event.peak_time_s = event.peak_time_s.clamp(0.0, duration_s);
+        event.start_time_s = event.start_time_s.clamp(0.0, event.peak_time_s);
+        event.end_time_s = event.end_time_s.clamp(event.peak_time_s, duration_s);
+        event.peak_freq_hz = event.peak_freq_hz.clamp(0.0, nyquist_hz);
+        event.low_freq_hz = event.low_freq_hz.clamp(0.0, event.peak_freq_hz);
+        event.high_freq_hz = event.high_freq_hz.clamp(event.peak_freq_hz, nyquist_hz);
+    }
+    Ok(())
+}
+
 /// Decode one clip's raw NCHW heads into physical-time/frequency events.
 ///
 /// The input slices omit the fixed batch dimension:
@@ -51,10 +94,7 @@ pub fn decode_tf_event_clip(
             labels.len()
         )));
     }
-    if !heads
-        .detection_probs
-        .iter()
-        .all(|value| value.is_finite())
+    if !heads.detection_probs.iter().all(|value| value.is_finite())
         || !heads.size_preds.iter().all(|value| value.is_finite())
         || !heads.class_probs.iter().all(|value| value.is_finite())
     {
@@ -106,8 +146,8 @@ pub fn decode_tf_event_clip(
             let mut local_max = f32::NEG_INFINITY;
             for local_frequency in frequency_start..frequency_end {
                 for local_time in time_start..time_end {
-                    local_max = local_max
-                        .max(heads.detection_probs[local_frequency * width + local_time]);
+                    local_max =
+                        local_max.max(heads.detection_probs[local_frequency * width + local_time]);
                 }
             }
             candidates.push((if value == local_max { value } else { 0.0 }, index));
@@ -118,8 +158,7 @@ pub fn decode_tf_event_clip(
             .total_cmp(left_score)
             .then(left_index.cmp(right_index))
     });
-    let top_k =
-        (postprocess.top_k_per_second as f64 * f64::from(clip.duration_s)).floor() as usize;
+    let top_k = (postprocess.top_k_per_second as f64 * f64::from(clip.duration_s)).floor() as usize;
     candidates.truncate(top_k.min(candidates.len()));
 
     let mut events = Vec::new();
@@ -129,13 +168,11 @@ pub fn decode_tf_event_clip(
         }
         let frequency_index = index / width;
         let time_index = index % width;
-        let peak_time_local =
-            time_index as f64 / width as f64 * f64::from(clip.duration_s);
+        let peak_time_local = time_index as f64 / width as f64 * f64::from(clip.duration_s);
         let peak_frequency = frequency_index as f64 / height as f64
             * f64::from(preprocess.fmax - preprocess.fmin)
             + f64::from(preprocess.fmin);
-        let duration =
-            (f64::from(heads.size_preds[index]) / postprocess.size_time_scale).max(0.0);
+        let duration = (f64::from(heads.size_preds[index]) / postprocess.size_time_scale).max(0.0);
         let bandwidth = (f64::from(heads.size_preds[area + index])
             * postprocess.size_frequency_hz_per_unit)
             .max(0.0);
@@ -148,9 +185,7 @@ pub fn decode_tf_event_clip(
             if probability >= classification_threshold {
                 classes.push(AudioClass {
                     class_idx: u32::try_from(class_index).map_err(|_| {
-                        SparrowEngineError::Ort(
-                            "audio event class index exceeds u32".to_string(),
-                        )
+                        SparrowEngineError::Ort("audio event class index exceeds u32".to_string())
                     })?,
                     label: Some(label.clone()),
                     probability,
@@ -167,8 +202,7 @@ pub fn decode_tf_event_clip(
 
         events.push(AudioEvent {
             start_time_s: (f64::from(clip.start_s) + start_time) as f32,
-            end_time_s: (f64::from(clip.start_s) + (peak_time_local + duration).max(0.0))
-                as f32,
+            end_time_s: (f64::from(clip.start_s) + (peak_time_local + duration).max(0.0)) as f32,
             low_freq_hz: low_frequency as f32,
             high_freq_hz: (peak_frequency + bandwidth).max(0.0) as f32,
             peak_time_s: (f64::from(clip.start_s) + peak_time_local) as f32,
@@ -183,9 +217,7 @@ pub fn decode_tf_event_clip(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sparrow_engine_types::manifest::{
-        AudioEventAnchor, AudioResampler, AudioTailPolicy,
-    };
+    use sparrow_engine_types::manifest::{AudioEventAnchor, AudioResampler, AudioTailPolicy};
 
     fn preprocess() -> PcenSpectrogramConfig {
         PcenSpectrogramConfig {
@@ -229,6 +261,143 @@ mod tests {
 
     fn labels() -> Vec<String> {
         vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    }
+
+    fn event() -> AudioEvent {
+        AudioEvent {
+            start_time_s: 0.49,
+            peak_time_s: 0.5,
+            end_time_s: 0.6,
+            low_freq_hz: 10_000.0,
+            peak_freq_hz: 20_000.0,
+            high_freq_hz: 30_000.0,
+            confidence: 0.9,
+            classes: vec![AudioClass {
+                class_idx: 2,
+                label: Some("c".to_string()),
+                probability: 0.8,
+            }],
+        }
+    }
+
+    #[test]
+    fn recording_projection_bounds_all_coordinates_without_dropping_events() {
+        let original = vec![
+            AudioEvent {
+                start_time_s: 59.99,
+                peak_time_s: 59.995,
+                end_time_s: 60.00613,
+                high_freq_hz: 140_000.0,
+                ..event()
+            },
+            AudioEvent {
+                start_time_s: -1.0,
+                peak_time_s: -0.5,
+                end_time_s: -0.1,
+                low_freq_hz: -10.0,
+                peak_freq_hz: -5.0,
+                high_freq_hz: -1.0,
+                ..event()
+            },
+            AudioEvent {
+                start_time_s: 61.0,
+                peak_time_s: 62.0,
+                end_time_s: 63.0,
+                low_freq_hz: 130_000.0,
+                peak_freq_hz: 140_000.0,
+                high_freq_hz: 150_000.0,
+                ..event()
+            },
+        ];
+        let mut events = original.clone();
+        project_events_to_recording(&mut events, 60.0, 256_000).unwrap();
+        assert_eq!(events.len(), original.len());
+        for (before, after) in original.iter().zip(&events) {
+            assert_eq!(after.confidence, before.confidence);
+            assert_eq!(after.classes, before.classes);
+            assert!(0.0 <= after.start_time_s);
+            assert!(after.start_time_s <= after.peak_time_s);
+            assert!(after.peak_time_s <= after.end_time_s);
+            assert!(after.end_time_s <= 60.0);
+            assert!(0.0 <= after.low_freq_hz);
+            assert!(after.low_freq_hz <= after.peak_freq_hz);
+            assert!(after.peak_freq_hz <= after.high_freq_hz);
+            assert!(after.high_freq_hz <= 128_000.0);
+        }
+        assert_eq!(events[0].peak_time_s, original[0].peak_time_s);
+        assert_eq!(events[0].peak_freq_hz, original[0].peak_freq_hz);
+        assert_eq!(events[0].end_time_s, 60.0);
+        assert_eq!(events[0].high_freq_hz, 128_000.0);
+    }
+
+    #[test]
+    fn recording_projection_keeps_cross_clip_and_unanalyzed_tail_extents() {
+        let original = vec![
+            event(),
+            AudioEvent {
+                start_time_s: 0.99,
+                peak_time_s: 0.995,
+                end_time_s: 1.1,
+                ..event()
+            },
+        ];
+        let mut events = original.clone();
+        // Complete 0.5s clips cover only 1s of this 1.25s recording.
+        project_events_to_recording(&mut events, 1.25, 256_000).unwrap();
+        assert_eq!(events, original);
+    }
+
+    #[test]
+    fn recording_projection_preserves_ordering_and_is_idempotent() {
+        let mut events = vec![AudioEvent {
+            start_time_s: 0.6,
+            end_time_s: 0.4,
+            low_freq_hz: 30_000.0,
+            high_freq_hz: 10_000.0,
+            ..event()
+        }];
+        project_events_to_recording(&mut events, 1.0, 48_001).unwrap();
+        assert_eq!(events[0].start_time_s, events[0].peak_time_s);
+        assert_eq!(events[0].end_time_s, events[0].peak_time_s);
+        assert_eq!(events[0].low_freq_hz, events[0].peak_freq_hz);
+        assert_eq!(events[0].high_freq_hz, events[0].peak_freq_hz);
+        let projected = events.clone();
+        project_events_to_recording(&mut events, 1.0, 48_001).unwrap();
+        assert_eq!(events, projected);
+    }
+
+    #[test]
+    fn recording_projection_supports_empty_and_zero_duration_recordings() {
+        project_events_to_recording(&mut [], 0.0, 256_000).unwrap();
+        let mut events = vec![event()];
+        project_events_to_recording(&mut events, 0.0, 48_001).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].start_time_s, 0.0);
+        assert_eq!(events[0].peak_time_s, 0.0);
+        assert_eq!(events[0].end_time_s, 0.0);
+        assert_eq!(events[0].high_freq_hz, 24_000.5);
+    }
+
+    #[test]
+    fn recording_projection_rejects_invalid_bounds_and_nonfinite_coordinates() {
+        let original = vec![event()];
+        let mut events = original.clone();
+        for duration in [-1.0, f32::NAN, f32::INFINITY] {
+            assert!(project_events_to_recording(&mut events, duration, 256_000).is_err());
+            assert_eq!(events, original);
+        }
+        assert!(project_events_to_recording(&mut events, 1.0, 0).is_err());
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut events = vec![
+                event(),
+                AudioEvent {
+                    end_time_s: invalid,
+                    ..event()
+                },
+            ];
+            assert!(project_events_to_recording(&mut events, 0.5, 256_000).is_err());
+            assert_eq!(events[0], original[0]);
+        }
     }
 
     #[test]

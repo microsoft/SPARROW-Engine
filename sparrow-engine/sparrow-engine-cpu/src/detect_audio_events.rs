@@ -5,12 +5,10 @@ use std::time::Instant;
 use ndarray::{Array4, ArrayViewD};
 use ort::value::TensorRef;
 use sparrow_engine_core::postprocess_events::{
-    decode_tf_event_clip, AudioEventClip, TfEventHeads,
+    decode_tf_event_clip, project_events_to_recording, AudioEventClip, TfEventHeads,
 };
 use sparrow_engine_core::preprocess_pcen::{complete_clip_count, PcenFrontend};
-use sparrow_engine_types::manifest::{
-    InferenceStrategy, PostprocessMethod, PreprocessMethod,
-};
+use sparrow_engine_types::manifest::{InferenceStrategy, PostprocessMethod, PreprocessMethod};
 use sparrow_engine_types::{
     AudioEventOpts, AudioEventResult, AudioInput, Result, SparrowEngineError,
 };
@@ -73,12 +71,7 @@ pub fn detect_audio_events(
         )?;
         let tensor = frontend.preprocess_clip(&clip)?;
         let input = Array4::from_shape_vec(
-            (
-                1,
-                1,
-                preprocess.spec_height,
-                preprocess.model_time_frames,
-            ),
+            (1, 1, preprocess.spec_height, preprocess.model_time_frames),
             tensor,
         )
         .map_err(|error| {
@@ -136,6 +129,7 @@ pub fn detect_audio_events(
         )?);
     }
 
+    project_events_to_recording(&mut events, prepared.duration_s, prepared.sample_rate)?;
     if let Some(max_events) = opts.max_events {
         events.truncate(max_events as usize);
     }
