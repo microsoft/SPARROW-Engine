@@ -25,6 +25,7 @@ node_modules/
 
 # Model artifacts
 *.onnx
+!sparrow-engine/sparrow-engine-core/tests/fixtures/audio/frame_ensemble_tiny/*.onnx
 *.pt
 *.pth
 *.bin
