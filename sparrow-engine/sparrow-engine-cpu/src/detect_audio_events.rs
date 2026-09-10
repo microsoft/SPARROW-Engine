@@ -56,8 +56,7 @@ pub fn detect_audio_events(
         (f64::from(clip_duration_s) * preprocess.sample_rate as f64).round() as usize;
     let frontend = PcenFrontend::new(preprocess.clone(), clip_samples)?;
     let prepared = frontend.prepare_audio(audio, &manifest.id)?;
-    let source_clip_samples =
-        (f64::from(clip_duration_s) * prepared.original_sample_rate as f64).round() as usize;
+    let source_clip_samples = frontend.source_clip_samples(prepared.original_sample_rate)?;
     let clip_count = complete_clip_count(prepared.samples.len(), source_clip_samples);
     let session = handle.pin_session()?;
     let mut events = Vec::new();

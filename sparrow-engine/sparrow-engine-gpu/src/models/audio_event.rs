@@ -152,9 +152,9 @@ impl AudioEventModel {
         }
         let started = Instant::now();
         let prepared = self.frontend.prepare_audio(audio, &self.model_id)?;
-        let source_clip_samples = (f64::from(self.clip_duration_s)
-            * prepared.original_sample_rate as f64)
-            .round() as usize;
+        let source_clip_samples = self
+            .frontend
+            .source_clip_samples(prepared.original_sample_rate)?;
         let clip_count = complete_clip_count(prepared.samples.len(), source_clip_samples);
         let mut events = Vec::new();
 
