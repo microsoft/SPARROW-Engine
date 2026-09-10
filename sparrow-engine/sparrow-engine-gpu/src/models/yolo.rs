@@ -849,10 +849,20 @@ impl YoloModel {
         let view: ArrayView2<f32> = raw_output.view();
         let pp_meta = lb_meta
             .as_ref()
-            .map(|meta| preprocess_meta_from_letterbox(meta, original_w, original_h))
+            .map(|meta| {
+                preprocess_meta_from_letterbox(
+                    meta,
+                    original_w,
+                    original_h,
+                    self.input_w,
+                    self.input_h,
+                )
+            })
             .unwrap_or(PreprocessMeta {
                 original_width: original_w,
                 original_height: original_h,
+                input_width: model_width,
+                input_height: model_height,
                 scale: 1.0,
                 pad_x: 0.0,
                 pad_y: 0.0,
@@ -1058,7 +1068,13 @@ impl YoloModel {
 
         // Step 5: postprocess.
         let view: ArrayView2<f32> = raw_output.view();
-        let pp_meta = preprocess_meta_from_letterbox(&lb_meta, original_w, original_h);
+        let pp_meta = preprocess_meta_from_letterbox(
+            &lb_meta,
+            original_w,
+            original_h,
+            self.input_w,
+            self.input_h,
+        );
 
         let t_pre_pp = start.elapsed();
         let detections: Vec<Detection> = match self.manifest.postprocess_method {
@@ -1667,15 +1683,23 @@ fn image_input_to_bytes(image: &ImageInput) -> Result<Vec<u8>> {
 }
 
 /// Construct a [`PreprocessMeta`] from a [`LetterboxMeta`] for postprocess
-/// coordinate undo. yolo_e2e's `denormalize_and_normalize` expects the meta
-/// fields populated with original image dimensions + letterbox geometry.
-fn preprocess_meta_from_letterbox(lb: &LetterboxMeta, orig_w: u32, orig_h: u32) -> PreprocessMeta {
+/// coordinate undo. Canvas dimensions come from the model, not symmetric padding
+/// reconstruction: the bottom/right padding can differ by one pixel.
+fn preprocess_meta_from_letterbox(
+    lb: &LetterboxMeta,
+    orig_w: u32,
+    orig_h: u32,
+    input_w: u32,
+    input_h: u32,
+) -> PreprocessMeta {
     PreprocessMeta {
         scale: lb.scale,
         pad_x: lb.pad_x,
         pad_y: lb.pad_y,
         original_width: orig_w,
         original_height: orig_h,
+        input_width: input_w,
+        input_height: input_h,
     }
 }
 
@@ -1722,12 +1746,43 @@ mod tests {
             original_width: 2560,
             original_height: 1920,
         };
-        let pp = preprocess_meta_from_letterbox(&lb, 2560, 1920);
+        let pp = preprocess_meta_from_letterbox(&lb, 2560, 1920, 1300, 1000);
         assert_eq!(pp.scale, 0.5);
         assert_eq!(pp.pad_x, 10.0);
         assert_eq!(pp.pad_y, 20.0);
         assert_eq!(pp.original_width, 2560);
         assert_eq!(pp.original_height, 1920);
+        assert_eq!(pp.input_width, 1300);
+        assert_eq!(pp.input_height, 1000);
+    }
+
+    #[test]
+    fn preprocess_meta_uses_exact_canvas_with_odd_padding_and_rounding() {
+        for (orig_w, orig_h, input_w, input_h, scale, pad_y) in [
+            (4, 1, 4, 4, 1.0, 1.0),
+            (8, 5, 2, 4, 0.25, 1.0),
+            (8, 1, 2, 4, 0.25, 1.0),
+        ] {
+            let lb = LetterboxMeta {
+                scale,
+                pad_x: 0.0,
+                pad_y,
+                original_width: orig_w,
+                original_height: orig_h,
+            };
+            let meta = preprocess_meta_from_letterbox(&lb, orig_w, orig_h, input_w, input_h);
+            assert_eq!((meta.input_width, meta.input_height), (input_w, input_h));
+            assert_eq!(
+                (meta.original_width, meta.original_height),
+                (orig_w, orig_h)
+            );
+            assert_eq!(meta.scale, scale);
+            assert_eq!(meta.pad_y, pad_y);
+            assert_ne!(
+                meta.input_height as f32,
+                orig_h as f32 * scale + 2.0 * pad_y
+            );
+        }
     }
 
     #[test]

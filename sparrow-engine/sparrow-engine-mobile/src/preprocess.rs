@@ -99,6 +99,8 @@ pub(crate) fn letterbox_nhwc(
     let meta = PreprocessMeta {
         original_width: orig_w,
         original_height: orig_h,
+        input_width: target_w,
+        input_height: target_h,
         scale,
         pad_x: pad_x_left as f32,
         pad_y: pad_y_top as f32,
@@ -131,6 +133,7 @@ mod tests {
         let (buf, meta) =
             letterbox_nhwc(&img, 640, 640, 0.0, Normalization::Unit, ChannelOrder::Rgb);
         assert_eq!(buf.len(), 640 * 640 * 3);
+        assert_eq!((meta.input_width, meta.input_height), (640, 640));
         assert!((meta.scale - 1.0).abs() < 1e-6);
         assert!(meta.pad_x.abs() < 1e-6 && meta.pad_y.abs() < 1e-6);
         // First pixel is red, unit-normalized: (1.0, 0.0, 0.0).
@@ -160,11 +163,28 @@ mod tests {
         assert!((meta.scale - 1.0).abs() < f32::EPSILON);
         assert!(meta.pad_x.abs() < f32::EPSILON);
         assert!((meta.pad_y - 1.0).abs() < f32::EPSILON);
+        assert_eq!((meta.input_width, meta.input_height), (4, 4));
 
         let row_stride = 4 * 3;
         assert!(buf[..row_stride].iter().all(|value| *value == 0.0));
         assert_eq!(buf[row_stride], 255.0);
         assert!(buf[2 * row_stride..].iter().all(|value| *value == 0.0));
+    }
+
+    #[test]
+    fn letterbox_metadata_preserves_exact_nonsquare_canvas_and_continuous_scale() {
+        for height in [1, 5] {
+            let img = solid(8, height, [255, 0, 0]);
+            let (buf, meta) =
+                letterbox_nhwc(&img, 2, 4, 0.0, Normalization::None, ChannelOrder::Rgb);
+            assert_eq!(buf.len(), 2 * 4 * 3);
+            assert_eq!((meta.input_width, meta.input_height), (2, 4));
+            assert_eq!((meta.original_width, meta.original_height), (8, height));
+            assert_eq!(meta.scale, 0.25);
+            assert_eq!(meta.pad_y, 1.0);
+            assert_eq!(buf[2 * 3], 255.0);
+            assert!(buf[2 * 2 * 3..].iter().all(|value| *value == 0.0));
+        }
     }
 
     #[test]

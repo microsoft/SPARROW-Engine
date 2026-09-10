@@ -132,10 +132,13 @@ fn audio_manifest_engine_config_reexports_resolve_at_crate_root() {
     let _pp_meta: sparrow_engine::PreprocessMeta = sparrow_engine::PreprocessMeta {
         original_width: 100,
         original_height: 100,
+        input_width: 100,
+        input_height: 100,
         scale: 1.0,
         pad_x: 0.0,
         pad_y: 0.0,
     };
+    assert_eq!((_pp_meta.input_width, _pp_meta.input_height), (100, 100));
     let _pp_cfg: sparrow_engine::PreprocessConfig = sparrow_engine::PreprocessConfig {
         method: sparrow_engine::manifest::PreprocessMethod::Letterbox,
         input_size: [640, 640],

@@ -50,6 +50,12 @@ pub fn validate_preprocess_meta(meta: &PreprocessMeta) -> Result<()> {
             meta.original_width, meta.original_height
         )));
     }
+    if meta.input_width == 0 || meta.input_height == 0 {
+        return Err(SparrowEngineError::Ort(format!(
+            "preprocess metadata has zero input dimensions: {}x{}",
+            meta.input_width, meta.input_height
+        )));
+    }
     if !meta.scale.is_finite() || meta.scale <= 0.0 {
         return Err(SparrowEngineError::Ort(format!(
             "preprocess metadata scale must be finite and positive, got {}",
@@ -149,6 +155,10 @@ pub fn try_yolo_e2e(
     }
 
     let mut detections = Vec::new();
+    let mut padding_only = PaddingOnlyCandidates {
+        method: "yolo_e2e",
+        count: 0,
+    };
 
     for row in output.rows() {
         if !row.iter().all(|v| v.is_finite()) {
@@ -163,24 +173,12 @@ pub fn try_yolo_e2e(
             ));
         }
 
-        // Skip below-threshold rows BEFORE bbox geometry validation.
-        // YOLOv10e exports many low-confidence TopK candidates whose boxes
-        // can lie outside the original image; after letterbox-undo and clamp
-        // they may end up degenerate (x_min == x_max). Those rows are already
-        // discarded by the confidence gate; their post-clamp geometry is
-        // irrelevant. High-confidence degenerate boxes still signal a model
-        // fault and are rejected below.
+        // Below-threshold TopK placeholders need no geometry or class validation.
         if confidence < threshold {
             continue;
         }
 
-        let (bbox, source_pixel_box) =
-            denormalize_and_normalize(row[0], row[1], row[2], row[3], meta);
-        if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
-            return Err(SparrowEngineError::Ort(
-                "yolo_e2e output contains degenerate normalized boxes".to_string(),
-            ));
-        }
+        let mapped = map_letterbox_box([row[0], row[1], row[2], row[3]], meta, "yolo_e2e")?;
 
         if row[5] < 0.0 {
             return Err(SparrowEngineError::Ort(format!(
@@ -188,6 +186,14 @@ pub fn try_yolo_e2e(
                 row[5]
             )));
         }
+        let LetterboxBox::Content {
+            bbox,
+            source_pixel_box,
+        } = mapped
+        else {
+            padding_only.count += 1;
+            continue;
+        };
         let class_id = row[5] as u32;
         let label = label_for_id(labels, class_id);
 
@@ -556,6 +562,10 @@ pub fn try_megadet_v5a(
 
     let num_classes = ncols - 5;
     let mut detections = Vec::new();
+    let mut padding_only = PaddingOnlyCandidates {
+        method: "megadet_v5a",
+        count: 0,
+    };
 
     for row in output.rows() {
         if !row.iter().all(|v| v.is_finite()) {
@@ -582,12 +592,8 @@ pub fn try_megadet_v5a(
             ));
         }
 
-        // Compute confidence and skip below-threshold rows BEFORE bbox
-        // geometry validation. Rationale mirrors try_yolo_e2e: low-confidence
-        // candidates whose boxes lie outside the original image clamp to
-        // degenerate shapes; those rows are already discarded by the gate.
-        // High-confidence degenerate boxes still signal a model fault and
-        // are rejected below.
+        // Raw sizes must be positive even below threshold; canvas/content
+        // geometry is relevant only to candidates that pass the score gate.
         let confidence = objectness * max_class_score;
         if confidence < threshold {
             continue;
@@ -595,13 +601,18 @@ pub fn try_megadet_v5a(
 
         let half_w = w * 0.5;
         let half_h = h * 0.5;
-        let (bbox, source_pixel_box) =
-            denormalize_and_normalize(cx - half_w, cy - half_h, cx + half_w, cy + half_h, meta);
-        if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
-            return Err(SparrowEngineError::Ort(
-                "megadet_v5a output contains degenerate normalized boxes".to_string(),
-            ));
-        }
+        let LetterboxBox::Content {
+            bbox,
+            source_pixel_box,
+        } = map_letterbox_box(
+            [cx - half_w, cy - half_h, cx + half_w, cy + half_h],
+            meta,
+            "megadet_v5a",
+        )?
+        else {
+            padding_only.count += 1;
+            continue;
+        };
 
         let label = label_for_id(labels, class_id as u32);
         detections.push(
@@ -948,6 +959,79 @@ pub fn finalize_embedding(v: &mut [f32], normalize: bool) -> Result<()> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+enum LetterboxBox {
+    PaddingOnly,
+    Content {
+        bbox: BBox,
+        source_pixel_box: sparrow_engine_types::SourcePixelBox,
+    },
+}
+
+struct PaddingOnlyCandidates {
+    method: &'static str,
+    count: usize,
+}
+
+impl Drop for PaddingOnlyCandidates {
+    fn drop(&mut self) {
+        // Also report earlier skips when a later malformed row fails the call.
+        if self.count > 0 {
+            tracing::debug!(
+                postprocess = self.method,
+                padding_only_count = self.count,
+                "skipped letterbox padding-only detections"
+            );
+        }
+    }
+}
+
+fn map_letterbox_box(
+    [x1, y1, x2, y2]: [f32; 4],
+    meta: &PreprocessMeta,
+    method: &str,
+) -> Result<LetterboxBox> {
+    if ![x1, y1, x2, y2].iter().all(|v| v.is_finite()) {
+        return Err(SparrowEngineError::Ort(format!(
+            "{method} output contains non-finite box coordinates"
+        )));
+    }
+    let invalid = || {
+        SparrowEngineError::Ort(format!(
+            "{method} output contains degenerate normalized boxes"
+        ))
+    };
+    if x1 >= x2 || y1 >= y2 {
+        return Err(invalid());
+    }
+
+    let canvas_x1 = x1.max(0.0);
+    let canvas_y1 = y1.max(0.0);
+    let canvas_x2 = x2.min(meta.input_width as f32);
+    let canvas_y2 = y2.min(meta.input_height as f32);
+    if canvas_x1 >= canvas_x2 || canvas_y1 >= canvas_y2 {
+        return Err(invalid());
+    }
+
+    // Use the continuous inverse-transform domain, not rounded raster sizes.
+    let content_x2 = meta.pad_x + meta.original_width as f32 * meta.scale;
+    let content_y2 = meta.pad_y + meta.original_height as f32 * meta.scale;
+    if canvas_x1.max(meta.pad_x) >= canvas_x2.min(content_x2)
+        || canvas_y1.max(meta.pad_y) >= canvas_y2.min(content_y2)
+    {
+        return Ok(LetterboxBox::PaddingOnly);
+    }
+
+    // Intersections classify candidates only. Preserve unclamped source pixels.
+    let (bbox, source_pixel_box) = denormalize_and_normalize(x1, y1, x2, y2, meta);
+    if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
+        return Err(invalid());
+    }
+    Ok(LetterboxBox::Content {
+        bbox,
+        source_pixel_box,
+    })
+}
+
 /// Undo letterbox transform and normalize bbox to [0,1] relative to original image.
 ///
 /// Input coords are in model-input pixel space (with letterbox padding).
@@ -1165,9 +1249,471 @@ mod tests {
         PreprocessMeta {
             original_width: w,
             original_height: h,
+            input_width: w,
+            input_height: h,
             scale: 1.0,
             pad_x: 0.0,
             pad_y: 0.0,
+        }
+    }
+
+    fn padded_meta() -> PreprocessMeta {
+        PreprocessMeta {
+            original_width: 200,
+            original_height: 100,
+            input_width: 100,
+            input_height: 100,
+            scale: 0.5,
+            pad_x: 0.0,
+            pad_y: 25.0,
+        }
+    }
+
+    fn both_letterbox_decoders(
+        [x1, y1, x2, y2]: [f32; 4],
+        meta: &PreprocessMeta,
+    ) -> [Result<Vec<Detection>>; 2] {
+        let e2e = array![[x1, y1, x2, y2, 0.9, 0.0]];
+        let raw = array![[(x1 + x2) * 0.5, (y1 + y2) * 0.5, x2 - x1, y2 - y1, 0.9, 1.0,]];
+        [
+            try_yolo_e2e(
+                &e2e.view(),
+                &test_labels(),
+                &DetectOpts::default(),
+                meta,
+                0.5,
+            ),
+            try_megadet_v5a(
+                &raw.view(),
+                &test_labels(),
+                &DetectOpts::default(),
+                meta,
+                0.5,
+                0.45,
+            ),
+        ]
+    }
+
+    #[test]
+    fn letterbox_decoders_reject_intrinsic_degeneracy() {
+        for xyxy in [
+            [10.0, 30.0, 10.0, 40.0],
+            [20.0, 30.0, 10.0, 40.0],
+            [10.0, 30.0, 20.0, 30.0],
+            [10.0, 40.0, 20.0, 30.0],
+            [10.0, 5.0, 10.0, 10.0],
+        ] {
+            for result in both_letterbox_decoders(xyxy, &padded_meta()) {
+                assert!(result.is_err(), "{xyxy:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_reject_outside_canvas_and_canvas_edge_touches() {
+        for xyxy in [
+            [-20.0, 30.0, -10.0, 40.0],
+            [110.0, 30.0, 120.0, 40.0],
+            [10.0, -20.0, 20.0, -10.0],
+            [10.0, 110.0, 20.0, 120.0],
+            [-10.0, 30.0, 0.0, 40.0],
+            [100.0, 30.0, 110.0, 40.0],
+            [10.0, -10.0, 20.0, 0.0],
+            [10.0, 100.0, 20.0, 110.0],
+        ] {
+            for meta in [padded_meta(), identity_meta(100, 100)] {
+                for result in both_letterbox_decoders(xyxy, &meta) {
+                    assert!(result.is_err(), "{xyxy:?} with {meta:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_skip_padding_and_content_edge_touches() {
+        for xyxy in [
+            [10.0, 5.0, 20.0, 15.0],
+            [10.0, 0.0, 20.0, 25.0],
+            [10.0, 75.0, 20.0, 100.0],
+            [-10.0, -5.0, 20.0, 25.0],
+        ] {
+            let meta = padded_meta();
+            let transposed = PreprocessMeta {
+                original_width: meta.original_height,
+                original_height: meta.original_width,
+                pad_x: meta.pad_y,
+                pad_y: meta.pad_x,
+                ..meta
+            };
+            for (coords, meta) in [
+                (xyxy, meta),
+                ([xyxy[1], xyxy[0], xyxy[3], xyxy[2]], transposed),
+            ] {
+                for result in both_letterbox_decoders(coords, &meta) {
+                    assert!(result.unwrap().is_empty(), "{coords:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_retain_partial_content_with_source_pixels() {
+        for result in both_letterbox_decoders([5.0, 20.0, 20.0, 35.0], &padded_meta()) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            let detection = &detections[0];
+            assert_eq!(
+                detection.source_pixel_box.unwrap().xyxy(),
+                [10.0, -10.0, 40.0, 20.0]
+            );
+            assert_eq!(detection.bbox.x_min, 0.05);
+            assert_eq!(detection.bbox.y_min, 0.0);
+            assert_eq!(detection.bbox.x_max, 0.2);
+            assert_eq!(detection.bbox.y_max, 0.2);
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_retain_partial_canvas_with_unclamped_source_pixels() {
+        for result in both_letterbox_decoders([-10.0, -5.0, 110.0, 80.0], &padded_meta()) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            let detection = &detections[0];
+            assert_eq!(
+                detection.source_pixel_box.unwrap().xyxy(),
+                [-20.0, -60.0, 220.0, 110.0]
+            );
+            assert_eq!(detection.bbox.x_min, 0.0);
+            assert_eq!(detection.bbox.y_min, 0.0);
+            assert_eq!(detection.bbox.x_max, 1.0);
+            assert_eq!(detection.bbox.y_max, 1.0);
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_square_content_is_not_padding() {
+        for result in both_letterbox_decoders([0.0, 0.0, 100.0, 100.0], &identity_meta(100, 100)) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            assert_eq!(
+                detections[0].source_pixel_box.unwrap().xyxy(),
+                [0.0, 0.0, 100.0, 100.0]
+            );
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_respect_odd_padding_canvas() {
+        let meta = PreprocessMeta {
+            original_width: 4,
+            original_height: 1,
+            pad_y: 1.0,
+            ..identity_meta(4, 4)
+        };
+        // Symmetric reconstruction would wrongly shrink this canvas to height 3.
+        for result in both_letterbox_decoders([0.0, 3.25, 4.0, 3.75], &meta) {
+            assert!(result.unwrap().is_empty());
+        }
+        for result in both_letterbox_decoders([0.0, 1.0, 4.0, 2.0], &meta) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            assert_eq!(
+                detections[0].source_pixel_box.unwrap().xyxy(),
+                [0.0, 0.0, 4.0, 1.0]
+            );
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_use_continuous_rounding_boundaries() {
+        let meta = PreprocessMeta {
+            original_width: 8,
+            original_height: 5,
+            input_width: 2,
+            input_height: 4,
+            scale: 0.25,
+            pad_x: 0.0,
+            pad_y: 1.0,
+        };
+        // The raster height rounds down to 1; the continuous content ends at 2.25.
+        for result in both_letterbox_decoders([0.25, 2.0625, 1.75, 2.1875], &meta) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            assert_eq!(
+                detections[0].source_pixel_box.unwrap().xyxy(),
+                [1.0, 4.25, 7.0, 4.75]
+            );
+            assert_eq!(detections[0].bbox.y_min, 0.85);
+            assert_eq!(detections[0].bbox.y_max, 0.95);
+        }
+        let rounded_up = PreprocessMeta {
+            original_height: 6,
+            ..meta
+        };
+        // The raster height rounds up to 2; continuous content still ends at 2.5.
+        for result in both_letterbox_decoders([0.25, 2.625, 1.75, 2.875], &rounded_up) {
+            assert!(result.unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_keep_minimum_pixel_raster_and_continuous_content_distinct() {
+        let meta = PreprocessMeta {
+            original_width: 8,
+            original_height: 1,
+            input_width: 2,
+            input_height: 4,
+            scale: 0.25,
+            pad_x: 0.0,
+            pad_y: 1.0,
+        };
+        for result in both_letterbox_decoders([0.25, 1.125, 1.75, 1.25], &meta) {
+            let detections = result.unwrap();
+            assert_eq!(detections.len(), 1);
+            assert_eq!(
+                detections[0].source_pixel_box.unwrap().xyxy(),
+                [1.0, 0.5, 7.0, 1.0]
+            );
+        }
+        for result in both_letterbox_decoders([0.25, 1.25, 1.75, 1.75], &meta) {
+            assert!(result.unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn yolo_padding_negative_class_is_not_hidden() {
+        let data = array![[10.0, 5.0, 20.0, 15.0, 0.9, -1.0]];
+        let err = try_yolo_e2e(
+            &data.view(),
+            &test_labels(),
+            &DetectOpts::default(),
+            &padded_meta(),
+            0.5,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, SparrowEngineError::Ort(msg) if msg.contains("class_id must be non-negative"))
+        );
+    }
+
+    #[test]
+    fn letterbox_decoders_filter_confidence_in_the_original_order() {
+        let data = array![
+            [20.0, 5.0, 10.0, 15.0, 0.1, -1.0],
+            [10.0, 5.0, 20.0, 15.0, 0.1, -1.0],
+        ];
+        assert!(try_yolo_e2e(
+            &data.view(),
+            &test_labels(),
+            &DetectOpts::default(),
+            &padded_meta(),
+            0.5,
+        )
+        .unwrap()
+        .is_empty());
+        for size in [0.0, -1.0] {
+            let raw = array![[15.0, 10.0, size, 10.0, 0.1, 1.0]];
+            let err = try_megadet_v5a(
+                &raw.view(),
+                &test_labels(),
+                &DetectOpts::default(),
+                &padded_meta(),
+                0.5,
+                0.45,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, SparrowEngineError::Ort(msg) if msg.contains("non-positive box size"))
+            );
+        }
+        for invalid_score in [f32::NAN, -0.1, 1.1] {
+            let e2e = array![[10.0, 5.0, 20.0, 15.0, invalid_score, 0.0]];
+            let raw = array![[15.0, 10.0, 10.0, 10.0, invalid_score, 1.0]];
+            assert!(try_yolo_e2e(
+                &e2e.view(),
+                &[],
+                &DetectOpts::default(),
+                &padded_meta(),
+                0.5,
+            )
+            .is_err());
+            assert!(try_megadet_v5a(
+                &raw.view(),
+                &[],
+                &DetectOpts::default(),
+                &padded_meta(),
+                0.5,
+                0.45,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn letterbox_padding_does_not_consume_nms_or_detection_caps() {
+        let e2e = array![
+            [10.0, 5.0, 20.0, 15.0, 0.99, 0.0],
+            [10.0, 30.0, 20.0, 40.0, 0.9, 0.0],
+            [10.0, 30.0, 20.0, 40.0, 0.8, 0.0],
+            [10.0, 30.0, 20.0, 40.0, 0.7, 1.0],
+        ];
+        let raw = array![
+            [15.0, 10.0, 10.0, 10.0, 0.99, 1.0, 0.0],
+            [15.0, 35.0, 10.0, 10.0, 0.9, 1.0, 0.0],
+            [15.0, 35.0, 10.0, 10.0, 0.8, 1.0, 0.0],
+            [15.0, 35.0, 10.0, 10.0, 0.7, 0.0, 1.0],
+        ];
+        for cap in [0, 1, 2] {
+            let opts = DetectOpts {
+                max_detections: Some(cap),
+                ..Default::default()
+            };
+            let e2e_detections =
+                try_yolo_e2e(&e2e.view(), &test_labels(), &opts, &padded_meta(), 0.5).unwrap();
+            let raw_detections = try_megadet_v5a(
+                &raw.view(),
+                &test_labels(),
+                &opts,
+                &padded_meta(),
+                0.5,
+                0.45,
+            )
+            .unwrap();
+            assert_eq!(e2e_detections.len(), cap as usize);
+            assert_eq!(raw_detections.len(), cap as usize);
+            if cap > 0 {
+                assert_eq!(e2e_detections[0].confidence, 0.9);
+                assert_eq!(raw_detections[0].confidence, 0.9);
+            }
+            if cap == 2 {
+                assert_eq!(e2e_detections[1].confidence, 0.8, "E2E must not add NMS");
+                assert_eq!(raw_detections[1].confidence, 0.7);
+                assert_eq!(raw_detections[1].label_id, 1, "NMS must remain class-aware");
+            }
+        }
+    }
+
+    #[test]
+    fn letterbox_decoders_reject_zero_canvas_metadata() {
+        for (input_width, input_height) in [(0, 100), (100, 0)] {
+            let meta = PreprocessMeta {
+                input_width,
+                input_height,
+                ..padded_meta()
+            };
+            for result in both_letterbox_decoders([10.0, 30.0, 20.0, 40.0], &meta) {
+                assert!(
+                    matches!(result, Err(SparrowEngineError::Ort(msg)) if msg.contains("zero input dimensions"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn letterbox_mapper_rejects_residual_normalized_degeneracy() {
+        let result = map_letterbox_box(
+            [0.0, 0.0, f32::from_bits(1), 1.0],
+            &identity_meta(100, 100),
+            "yolo_e2e",
+        );
+        assert!(
+            matches!(result, Err(SparrowEngineError::Ort(msg)) if msg.contains("degenerate normalized boxes"))
+        );
+    }
+
+    #[test]
+    fn letterbox_padding_diagnostic_is_counted_once_per_call_including_errors() {
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+        use tracing::{span, Event, Metadata, Subscriber};
+
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
+
+        impl Subscriber for Capture {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+                span::Id::from_u64(1)
+            }
+            fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+            fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+            fn enter(&self, _: &span::Id) {}
+            fn exit(&self, _: &span::Id) {}
+            fn event(&self, event: &Event<'_>) {
+                #[derive(Default)]
+                struct Fields(BTreeMap<String, String>);
+                impl tracing::field::Visit for Fields {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        self.0
+                            .insert(field.name().to_string(), format!("{value:?}"));
+                    }
+                }
+                let mut fields = Fields::default();
+                event.record(&mut fields);
+                self.0.lock().unwrap().push(fields.0);
+            }
+        }
+
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || {
+            let e2e = array![
+                [10.0, 5.0, 20.0, 15.0, 0.9, 0.0],
+                [10.0, 80.0, 20.0, 90.0, 0.8, 0.0],
+                [110.0, 30.0, 120.0, 40.0, 0.7, 0.0],
+            ];
+            let raw = array![
+                [15.0, 10.0, 10.0, 10.0, 0.9, 1.0],
+                [15.0, 85.0, 10.0, 10.0, 0.8, 1.0],
+                [115.0, 35.0, 10.0, 10.0, 0.7, 1.0],
+            ];
+            for count in [2, 3] {
+                let results = [
+                    try_yolo_e2e(
+                        &e2e.slice(ndarray::s![..count, ..]),
+                        &[],
+                        &DetectOpts::default(),
+                        &padded_meta(),
+                        0.5,
+                    ),
+                    try_megadet_v5a(
+                        &raw.slice(ndarray::s![..count, ..]),
+                        &[],
+                        &DetectOpts::default(),
+                        &padded_meta(),
+                        0.5,
+                        0.45,
+                    ),
+                ];
+                for result in results {
+                    assert_eq!(result.is_ok(), count == 2);
+                }
+            }
+            for result in both_letterbox_decoders([10.0, 30.0, 20.0, 40.0], &padded_meta()) {
+                assert_eq!(result.unwrap().len(), 1);
+            }
+        });
+        let records = capture.0.lock().unwrap();
+        assert_eq!(
+            records.len(),
+            4,
+            "one event per call with skips, including failed calls"
+        );
+        for (index, record) in records.iter().enumerate() {
+            assert_eq!(record["padding_only_count"], "2");
+            assert_eq!(
+                record["postprocess"],
+                if index % 2 == 0 {
+                    "\"yolo_e2e\""
+                } else {
+                    "\"megadet_v5a\""
+                }
+            );
         }
     }
 
@@ -1375,6 +1921,8 @@ mod tests {
         let meta = PreprocessMeta {
             original_width: 1280,
             original_height: 1280,
+            input_width: 640,
+            input_height: 640,
             scale: 0.5,
             pad_x: 10.0,
             pad_y: 0.0,

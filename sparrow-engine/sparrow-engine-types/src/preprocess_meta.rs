@@ -43,6 +43,10 @@ pub struct PreprocessMeta {
     pub original_width: u32,
     /// Original image height before any transforms.
     pub original_height: u32,
+    /// Exact model-input canvas width, including any letterbox padding.
+    pub input_width: u32,
+    /// Exact model-input canvas height, including any letterbox padding.
+    pub input_height: u32,
     /// Resize scale factor applied to the original image.
     pub scale: f32,
     /// Left padding actually applied in model-input pixel space (letterbox only).
@@ -63,6 +67,8 @@ mod phase_a_r1_preprocess_meta_tests {
         let meta = PreprocessMeta {
             original_width: 1920,
             original_height: 1080,
+            input_width: 1280,
+            input_height: 840,
             scale: 0.6667,
             pad_x: 0.0,
             pad_y: 60.0,
@@ -71,6 +77,8 @@ mod phase_a_r1_preprocess_meta_tests {
         let copy_b = meta; // would not compile if Copy were removed
         assert_eq!(copy_a.original_width, 1920);
         assert_eq!(copy_b.original_height, 1080);
+        assert_eq!(copy_a.input_width, 1280);
+        assert_eq!(copy_b.input_height, 840);
         assert!((copy_a.scale - 0.6667).abs() < 1e-6);
         assert!((copy_a.pad_x - copy_b.pad_x).abs() < f32::EPSILON);
         assert!((copy_a.pad_y - 60.0).abs() < f32::EPSILON);

@@ -1100,6 +1100,8 @@ mod tests {
         PreprocessMeta {
             original_width: 640,
             original_height: 480,
+            input_width: 640,
+            input_height: 480,
             scale: 1.0,
             pad_x: 0.0,
             pad_y: 0.0,
@@ -1132,6 +1134,114 @@ mod tests {
         .unwrap();
 
         assert!(results.is_none());
+    }
+
+    #[test]
+    fn batched_letterbox_postprocess_uses_each_canvas_and_preserves_errors() {
+        use crate::preprocess::{preprocess, ChannelOrder, Interpolation, PreprocessConfig};
+        use crate::types::{ImageInput, PixelFormat};
+
+        let config = PreprocessConfig {
+            method: PreprocessMethod::Letterbox,
+            input_size: [8, 8],
+            layout: Layout::Nchw,
+            normalization: Normalization::Unit,
+            pad_value: 0.0,
+            channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
+            resize_crop: None,
+        };
+        let preps: Vec<_> = [(8, 4), (4, 8)]
+            .into_iter()
+            .map(|(width, height)| {
+                preprocess(
+                    &ImageInput::Raw {
+                        data: vec![128; (width * height * 3) as usize],
+                        width,
+                        height,
+                        stride: width * 3,
+                        format: PixelFormat::Rgb,
+                    },
+                    &config,
+                )
+                .unwrap()
+            })
+            .collect();
+        let coords = ndarray::array![
+            [
+                [1.0, 0.0, 3.0, 1.0, 0.99, 0.0],
+                [1.0, 1.0, 7.0, 5.0, 0.9, 0.0]
+            ],
+            [
+                [0.0, 1.0, 1.0, 3.0, 0.99, 0.0],
+                [1.0, 1.0, 5.0, 7.0, 0.9, 0.0]
+            ],
+        ];
+        let opts = DetectOpts {
+            max_detections: Some(1),
+            ..Default::default()
+        };
+        for method in [
+            PostprocessMethod::YoloE2e,
+            PostprocessMethod::MegadetV5a {
+                iou_threshold: 0.45,
+            },
+        ] {
+            let output = Array::from_shape_fn((2, 2, 6), |(i, j, k)| {
+                if matches!(method, PostprocessMethod::YoloE2e) {
+                    return coords[[i, j, k]];
+                }
+                match k {
+                    0 => (coords[[i, j, 0]] + coords[[i, j, 2]]) * 0.5,
+                    1 => (coords[[i, j, 1]] + coords[[i, j, 3]]) * 0.5,
+                    2 => coords[[i, j, 2]] - coords[[i, j, 0]],
+                    3 => coords[[i, j, 3]] - coords[[i, j, 1]],
+                    4 => coords[[i, j, 4]],
+                    _ => 1.0,
+                }
+            })
+            .into_dyn();
+            let results = try_postprocess_batched_output(
+                &output,
+                &preps,
+                &[],
+                &opts,
+                &method,
+                Some(0.5),
+                1.0,
+            )
+            .unwrap()
+            .expect("both decoder batch paths must be handled");
+            assert_eq!(results.len(), 2);
+            for (result, expected_size, source) in [
+                (&results[0], (8, 4), [1.0, -1.0, 7.0, 3.0]),
+                (&results[1], (4, 8), [-1.0, 1.0, 3.0, 7.0]),
+            ] {
+                assert_eq!((result.image_width, result.image_height), expected_size);
+                assert_eq!(result.detections.len(), 1);
+                assert_eq!(result.detections[0].confidence, 0.9);
+                assert_eq!(
+                    result.detections[0].source_pixel_box.unwrap().xyxy(),
+                    source
+                );
+            }
+            let mut malformed = output;
+            malformed[[1, 1, 0]] = 20.0;
+            malformed[[1, 1, 2]] = 22.0;
+            assert!(
+                try_postprocess_batched_output(
+                    &malformed,
+                    &preps,
+                    &[],
+                    &opts,
+                    &method,
+                    Some(0.5),
+                    1.0,
+                )
+                .is_err(),
+                "a malformed image must not become a batching fallback"
+            );
+        }
     }
 
     #[test]

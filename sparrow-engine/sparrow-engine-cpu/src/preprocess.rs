@@ -158,6 +158,8 @@ pub fn preprocess(image: &ImageInput, config: &PreprocessConfig) -> Result<Prepr
         meta: PreprocessMeta {
             original_width: orig_w,
             original_height: orig_h,
+            input_width: tensor_w,
+            input_height: tensor_h,
             scale,
             pad_x,
             pad_y,
@@ -907,6 +909,10 @@ mod tests {
         assert_eq!(result.tensor.shape(), &[1, 3, 64, 64]);
         assert_eq!(result.meta.original_width, 30);
         assert_eq!(result.meta.original_height, 20);
+        assert_eq!(
+            (result.meta.input_width, result.meta.input_height),
+            (64, 64)
+        );
     }
 
     #[test]
@@ -930,6 +936,68 @@ mod tests {
         };
         let result = preprocess(&img, &config).unwrap();
         assert_eq!(result.tensor.shape(), &[1, 128, 128, 3]);
+        assert_eq!(
+            (result.meta.input_width, result.meta.input_height),
+            (128, 128)
+        );
+    }
+
+    #[test]
+    fn test_preprocess_min_max_metadata_uses_actual_tensor_dimensions() {
+        let img = ImageInput::Raw {
+            data: vec![128; 30 * 20 * 3],
+            width: 30,
+            height: 20,
+            stride: 30 * 3,
+            format: PixelFormat::Rgb,
+        };
+        let config = PreprocessConfig {
+            method: PreprocessMethod::ResizeMinMax,
+            input_size: [8, 20],
+            layout: Layout::Nchw,
+            normalization: Normalization::Unit,
+            pad_value: 0.0,
+            channel_order: ChannelOrder::Rgb,
+            interpolation: Interpolation::Bilinear,
+            resize_crop: None,
+        };
+        let prep = preprocess(&img, &config).unwrap();
+        assert_eq!(prep.tensor.shape(), &[1, 3, 8, 12]);
+        assert_eq!((prep.meta.input_width, prep.meta.input_height), (12, 8));
+    }
+
+    #[test]
+    fn test_preprocess_letterbox_canvas_keeps_odd_and_minimum_pixel_geometry() {
+        for (width, height, input_size) in [(4, 1, [4, 4]), (8, 1, [2, 4]), (8, 5, [2, 4])] {
+            let img = ImageInput::Raw {
+                data: vec![128; width * height * 3],
+                width: width as u32,
+                height: height as u32,
+                stride: (width * 3) as u32,
+                format: PixelFormat::Rgb,
+            };
+            let config = PreprocessConfig {
+                method: PreprocessMethod::Letterbox,
+                input_size,
+                layout: Layout::Nchw,
+                normalization: Normalization::Unit,
+                pad_value: 0.0,
+                channel_order: ChannelOrder::Rgb,
+                interpolation: Interpolation::Bilinear,
+                resize_crop: None,
+            };
+            let prep = preprocess(&img, &config).unwrap();
+            assert_eq!(
+                (prep.meta.input_width, prep.meta.input_height),
+                (input_size[0], input_size[1])
+            );
+            assert_eq!(prep.meta.pad_y, 1.0);
+            assert_eq!(prep.meta.scale, input_size[0] as f32 / width as f32);
+            assert_eq!(
+                prep.tensor.shape(),
+                &[1, 3, input_size[1] as usize, input_size[0] as usize]
+            );
+        }
     }
 
     #[test]
@@ -983,6 +1051,10 @@ mod tests {
 
         assert_eq!(result.meta.original_width, 640);
         assert_eq!(result.meta.original_height, 480);
+        assert_eq!(
+            (result.meta.input_width, result.meta.input_height),
+            (1280, 1280)
+        );
 
         // scale = min(1280/640, 1280/480) = min(2.0, 2.667) = 2.0
         assert!((result.meta.scale - 2.0).abs() < 1e-4);
@@ -1083,6 +1155,7 @@ mod tests {
         );
         let prep = result.unwrap();
         assert_eq!(prep.tensor.shape(), &[1, 3, 640, 640]);
+        assert_eq!((prep.meta.input_width, prep.meta.input_height), (640, 640));
     }
 
     #[test]
