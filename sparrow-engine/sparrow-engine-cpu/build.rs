@@ -1,3 +1,6 @@
+#[cfg(feature = "ffi")]
+use std::path::{Path, PathBuf};
+
 fn main() {
     // -----------------------------------------------------------------------
     // FFI binding generation (only when `ffi` feature is active)
@@ -6,6 +9,9 @@ fn main() {
     {
         // cbindgen: generate sparrow_engine.h for C/C++ consumers
         let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("Cargo must set OUT_DIR"));
+        let header_path = out_dir.join("sparrow_engine.h");
+        let mut header = Vec::new();
         let config = cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default();
         cbindgen::Builder::new()
             .with_crate(&crate_dir)
@@ -13,53 +19,40 @@ fn main() {
             .with_language(cbindgen::Language::C)
             .generate()
             .expect("cbindgen failed to generate sparrow_engine.h")
-            .write_to_file("sparrow_engine.h");
+            .write(&mut header);
+        std::fs::write(&header_path, header)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", header_path.display()));
 
         // csbindgen: generate NativeMethods.g.cs for C# P/Invoke consumers
+        let csharp_path = out_dir.join("NativeMethods.g.cs");
         csbindgen::Builder::default()
             .input_extern_file("src/ffi.rs")
             .csharp_dll_name("sparrow_engine")
             .csharp_namespace("SparrowEngine.Native")
             .csharp_class_name("NativeMethods")
-            .generate_csharp_file("NativeMethods.g.cs")
-            .expect("csbindgen failed to generate NativeMethods.g.cs");
+            .generate_csharp_file(&csharp_path)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "csbindgen failed to generate {}: {error}",
+                    csharp_path.display()
+                )
+            });
 
-        // Phase 3.8 Phase A M8 + v2 N10 closure: post-build copy of generated
-        // headers into the workspace `sparrow-engine/include/` directory so consumer
-        // C/C++/C# tooling can find them at a stable, crate-independent path.
-        // mtime-only idempotency check (cheaper than SHA256, sufficient for
-        // race-safety in a single-implementer Phase A workflow). Errors are
-        // logged via `eprintln!` and dropped — generation already wrote the
-        // files into `sparrow-engine-cpu/`, so a copy failure does not break the build.
-        {
-            use std::path::PathBuf;
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-            let workspace_root = PathBuf::from(&manifest_dir).parent().unwrap().to_path_buf();
-            let include_dir = workspace_root.join("include");
-            let _ = std::fs::create_dir_all(&include_dir);
-
-            for filename in &["sparrow_engine.h", "NativeMethods.g.cs"] {
-                let src = PathBuf::from(&manifest_dir).join(filename);
-                let dst = include_dir.join(filename);
-                let needs_copy = match (std::fs::metadata(&src), std::fs::metadata(&dst)) {
-                    (Ok(sm), Ok(dm)) => sm.modified().ok() > dm.modified().ok(),
-                    (Ok(_), Err(_)) => true,
-                    _ => false,
-                };
-                if needs_copy {
-                    if let Err(e) = std::fs::copy(&src, &dst) {
-                        eprintln!(
-                            "warning: failed to copy {} to {}: {}",
-                            src.display(),
-                            dst.display(),
-                            e
-                        );
-                    }
-                }
+        let manifest_dir = PathBuf::from(&crate_dir);
+        let workspace_root = manifest_dir
+            .parent()
+            .expect("expected sparrow-engine-cpu/ to have a parent workspace root");
+        for filename in ["sparrow_engine.h", "NativeMethods.g.cs"] {
+            let destinations = [
+                manifest_dir.join(filename),
+                workspace_root.join("include").join(filename),
+            ];
+            for destination in &destinations {
+                println!("cargo:rerun-if-changed={}", destination.display());
             }
+            verify_checked_in_binding(&out_dir.join(filename), &destinations)
+                .unwrap_or_else(|error| panic!("{error}"));
         }
-        println!("cargo:rerun-if-changed=sparrow_engine.h");
-        println!("cargo:rerun-if-changed=NativeMethods.g.cs");
     }
 
     // -----------------------------------------------------------------------
@@ -90,4 +83,37 @@ fn main() {
     println!("cargo:rerun-if-changed=exports.def");
     println!("cargo:rerun-if-changed=src/ffi.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
+}
+
+#[cfg(feature = "ffi")]
+fn verify_checked_in_binding(generated: &Path, destinations: &[PathBuf]) -> Result<(), String> {
+    let generated_bytes = std::fs::read(generated).map_err(|error| {
+        format!(
+            "failed to read generated binding {}: {error}",
+            generated.display()
+        )
+    })?;
+    let mut mismatches = Vec::new();
+    for destination in destinations {
+        match std::fs::read(destination) {
+            Ok(bytes) if bytes == generated_bytes => {}
+            Ok(_) => mismatches.push(format!("{} (stale: bytes differ)", destination.display())),
+            Err(error) => mismatches.push(format!(
+                "{} (missing or unreadable: {error})",
+                destination.display()
+            )),
+        }
+    }
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "checked-in bindings do not match generated {}:\n{}\n\
+             If the FFI change is intentional, copy {} to each listed destination \
+             and commit the updated bindings. Normal builds never update source bindings.",
+            generated.display(),
+            mismatches.join("\n"),
+            generated.display()
+        ))
+    }
 }

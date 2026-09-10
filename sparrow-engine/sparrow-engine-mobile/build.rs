@@ -81,6 +81,8 @@ fn main() {
     #[cfg(feature = "ffi")]
     {
         let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let header_path = out_dir.join("sparrow_engine.h");
+        let mut header = Vec::new();
         let config = cbindgen::Config::from_file("cbindgen.toml").unwrap_or_default();
         cbindgen::Builder::new()
             .with_crate(&crate_dir)
@@ -88,36 +90,31 @@ fn main() {
             .with_language(cbindgen::Language::C)
             .generate()
             .expect("cbindgen failed to generate sparrow_engine.h")
-            .write_to_file("sparrow_engine.h");
+            .write(&mut header);
+        std::fs::write(&header_path, header)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", header_path.display()));
 
+        let csharp_path = out_dir.join("NativeMethods.g.cs");
         csbindgen::Builder::default()
             .input_extern_file("src/ffi.rs")
             .csharp_dll_name("sparrow_engine")
             .csharp_namespace("SparrowEngine.Native")
             .csharp_class_name("NativeMethods")
-            .generate_csharp_file("NativeMethods.g.cs")
-            .expect("csbindgen failed to generate NativeMethods.g.cs");
+            .generate_csharp_file(&csharp_path)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "csbindgen failed to generate {}: {error}",
+                    csharp_path.display()
+                )
+            });
 
-        let include_dir = manifest_dir.join("include");
-        let _ = std::fs::create_dir_all(&include_dir);
-        for filename in &["sparrow_engine.h", "NativeMethods.g.cs"] {
-            let src = manifest_dir.join(filename);
-            let dst = include_dir.join(filename);
-            let needs_copy = match (std::fs::metadata(&src), std::fs::metadata(&dst)) {
-                (Ok(sm), Ok(dm)) => sm.modified().ok() > dm.modified().ok(),
-                (Ok(_), Err(_)) => true,
-                _ => false,
-            };
-            if needs_copy {
-                if let Err(e) = std::fs::copy(&src, &dst) {
-                    eprintln!(
-                        "warning: failed to copy {} to {}: {}",
-                        src.display(),
-                        dst.display(),
-                        e
-                    );
-                }
+        for filename in ["sparrow_engine.h", "NativeMethods.g.cs"] {
+            let destinations = [manifest_dir.join(filename)];
+            for destination in &destinations {
+                println!("cargo:rerun-if-changed={}", destination.display());
             }
+            verify_checked_in_binding(&out_dir.join(filename), &destinations)
+                .unwrap_or_else(|error| panic!("{error}"));
         }
 
         // Linux note: rustc already passes a generated version script for cdylib
@@ -134,12 +131,42 @@ fn main() {
                 println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path);
             }
         }
-
-        println!("cargo:rerun-if-changed=sparrow_engine.h");
-        println!("cargo:rerun-if-changed=NativeMethods.g.cs");
     }
 
     println!("cargo:rerun-if-changed=exports.def");
     println!("cargo:rerun-if-changed=src/ffi.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
+}
+
+#[cfg(feature = "ffi")]
+fn verify_checked_in_binding(generated: &Path, destinations: &[PathBuf]) -> Result<(), String> {
+    let generated_bytes = std::fs::read(generated).map_err(|error| {
+        format!(
+            "failed to read generated binding {}: {error}",
+            generated.display()
+        )
+    })?;
+    let mut mismatches = Vec::new();
+    for destination in destinations {
+        match std::fs::read(destination) {
+            Ok(bytes) if bytes == generated_bytes => {}
+            Ok(_) => mismatches.push(format!("{} (stale: bytes differ)", destination.display())),
+            Err(error) => mismatches.push(format!(
+                "{} (missing or unreadable: {error})",
+                destination.display()
+            )),
+        }
+    }
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "checked-in bindings do not match generated {}:\n{}\n\
+             If the FFI change is intentional, copy {} to each listed destination \
+             and commit the updated bindings. Normal builds never update source bindings.",
+            generated.display(),
+            mismatches.join("\n"),
+            generated.display()
+        ))
+    }
 }
