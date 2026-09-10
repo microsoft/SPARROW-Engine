@@ -577,7 +577,9 @@ pub fn try_megadet_v5a(
 
         // Find argmax and max value among class scores.
         let (class_id, max_class_score) = argmax_slice(&row, 5, 5 + num_classes);
-        if !(0.0..=1.0).contains(&objectness) || !(0.0..=1.0).contains(&max_class_score) {
+        if !(0.0..=1.0).contains(&objectness)
+            || row.iter().skip(5).any(|score| !(0.0..=1.0).contains(score))
+        {
             return Err(SparrowEngineError::Ort(
                 "megadet_v5a output contains scores outside [0.0, 1.0]".to_string(),
             ));
@@ -2141,6 +2143,154 @@ mod tests {
         assert!(
             matches!(err, SparrowEngineError::Ort(msg) if msg.contains("scores outside [0.0, 1.0]"))
         );
+    }
+
+    #[test]
+    fn test_megadet_v5a_checks_every_class_score_before_threshold_and_padding() {
+        for cy in [10.0, 35.0, 85.0] {
+            for objectness in [0.1, 0.9] {
+                for invalid in [-0.25, 1.25] {
+                    for position in 0..3 {
+                        let mut scores = [0.25, 0.5, 1.0];
+                        scores[position] = invalid;
+                        // A nonwinning score above one also needs a larger invalid winner.
+                        scores[(position + 1) % 3] = if invalid > 1.0 { 1.5 } else { 1.0 };
+                        let data = array![[
+                            15.0, cy, 10.0, 10.0, objectness, scores[0], scores[1], scores[2],
+                        ]];
+                        let err = try_megadet_v5a(
+                            &data.view(),
+                            &test_labels(),
+                            &DetectOpts::default(),
+                            &padded_meta(),
+                            0.5,
+                            0.45,
+                        )
+                        .expect_err(
+                            "every class score must be validated, including discarded rows",
+                        );
+                        assert!(
+                            matches!(err, SparrowEngineError::Ort(msg) if msg.contains("scores outside [0.0, 1.0]")),
+                            "cy={cy}, objectness={objectness}, invalid={invalid}, position={position}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_megadet_v5a_malformed_scores_after_valid_rows_fail_even_with_caps() {
+        for first_cy in [10.0, 35.0] {
+            for malformed_cy in [10.0, 35.0, 85.0] {
+                for invalid in [-0.25, 1.25] {
+                    for max_detections in [None, Some(0), Some(1)] {
+                        let winning_score = if invalid > 1.0 { 1.5 } else { 1.0 };
+                        let data = array![
+                            [15.0, first_cy, 10.0, 10.0, 0.9, 1.0, 0.0, 0.0],
+                            [
+                                15.0,
+                                malformed_cy,
+                                10.0,
+                                10.0,
+                                0.8,
+                                winning_score,
+                                invalid,
+                                0.0
+                            ],
+                        ];
+                        let opts = DetectOpts {
+                            max_detections,
+                            ..Default::default()
+                        };
+                        let err = try_megadet_v5a(
+                            &data.view(),
+                            &test_labels(),
+                            &opts,
+                            &padded_meta(),
+                            0.5,
+                            0.45,
+                        )
+                        .expect_err(
+                            "padding skips and detection caps must not hide malformed rows",
+                        );
+                        assert!(
+                            matches!(err, SparrowEngineError::Ort(msg) if msg.contains("scores outside [0.0, 1.0]")),
+                            "first_cy={first_cy}, malformed_cy={malformed_cy}, cap={max_detections:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_megadet_v5a_score_validation_preserves_error_order() {
+        let mut data = array![[f32::NAN, 10.0, 0.0, 10.0, 0.1, 1.0, -0.25, 0.0]];
+        let opts = DetectOpts {
+            max_detections: Some(0),
+            ..Default::default()
+        };
+        let decode = |data: &ndarray::Array2<f32>| {
+            try_megadet_v5a(
+                &data.view(),
+                &test_labels(),
+                &opts,
+                &padded_meta(),
+                0.5,
+                0.45,
+            )
+        };
+        assert!(
+            matches!(decode(&data), Err(SparrowEngineError::Ort(msg)) if msg.contains("non-finite values"))
+        );
+        data[[0, 0]] = 15.0;
+        assert!(
+            matches!(decode(&data), Err(SparrowEngineError::Ort(msg)) if msg.contains("scores outside [0.0, 1.0]"))
+        );
+        data[[0, 6]] = 0.0;
+        data[[0, 4]] = -0.1;
+        assert!(
+            matches!(decode(&data), Err(SparrowEngineError::Ort(msg)) if msg.contains("scores outside [0.0, 1.0]"))
+        );
+        data[[0, 4]] = 0.1;
+        assert!(
+            matches!(decode(&data), Err(SparrowEngineError::Ort(msg)) if msg.contains("non-positive box size"))
+        );
+        data[[0, 2]] = 10.0;
+        assert!(decode(&data).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_megadet_v5a_valid_score_boundaries_keep_padding_and_cap_behavior() {
+        let data = array![
+            [15.0, 10.0, 10.0, 10.0, 0.9, 1.0, 0.0, -0.0],
+            [15.0, 35.0, 10.0, 10.0, 0.8, 0.0, -0.0, 1.0],
+        ];
+        for max_detections in [None, Some(0), Some(1)] {
+            let opts = DetectOpts {
+                max_detections,
+                ..Default::default()
+            };
+            let detections = try_megadet_v5a(
+                &data.view(),
+                &test_labels(),
+                &opts,
+                &padded_meta(),
+                0.5,
+                0.45,
+            )
+            .unwrap();
+            assert_eq!(detections.len(), usize::from(max_detections != Some(0)));
+            if let Some(detection) = detections.first() {
+                assert_eq!(detection.label_id, 2);
+                assert_eq!(detection.confidence, 0.8);
+                assert_eq!(
+                    detection.source_pixel_box.unwrap().xyxy(),
+                    [20.0, 10.0, 40.0, 30.0]
+                );
+            }
+        }
     }
 
     #[test]
