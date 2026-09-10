@@ -183,7 +183,8 @@ descriptors = {
 }
 compliance = {"MODEL_CARD.md", "LICENSE.md", "ATTRIBUTION.md", "CONVERSION.md", "SOURCE.md"}
 hosted = {"hosted", "hosted_restricted"}
-md = Path(os.environ["SPE_MODEL_DIR"])
+# The selected root may be a symlink; packages and descriptors beneath it may not.
+md = Path(os.environ["SPE_MODEL_DIR"]).resolve(strict=True)
 models = data.get("model", [])
 errors = []
 runtime = metadata = 0
@@ -211,8 +212,18 @@ for m in models:
         continue
     package = md / mid
     if hosting in hosted:
-        if not (package / descriptors[fmt]).is_file():
-            errors.append("%s (%s): missing %s" % (mid, fmt, descriptors[fmt]))
+        path = package / descriptors[fmt]
+        try:
+            if package.is_symlink():
+                errors.append("%s: runtime package must be a non-symlink directory" % mid)
+            elif path.is_symlink():
+                errors.append("%s: %s must be a regular non-symlink file" % (mid, path.name))
+            elif not package.is_dir() or not path.is_file():
+                errors.append("%s (%s): missing %s" % (mid, fmt, descriptors[fmt]))
+            elif not path.resolve(strict=True).is_relative_to(md):
+                errors.append("%s: %s resolves outside the model directory" % (mid, path.name))
+        except OSError as exc:
+            errors.append("%s: cannot inspect runtime package: %s" % (mid, exc))
     elif hosting == "link_only":
         try:
             if package.is_symlink() or not package.is_dir():

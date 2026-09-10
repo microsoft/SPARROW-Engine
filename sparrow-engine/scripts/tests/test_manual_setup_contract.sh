@@ -232,6 +232,43 @@ def missing_package(models, root):
     (root / "candidate").rename(root / "non-catalog-extra")
 
 check_case("non-catalog directory cannot replace missing candidate", missing_package, "candidate (onnx): missing manifest.toml")
+
+def runtime_symlink(models, root, fmt, hosting, descriptor_only):
+    model = models[0]
+    package = root / model["id"]
+    original = package / descriptors[model["format"]]
+    model.update(format=fmt, hosting_status=hosting)
+    descriptor = package / descriptors[fmt]
+    if original != descriptor:
+        original.rename(descriptor)
+    path = descriptor if descriptor_only else package
+    target = root.parent / "outside-model-root"
+    path.rename(target)
+    path.symlink_to(target, target_is_directory=not descriptor_only)
+
+for hosting in ("hosted", "hosted_restricted"):
+    for fmt in descriptors:
+        for descriptor_only in (False, True):
+            kind = "descriptor" if descriptor_only else "package"
+            error = (
+                f"hosted-onnx: {descriptors[fmt]} must be a regular non-symlink file"
+                if descriptor_only else
+                "hosted-onnx: runtime package must be a non-symlink directory"
+            )
+            check_case(
+                f"{hosting} {fmt} rejects {kind} symlink escape",
+                lambda models, root, fmt=fmt, hosting=hosting, descriptor_only=descriptor_only:
+                    runtime_symlink(models, root, fmt, hosting, descriptor_only),
+                error,
+            )
+
+def selected_root_symlink(models, root):
+    target = root.parent / "selected-model-root"
+    root.rename(target)
+    root.symlink_to(target, target_is_directory=True)
+
+check_case("selected model root may itself be a symlink", selected_root_symlink)
+
 check_case(
     "missing metadata package rejected",
     lambda models, root: shutil.rmtree(root / "metadata"),
