@@ -150,7 +150,8 @@ extern "C" __global__ void resize_kernel(
     float std_r, float std_g, float std_b,
     int unit_norm,
     int bgr,
-    int interp
+    int interp,
+    int round_u8
 ) {
     int ox = blockIdx.x * blockDim.x + threadIdx.x;
     int oy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -271,15 +272,18 @@ extern "C" __global__ void resize_kernel(
         }
     }
 
-    // Clamp the resized pixel to [0, 255] before normalize — matches the
-    // `image` crate's final u8 conversion `FloatNearest(clamp(t, 0, 255))`
-    // (the GPU skips the u8 round, keeping f32; the ≤0.5/255 rounding gap is
-    // the established pre-Phase-2 CPU↔GPU tolerance). No-op for bilinear
-    // (non-negative weights sum to 1 → convex, always in range); load-bearing
-    // for CatmullRom / Lanczos3 whose negative lobes ring past [0, 255].
+    // Negative-lobed filters can overshoot the pixel range.
     r_acc = fminf(255.0f, fmaxf(0.0f, r_acc));
     g_acc = fminf(255.0f, fmaxf(0.0f, g_acc));
     b_acc = fminf(255.0f, fmaxf(0.0f, b_acc));
+    }
+
+    // Classifier image resize ends at u8 before normalization. Float-tensor
+    // resize callers leave this disabled; cv2 mode is already rounded above.
+    if (round_u8) {
+        r_acc = floorf(r_acc + 0.5f);
+        g_acc = floorf(g_acc + 0.5f);
+        b_acc = floorf(b_acc + 0.5f);
     }
 
     // /255 + per-channel (mean, std).

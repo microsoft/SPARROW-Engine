@@ -1,14 +1,8 @@
-//! Rust wrapper around `resize.cu`. Plain bilinear resize, then per-channel
-//! `(px/255 - mean) / std` normalize, then NCHW transpose. Mirrors
-//! sparrow-engine-cpu's `resize_direct` (manifest method is "resize"). Used by the
-//! GPU classifier path when the manifest opts into plain resize rather
-//! than center-crop+resize.
+//! Direct GPU resize, per-channel normalization, and NCHW transpose.
 //!
-//! Phase 3.8 Step 1 follow-up — Amazon Camera Trap v2 onboarding extends
-//! the kernel from `/255` only to `(px/255 - mean) / std`. The Unit case
-//! (`mean=[0,0,0], std=[1,1,1]`) is bit-exact under IEEE 754 (`x-0=x`,
-//! `x/1=x` are exact ops), so SpeciesNet's bit-tightness against
-//! sparrow-engine-cpu's `resize_simd` is preserved.
+//! Classifiers opt into the CPU/PIL-style final u8 rounding before
+//! normalization. Other convolution-resize callers retain floating-point
+//! pixels, including float-tensor `ResizeMinMax` detectors and encoders.
 //!
 //! Reuses the `NormalizeStats` enum already defined in
 //! `sparrow_engine_gpu::kernels::tiled_preprocess` — same `(mean, std)` shape used
@@ -29,6 +23,12 @@ use crate::kernels::tiled_preprocess::NormalizeStats;
 
 const KERNEL_SRC: &str = include_str!("resize.cu");
 const KERNEL_NAME: &str = "resize_kernel";
+
+#[derive(Clone, Copy)]
+enum ResizeRounding {
+    PreserveFloat,
+    RoundToU8,
+}
 
 #[derive(Clone)]
 pub struct ResizeKernel {
@@ -55,19 +55,13 @@ impl ResizeKernel {
 /// no aspect preservation, no crop. Honours the manifest `channel_order`:
 /// RGB → plane order [R, G, B]; BGR → plane order [B, G, R].
 ///
-/// Bit-tight against `fast_image_resize::Resizer` with
-/// `ResizeAlg::Convolution(FilterType::Bilinear)` — the exact algorithm
-/// `sparrow-engine-cpu/src/preprocess.rs::resize_simd` uses, which the SpeciesNet
-/// manifest method `"resize"` dispatches into. See `resize.cu` for the
-/// algorithm derivation and the per-axis weight-computation loop.
+/// Convolution filters preserve fractional pixels. The cv2 interpolation
+/// mode retains its existing integer conversion. Classifiers that resize
+/// u8 images use [`resize_classifier_gpu`] instead.
 ///
 /// `stats` controls the post-resize normalization. `NormalizeStats::UNIT`
 /// reproduces the pre-Amazon `/255` behaviour bit-exactly.
 ///
-/// Window size is `ceil(filter_radius) * 2 + 1`; for SpeciesNet
-/// 1280×960 → 480×480 this is 7 (so up to 49 source-pixel reads per
-/// output pixel). The kernel sizes its weight arrays to 16 to handle
-/// up to ~7× downsample without spilling.
 #[allow(clippy::too_many_arguments)]
 pub fn resize_gpu(
     stream: &Arc<CudaStream>,
@@ -78,6 +72,56 @@ pub fn resize_gpu(
     channel_order: ChannelOrder,
     stats: NormalizeStats,
     interp: Interpolation,
+) -> Result<CudaSlice<f32>> {
+    resize_gpu_with_rounding(
+        stream,
+        kernel,
+        src,
+        tgt_w,
+        tgt_h,
+        channel_order,
+        stats,
+        interp,
+        ResizeRounding::PreserveFloat,
+    )
+}
+
+/// Direct classifier resize with final u8 rounding before normalization.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resize_classifier_gpu(
+    stream: &Arc<CudaStream>,
+    kernel: &ResizeKernel,
+    src: &GpuImage,
+    tgt_w: u32,
+    tgt_h: u32,
+    channel_order: ChannelOrder,
+    stats: NormalizeStats,
+    interp: Interpolation,
+) -> Result<CudaSlice<f32>> {
+    resize_gpu_with_rounding(
+        stream,
+        kernel,
+        src,
+        tgt_w,
+        tgt_h,
+        channel_order,
+        stats,
+        interp,
+        ResizeRounding::RoundToU8,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resize_gpu_with_rounding(
+    stream: &Arc<CudaStream>,
+    kernel: &ResizeKernel,
+    src: &GpuImage,
+    tgt_w: u32,
+    tgt_h: u32,
+    channel_order: ChannelOrder,
+    stats: NormalizeStats,
+    interp: Interpolation,
+    rounding: ResizeRounding,
 ) -> Result<CudaSlice<f32>> {
     let total = checked_tensor_len_3hw(tgt_h, tgt_w)?;
     let mut dst: CudaSlice<f32> = stream
@@ -132,6 +176,10 @@ pub fn resize_gpu(
         Interpolation::Lanczos => 2,
         Interpolation::Cv2Bilinear => 3,
     };
+    let round_u8_flag: i32 = match rounding {
+        ResizeRounding::PreserveFloat => 0,
+        ResizeRounding::RoundToU8 => 1,
+    };
 
     launch
         .arg(&src.data)
@@ -148,7 +196,8 @@ pub fn resize_gpu(
         .arg(&std_b)
         .arg(&unit_flag)
         .arg(&bgr_flag)
-        .arg(&interp_flag);
+        .arg(&interp_flag)
+        .arg(&round_u8_flag);
 
     // SAFETY: kernel signature matches args; bounds check inside kernel.
     unsafe { launch.launch(cfg) }
@@ -288,6 +337,124 @@ mod tests {
             maxd < 2.0 / 255.0,
             "{name}: max abs diff {maxd} vs image-crate {filter:?} exceeds 2/255"
         );
+    }
+
+    #[test]
+    fn classifier_rounds_half_pixels_before_normalization_and_channel_order() {
+        let Some(ctx) = cuda_or_skip("classifier_rounding_boundary") else {
+            return;
+        };
+        let stream = ctx.default_stream();
+        let kernel = ResizeKernel::new(&ctx).expect("compile resize kernel");
+        let image = RgbImage::from_raw(2, 1, vec![0, 10, 254, 1, 11, 255]).unwrap();
+        let gpu_image = GpuImage {
+            data: stream.clone_htod(image.as_raw()).expect("htod"),
+            width: 2,
+            height: 1,
+        };
+        let rounded = image::imageops::resize(&image, 1, 1, image::imageops::FilterType::Triangle);
+        assert_eq!(rounded.get_pixel(0, 0).0, [1, 11, 255]);
+        for stats in [
+            NormalizeStats::UNIT,
+            NormalizeStats::IMAGENET,
+            NormalizeStats::RAW,
+        ] {
+            for order in [ChannelOrder::Rgb, ChannelOrder::Bgr] {
+                let quantized = resize_classifier_gpu(
+                    &stream,
+                    &kernel,
+                    &gpu_image,
+                    1,
+                    1,
+                    order,
+                    stats,
+                    Interpolation::Bilinear,
+                )
+                .expect("classifier resize");
+                let floating = resize_gpu(
+                    &stream,
+                    &kernel,
+                    &gpu_image,
+                    1,
+                    1,
+                    order,
+                    stats,
+                    Interpolation::Bilinear,
+                )
+                .expect("float resize");
+                let got = stream.clone_dtoh(&quantized).expect("dtoh");
+                let kept = stream.clone_dtoh(&floating).expect("dtoh");
+                for plane in 0..3 {
+                    let channel = if order == ChannelOrder::Rgb {
+                        plane
+                    } else {
+                        2 - plane
+                    };
+                    let normalize =
+                        |pixel: f32| (pixel / 255.0 - stats.mean[channel]) / stats.std[channel];
+                    let expected = normalize(rounded.get_pixel(0, 0).0[channel] as f32);
+                    let fractional = normalize([0.5, 10.5, 254.5][channel]);
+                    let ulps = 4.0 * f32::EPSILON * expected.abs().max(1.0);
+                    assert!((got[plane] - expected).abs() <= ulps);
+                    assert!((kept[plane] - fractional).abs() <= ulps);
+                    assert!((got[plane] - kept[plane]).abs() > 1e-4);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn classifier_convolution_filters_quantize_but_default_resize_keeps_fractions() {
+        let Some(ctx) = cuda_or_skip("classifier_convolution_rounding") else {
+            return;
+        };
+        let stream = ctx.default_stream();
+        let kernel = ResizeKernel::new(&ctx).expect("compile resize kernel");
+        let image = synthetic(40, 32);
+        let gpu_image = GpuImage {
+            data: stream.clone_htod(image.as_raw()).expect("htod"),
+            width: 40,
+            height: 32,
+        };
+        for interpolation in [
+            Interpolation::Bilinear,
+            Interpolation::Bicubic,
+            Interpolation::Lanczos,
+        ] {
+            let quantized = resize_classifier_gpu(
+                &stream,
+                &kernel,
+                &gpu_image,
+                17,
+                13,
+                ChannelOrder::Rgb,
+                NormalizeStats::UNIT,
+                interpolation,
+            )
+            .expect("classifier resize");
+            let floating = resize_gpu(
+                &stream,
+                &kernel,
+                &gpu_image,
+                17,
+                13,
+                ChannelOrder::Rgb,
+                NormalizeStats::UNIT,
+                interpolation,
+            )
+            .expect("float resize");
+            let got = stream.clone_dtoh(&quantized).expect("dtoh");
+            let kept = stream.clone_dtoh(&floating).expect("dtoh");
+            assert!(got.iter().all(|value| {
+                let pixel = value * 255.0;
+                (0.0..=255.0).contains(&pixel)
+                    && (pixel - pixel.round()).abs() <= 4.0 * f32::EPSILON * 255.0
+            }));
+            assert!(kept.iter().any(|value| {
+                let pixel = value * 255.0;
+                (pixel - pixel.round()).abs() > 0.1
+            }));
+        }
     }
 
     #[test]

@@ -11,11 +11,10 @@
 //!
 //! `classify` reads `manifest.preprocess_method` and routes to the
 //! matching GPU kernel. SpeciesNet's manifest is method = "resize", so it
-//! lands in [`crate::kernels::resize::resize_gpu`] — a multi-tap
-//! convolutional bilinear bit-tight against `fast_image_resize::Resizer`
-//! with `ResizeAlg::Convolution(FilterType::Bilinear)`, the algorithm
-//! `sparrow-engine-cpu/src/preprocess.rs::resize_simd` uses. Result: top-1 parity
-//! 10/10 across the SpeciesNet test subset (Wave 3 amend).
+//! lands in [`crate::kernels::resize::resize_classifier_gpu`]. The convolution
+//! output is rounded to u8 before normalization, matching the image boundary
+//! in `sparrow-engine-cpu/src/preprocess.rs::resize_direct`. Other shared
+//! resize-kernel callers retain their floating-point output policy.
 //!
 //! Forward-compat slot: if a future `sparrow-engine-types` schema adds a
 //! `PreprocessMethod::CenterCropResize` variant (or similar), this
@@ -82,7 +81,7 @@ use sparrow_engine_types::{ClassifyOpts, ClassifyResult, ImageInput};
 
 use crate::decode::GpuImage;
 use crate::kernels::center_crop::CenterCropKernel;
-use crate::kernels::resize::{resize_gpu, ResizeKernel};
+use crate::kernels::resize::{resize_classifier_gpu, ResizeKernel};
 use crate::kernels::resize_crop::{resize_crop_gpu, ResizeCropKernel};
 use crate::kernels::tiled_preprocess::NormalizeStats;
 use crate::trt::ep::{manifest_cache_material, CudaEpConfig, GpuIdentity, TrtEpBuilder};
@@ -734,7 +733,7 @@ impl ClassifierModel {
     /// → ORT CUDA EP (zero-copy via `TensorRefMut::from_raw`) → CPU softmax.
     ///
     /// Preprocess dispatch on `manifest.preprocess_method`:
-    /// - `Resize` → [`resize_gpu`] for convolution filters. Nearest-neighbor
+    /// - `Resize` → [`resize_classifier_gpu`] for convolution filters. Nearest-neighbor
     ///   uses the shared host reference resize and uploads normalized NCHW,
     ///   preserving block replication for small crown crops.
     /// - `ResizeCrop` → [`resize_crop_gpu`] for bilinear/Lanczos/cv2 filters.
@@ -847,10 +846,7 @@ impl ClassifierModel {
         };
 
         // 3. GPU preprocess dispatched on manifest method.
-        // SpeciesNet's manifest is `Resize` + `unit`, so it lands in
-        // `resize_gpu` with `NormalizeStats::UNIT` (mean=[0,0,0], std=[1,1,1])
-        // — bit-exact identity vs the pre-Amazon `/255`-only kernel.
-        // Amazon CTV2 takes the same path with `NormalizeStats::IMAGENET`.
+        // Direct classifier resize rounds to u8 before manifest normalization.
         let dev_tensor: CudaSlice<f32> = match self.manifest.preprocess_method {
             PreprocessMethod::Resize => {
                 let interpolation = self
@@ -871,7 +867,7 @@ impl ClassifierModel {
                         ))
                     })?
                 } else {
-                    resize_gpu(
+                    resize_classifier_gpu(
                         &stream,
                         resize,
                         &gpu_img,
@@ -1034,7 +1030,7 @@ impl ClassifierModel {
             // which is owned by this scope and live for the lifetime of
             // the inference call. The pointer is valid for `1 * 3 *
             // target_h * target_w` f32 values (verified by the
-            // `resize_gpu` post-condition: it allocates exactly
+            // `resize_classifier_gpu` post-condition: it allocates exactly
             // `3*tgt_h*tgt_w` f32s — see `kernels/resize.rs`). `mem_info`
             // describes the device the pointer lives on (CUDA device
             // `self.device_id`, AllocatorType::Device).
