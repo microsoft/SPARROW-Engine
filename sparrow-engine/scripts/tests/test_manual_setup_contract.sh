@@ -11,7 +11,8 @@
 #
 # Intentionally does NOT source the setup (that runs the expensive Cargo build) —
 # the real strict-shell source is the documented per-shell E2E. This test is
-# static + exercises the replacement idioms against a tiny run-owned fixture.
+# static + exercises the replacement idioms and the actual embedded roster
+# validator against tiny run-owned fixtures.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -139,6 +140,214 @@ if [ -z "$u" ]; then
   ok "contrast: the UNGUARDED capture aborts before its handler under set -e (proves the guard is required)"
 else
   bad "expected the unguarded capture to abort under set -e, got [$u]"
+fi
+
+echo "[7] schema-1.2 roster validation uses hosting state and all four formats"
+if python3 - "$SETUP" "$FIX" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+source = Path(sys.argv[1]).read_text()
+marker = "python3 - <<'PY'\n"
+assert source.count(marker) == 1, "expected one embedded roster validator"
+validator = source.split(marker, 1)[1].split("\nPY\n", 1)[0]
+compile(validator, str(sys.argv[1]) + ":roster", "exec")
+descriptors = {
+    "onnx": "manifest.toml",
+    "tflite": "manifest.toml",
+    "cascade": "pipeline.toml",
+    "ensemble": "ensemble.toml",
+}
+compliance = {"MODEL_CARD.md", "LICENSE.md", "ATTRIBUTION.md", "CONVERSION.md", "SOURCE.md"}
+rows = [
+    ("hosted-onnx", "onnx", "hosted", "active"),
+    ("restricted-onnx", "onnx", "hosted_restricted", "active"),
+    ("mobile", "tflite", "hosted", "active"),
+    ("cascade", "cascade", "hosted", "active"),
+    ("ensemble", "ensemble", "hosted", "active"),
+    ("candidate", "onnx", "hosted", "candidate"),
+    ("metadata", "onnx", "link_only", "active"),
+]
+checks = 0
+
+def check_case(label, mutate=None, error=None):
+    global checks
+    with tempfile.TemporaryDirectory(prefix="roster-", dir=sys.argv[2]) as temp:
+        root = Path(temp)
+        model_dir = root / "models"
+        model_dir.mkdir()
+        models = [
+            dict(zip(("id", "format", "hosting_status", "status"), row))
+            for row in rows
+        ]
+        for model in models:
+            package = model_dir / model["id"]
+            package.mkdir()
+            names = compliance if model["hosting_status"] == "link_only" else [descriptors[model["format"]]]
+            for name in names:
+                (package / name).write_text("fixture\n")
+        if mutate:
+            mutate(models, model_dir)
+        catalog = root / "catalog.toml"
+        catalog.write_text('schema_version = "1.2"\n' + "".join(
+            "\n[[model]]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in model.items())
+            for model in models
+        ))
+        result = subprocess.run(
+            [sys.executable, "-c", validator],
+            env={**os.environ, "SPE_CATALOG": str(catalog), "SPE_MODEL_DIR": str(model_dir)},
+            capture_output=True, text=True, check=False,
+        )
+        details = f"{label}: rc={result.returncode}\n{result.stdout}{result.stderr}"
+        if error is None:
+            assert result.returncode == 0, details
+            assert result.stdout.splitlines() == ["COUNT 7", "RUNTIME 6", "METADATA 1"], details
+        else:
+            assert result.returncode == 1, details
+            assert error in result.stdout, details
+        assert not result.stderr, details
+        checks += 1
+        print(f"  ok: {label}")
+
+check_case("hosted, hosted_restricted, candidate, four runtime formats, exact-five metadata and counts")
+
+for mid, fmt, hosting, status in rows[:-1]:
+    check_case(
+        f"missing {mid} descriptor rejected (including candidate)",
+        lambda models, root, mid=mid, fmt=fmt: (root / mid / descriptors[fmt]).unlink(),
+        f"{mid} ({fmt}): missing {descriptors[fmt]}",
+    )
+
+def wrong_ensemble(models, root):
+    (root / "ensemble" / "ensemble.toml").rename(root / "ensemble" / "manifest.toml")
+
+check_case("ensemble cannot use manifest.toml", wrong_ensemble, "ensemble (ensemble): missing ensemble.toml")
+
+def missing_package(models, root):
+    (root / "candidate").rename(root / "non-catalog-extra")
+
+check_case("non-catalog directory cannot replace missing candidate", missing_package, "candidate (onnx): missing manifest.toml")
+check_case(
+    "missing metadata package rejected",
+    lambda models, root: shutil.rmtree(root / "metadata"),
+    "metadata: link_only package must be a non-symlink directory",
+)
+
+for name in ("manifest.toml", "pipeline.toml", "ensemble.toml", "model.onnx", "model.tflite", "extra.txt", ".hidden"):
+    check_case(
+        f"metadata rejects extra {name}",
+        lambda models, root, name=name: (root / "metadata" / name).write_text("extra\n"),
+        f"metadata: unexpected link_only entry {name}",
+    )
+
+def nested_extra(models, root):
+    nested = root / "metadata" / "nested"
+    nested.mkdir()
+    (nested / "model.onnx").write_text("payload\n")
+
+check_case("metadata rejects nested payload", nested_extra, "metadata: unexpected link_only entry nested")
+check_case(
+    "metadata rejects empty hidden directory",
+    lambda models, root: (root / "metadata" / ".hidden").mkdir(),
+    "metadata: unexpected link_only entry .hidden",
+)
+
+for name in sorted(compliance):
+    check_case(
+        f"metadata rejects missing {name}",
+        lambda models, root, name=name: (root / "metadata" / name).unlink(),
+        f"metadata: {name} must be a regular non-symlink file",
+    )
+    check_case(
+        f"metadata rejects empty {name}",
+        lambda models, root, name=name: (root / "metadata" / name).write_text(""),
+        f"metadata: empty compliance file {name}",
+    )
+
+def compliance_symlink(models, root, dangling=False):
+    path = root / "metadata" / "LICENSE.md"
+    path.unlink()
+    path.symlink_to("missing.md" if dangling else "SOURCE.md")
+
+check_case("metadata rejects compliance symlink", compliance_symlink, "LICENSE.md must be a regular non-symlink file")
+check_case(
+    "metadata rejects dangling compliance symlink",
+    lambda models, root: compliance_symlink(models, root, dangling=True),
+    "LICENSE.md must be a regular non-symlink file",
+)
+
+def package_symlink(models, root):
+    package = root / "metadata"
+    package.rename(root / "metadata-target")
+    package.symlink_to("metadata-target", target_is_directory=True)
+
+check_case("metadata rejects package symlink", package_symlink, "metadata: link_only package must be a non-symlink directory")
+check_case(
+    "metadata rejects extra symlink",
+    lambda models, root: (root / "metadata" / "extra-link").symlink_to("SOURCE.md"),
+    "metadata: unexpected link_only entry extra-link",
+)
+
+def compliance_directory(models, root):
+    path = root / "metadata" / "LICENSE.md"
+    path.unlink()
+    path.mkdir()
+    (path / "LICENSE.md").write_text("nested\n")
+
+check_case("metadata rejects directory in place of compliance file", compliance_directory, "LICENSE.md must be a regular non-symlink file")
+
+def compliance_fifo(models, root):
+    path = root / "metadata" / "LICENSE.md"
+    path.unlink()
+    os.mkfifo(path)
+
+check_case("metadata rejects non-regular compliance file", compliance_fifo, "LICENSE.md must be a regular non-symlink file")
+
+for hosting in ("unknown", "pending_rights", ""):
+    check_case(
+        f"unsupported hosting_status {hosting!r} rejected",
+        lambda models, root, hosting=hosting: models[0].update(hosting_status=hosting),
+        f"hosted-onnx: unsupported hosting_status {hosting!r}",
+    )
+check_case(
+    "missing hosting_status rejected",
+    lambda models, root: models[0].pop("hosting_status"),
+    "hosted-onnx: unsupported hosting_status None",
+)
+for index in (0, 6):
+    for fmt in ("unknown", ""):
+        check_case(
+            f"{rows[index][0]} rejects unsupported format {fmt!r}",
+            lambda models, root, index=index, fmt=fmt: models[index].update(format=fmt),
+            f"{rows[index][0]}: unsupported format {fmt!r}",
+        )
+    check_case(
+        f"{rows[index][0]} rejects missing format",
+        lambda models, root, index=index: models[index].pop("format"),
+        f"{rows[index][0]}: unsupported format None",
+    )
+check_case(
+    "missing catalog id is not silently skipped",
+    lambda models, root: models[0].pop("id"),
+    "invalid catalog id None",
+)
+check_case("empty catalog rejected", lambda models, root: models.clear(), "catalog has no [[model]] entries")
+check_case(
+    "duplicate catalog id rejected",
+    lambda models, root: models.append(models[0].copy()),
+    "hosted-onnx: duplicate catalog id",
+)
+print(f"  schema-1.2 roster: {checks} hermetic cases passed")
+PY
+then
+  ok "schema-1.2 roster acceptance and rejection cases"
+else
+  bad "schema-1.2 roster validation"
 fi
 
 echo "---"

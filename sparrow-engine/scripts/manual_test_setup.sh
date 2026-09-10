@@ -3,7 +3,7 @@
 #
 # WHAT: one reproducible command that a tester sources (bash OR zsh) to reach the
 # state every plan section assumes: ORT dynamic-link env selected, fixtures and
-# the 75-model cache validated, BOTH engine flavors built into isolated target
+# the full catalog bundle validated, BOTH engine flavors built into isolated target
 # dirs, a run-owned 10-image subset + output dir prepared, and every documented
 # path exported. `spe` / `spe-gpu` resolve on PATH afterward.
 #
@@ -59,7 +59,7 @@ fi
 _spe_main() {
     local self_dir scripts_dir ws src dev tfr model_dir out_dir subset_dir
     local test_dir overhead_dir audio_dir test_img test_wav
-    local expected_models found_models img wav overhead_probe
+    local expected_models runtime_models metadata_models img wav overhead_probe
     local rc miss model_report d f common_git primary_dev
 
     self_dir="$(cd "$(dirname "$_spe_self_raw")" >/dev/null 2>&1 && pwd -P)" || {
@@ -142,15 +142,16 @@ _spe_main() {
 
     # --- models: validate EVERY catalog [[model]] resolves; NEVER download/mutate ---
     # Exact per-id iteration, NOT a raw manifest count: parse scripts/catalog.toml
-    # with Python tomllib (Python >=3.11 is a documented prerequisite) and require,
-    # for each catalog id, <model_dir>/<id>/pipeline.toml when format="cascade",
-    # else <model_dir>/<id>/manifest.toml. Non-catalog directories are ignored, so
-    # a missing catalog id fails even when extra manifest dirs exist. The model
-    # cache is only read, never written.
+    # with Python tomllib (Python >=3.11 is a documented prerequisite). Runtime
+    # packages need the descriptor for their format; link-only packages need
+    # exactly five non-empty regular compliance files and no other entries.
+    # Candidates are included. Non-catalog directories cannot substitute for
+    # missing catalog ids. The model bundle is only read, never written.
     model_dir="${SPARROW_ENGINE_MODEL_DIR:-$HOME/.sparrow-engine/models}"
     if [ ! -d "$model_dir" ]; then
         echo "error: model dir not found: $model_dir" >&2
-        echo "  Fetch the roster first with scripts/download_models.sh --all (NOT done by this setup)." >&2
+        echo "  Stage the full candidate/release bundle matching scripts/catalog.toml, including metadata packages." >&2
+        echo "  This setup NEVER downloads or changes model packages." >&2
         return 1
     fi
     model_dir="$(cd "$model_dir" >/dev/null 2>&1 && pwd -P)"
@@ -163,35 +164,91 @@ _spe_main() {
     # indentation-sensitive; a quoted heredoc preserves leading whitespace).
     rc=0
     model_report="$(SPE_CATALOG="$scripts_dir/catalog.toml" SPE_MODEL_DIR="$model_dir" python3 - <<'PY'
-import os, sys, tomllib
+import os
+import sys
+import tomllib
+from pathlib import Path
+
 try:
     with open(os.environ["SPE_CATALOG"], "rb") as f:
         data = tomllib.load(f)
-except Exception as exc:
+except (OSError, tomllib.TOMLDecodeError) as exc:
     print("ERROR could not read catalog.toml: %s" % exc)
     sys.exit(2)
-md = os.environ["SPE_MODEL_DIR"]
-ids = [m for m in data.get("model", []) if m.get("id")]
-missing = []
-for m in ids:
-    fname = "pipeline.toml" if m.get("format") == "cascade" else "manifest.toml"
-    if not os.path.isfile(os.path.join(md, m["id"], fname)):
-        missing.append("%s (%s): missing %s" % (m["id"], m.get("format"), fname))
-print("COUNT %d" % len(ids))
-for x in missing:
-    print("MISSING %s" % x)
-sys.exit(1 if missing else 0)
+descriptors = {
+    "onnx": "manifest.toml",
+    "tflite": "manifest.toml",
+    "cascade": "pipeline.toml",
+    "ensemble": "ensemble.toml",
+}
+compliance = {"MODEL_CARD.md", "LICENSE.md", "ATTRIBUTION.md", "CONVERSION.md", "SOURCE.md"}
+hosted = {"hosted", "hosted_restricted"}
+md = Path(os.environ["SPE_MODEL_DIR"])
+models = data.get("model", [])
+errors = []
+runtime = metadata = 0
+seen = set()
+if not models:
+    errors.append("catalog has no [[model]] entries")
+for m in models:
+    mid = m.get("id")
+    if not isinstance(mid, str) or not mid or mid in {".", ".."} or Path(mid).name != mid:
+        errors.append("invalid catalog id %r" % mid)
+        continue
+    if mid in seen:
+        errors.append("%s: duplicate catalog id" % mid)
+    seen.add(mid)
+    fmt = m.get("format")
+    hosting = m.get("hosting_status")
+    if hosting in hosted:
+        runtime += 1
+    elif hosting == "link_only":
+        metadata += 1
+    else:
+        errors.append("%s: unsupported hosting_status %r" % (mid, hosting))
+    if fmt not in descriptors:
+        errors.append("%s: unsupported format %r" % (mid, fmt))
+        continue
+    package = md / mid
+    if hosting in hosted:
+        if not (package / descriptors[fmt]).is_file():
+            errors.append("%s (%s): missing %s" % (mid, fmt, descriptors[fmt]))
+    elif hosting == "link_only":
+        try:
+            if package.is_symlink() or not package.is_dir():
+                errors.append("%s: link_only package must be a non-symlink directory" % mid)
+                continue
+            for name in sorted({p.name for p in package.iterdir()} - compliance):
+                errors.append("%s: unexpected link_only entry %s" % (mid, name))
+            for name in sorted(compliance):
+                path = package / name
+                if path.is_symlink() or not path.is_file():
+                    errors.append("%s: %s must be a regular non-symlink file" % (mid, name))
+                elif path.stat().st_size == 0:
+                    errors.append("%s: empty compliance file %s" % (mid, name))
+        except OSError as exc:
+            errors.append("%s: cannot inspect link_only package: %s" % (mid, exc))
+print("COUNT %d" % len(models))
+print("RUNTIME %d" % runtime)
+print("METADATA %d" % metadata)
+for error in errors:
+    print("ERROR %s" % error)
+sys.exit(1 if errors else 0)
 PY
 )" || rc=$?
     expected_models="$(printf '%s\n' "$model_report" | sed -n 's/^COUNT //p')"
+    runtime_models="$(printf '%s\n' "$model_report" | sed -n 's/^RUNTIME //p')"
+    metadata_models="$(printf '%s\n' "$model_report" | sed -n 's/^METADATA //p')"
     [ -z "$expected_models" ] && expected_models="?"
+    [ -z "$runtime_models" ] && runtime_models="?"
+    [ -z "$metadata_models" ] && metadata_models="?"
     if [ "$rc" -ne 0 ]; then
-        echo "error: model cache does not satisfy the catalog roster ($expected_models catalog entries):" >&2
-        printf '%s\n' "$model_report" | grep -v '^COUNT ' | sed 's/^/  - /' >&2
-        echo "  Stage the full roster with scripts/download_models.sh --all (this setup NEVER downloads)." >&2
+        echo "error: model cache does not satisfy the catalog roster ($expected_models total: $runtime_models runtime + $metadata_models metadata):" >&2
+        printf '%s\n' "$model_report" | sed '/^COUNT /d; /^RUNTIME /d; /^METADATA /d; s/^/  - /' >&2
+        echo "  Stage the full candidate/release bundle matching scripts/catalog.toml, including metadata packages." >&2
+        echo "  This setup NEVER downloads or changes model packages." >&2
         return 1
     fi
-    found_models="$expected_models"
 
     # --- build BOTH flavors into ISOLATED target dirs ---
     # Both cdylibs are libsparrow_engine.so (locked same-library-name invariant);
@@ -271,7 +328,7 @@ PY
     printf '  %-26s %s\n' "SPARROW_ENGINE_SOURCE" "$SPARROW_ENGINE_SOURCE"
     printf '  %-26s %s\n' "SPARROW_ENGINE_DEV" "$SPARROW_ENGINE_DEV"
     printf '  %-26s %s\n' "ORT_CAPI" "${ORT_CAPI:-<unset>}"
-    printf '  %-26s %s catalog models present (per-id verified)\n' "models" "$expected_models"
+    printf '  %-26s %s total = %s runtime + %s metadata (per-id verified)\n' "models" "$expected_models" "$runtime_models" "$metadata_models"
     _spe_check() {  # $1 label  $2 path  $3 d|f
         local ok="ok"
         if [ "$3" = d ] && [ ! -d "$2" ]; then ok="MISSING"; miss=$((miss+1)); fi
