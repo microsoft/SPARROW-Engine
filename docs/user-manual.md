@@ -195,10 +195,10 @@ The following constraints are baked into the engine. If you onboard a new model,
 
 ```
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.28/installer/sparrow-engine-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.29/installer/sparrow-engine-install.sh | bash
 
 # Windows
-iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.28/installer/sparrow-engine-install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.29/installer/sparrow-engine-install.ps1 | iex
 ```
 
 Under the stdin-pipe form the wrapper detects that `$0` is the shell name and skips the on-disk lookup; it fetches `probe.sh` + `probe_gpu_quality.sh` from the matching `refs/tags/v<ver>/installer/` raw URL into `${XDG_CACHE_HOME:-~/.cache}/sparrow-engine/v<ver>/` (Linux/macOS) or `%LOCALAPPDATA%\sparrow-engine\cache\v<ver>\` (Windows) on first invocation. Override the helper URL via `SPARROW_ENGINE_HELPER_BASE` for internal mirrors.
@@ -368,11 +368,11 @@ Simplest path. No build toolchain, no clones, no separate downloader. Published 
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest         # moving tag
-docker pull zhongqimiao/sparrow-engine-server:v0.1.28        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.29        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted; requires NVIDIA Container Toolkit on host)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.28
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.29
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
@@ -388,11 +388,11 @@ No build toolchain and no internet on the target host. On a connected machine, p
 
 ```bash
 # On a connected host:
-docker pull zhongqimiao/sparrow-engine-server:v0.1.28
-docker save zhongqimiao/sparrow-engine-server:v0.1.28 | zstd -o sparrow-engine-server-v0.1.28.tar.zst
+docker pull zhongqimiao/sparrow-engine-server:v0.1.29
+docker save zhongqimiao/sparrow-engine-server:v0.1.29 | zstd -o sparrow-engine-server-v0.1.29.tar.zst
 
 # Transfer the archive (USB, internal mirror, …), then on the offline host:
-zstd -dc sparrow-engine-server-v0.1.28.tar.zst | docker load
+zstd -dc sparrow-engine-server-v0.1.29.tar.zst | docker load
 ```
 
 Use the `sparrow-engine-server-gpu` image for the GPU flavor. See §2.7 for the full air-gapped flow (CLI + wheel + Docker together).

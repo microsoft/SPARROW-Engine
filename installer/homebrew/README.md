@@ -9,7 +9,7 @@ substituting real release SHA256s into copies of these files.
 
 ### Template policy (mechanically guarded)
 
-- **`version`** tracks the current package/release version (0.1.28 today).
+- **`version`** tracks the current package/release version (0.1.29 today).
   It is bumped in lockstep with `sparrow-engine-cli/Cargo.toml` and guarded
   by `.github/workflows/release.yml § check-version-consistency` +
   `sparrow-engine/scripts/tests/test_installers.sh`, so it cannot silently

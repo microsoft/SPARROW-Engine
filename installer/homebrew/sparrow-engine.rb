@@ -1,7 +1,7 @@
 class SparrowEngine < Formula
   desc "Camera-trap ML inference engine (sparrow-engine CLI binary)"
   homepage "https://github.com/microsoft/SPARROW-Engine"
-  version "0.1.28"
+  version "0.1.29"
   license "MIT"
 
   # RP-4 (2026-05-26): the formula points at the GH Release tarballs produced
@@ -15,7 +15,7 @@ class SparrowEngine < Formula
   #
   # This file is a TEMPLATE, not a directly installable formula. Two fields are
   # release-managed:
-  #   * version — tracks the current package/release version (0.1.28 here). CI
+  #   * version — tracks the current package/release version (0.1.29 here). CI
   #     guards it against sparrow-engine-cli/Cargo.toml in
   #     .github/workflows/release.yml § check-version-consistency, and the
   #     contract test sparrow-engine/scripts/tests/test_installers.sh asserts the

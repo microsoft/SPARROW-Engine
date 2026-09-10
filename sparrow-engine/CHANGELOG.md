@@ -8,8 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.29
+
 ### Added
 
+- Added schema-1.2 model-zoo rights metadata and fail-closed downloader
+  routing. Active hosted packages remain downloadable; link-only entries
+  report the original source or rights-holder contact route, and unpublished
+  candidates cannot be fetched until their Zenodo release is active.
 - Added manifest-driven time-frequency audio event detection on CPU and GPU.
   The shared Rust frontend implements clip-local SciPy-compatible resampling,
   periodic-Hann short-time Fourier transform, PCEN, denoising, and resize;

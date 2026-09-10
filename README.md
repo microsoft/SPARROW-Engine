@@ -141,11 +141,11 @@ Two install paths. **Option A** is the simplest; **Option B** builds from source
 ```bash
 # CPU image (~61 MB compressed, ~170 MB extracted)
 docker pull zhongqimiao/sparrow-engine-server:latest
-docker pull zhongqimiao/sparrow-engine-server:v0.1.28        # version pin (recommended for prod)
+docker pull zhongqimiao/sparrow-engine-server:v0.1.29        # version pin (recommended for prod)
 
 # GPU image (~2.2 GB compressed, ~3.7 GB extracted)
 docker pull zhongqimiao/sparrow-engine-server-gpu:latest
-docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.28
+docker pull zhongqimiao/sparrow-engine-server-gpu:v0.1.29
 ```
 
 Public repos (anonymous pull, no Docker Hub login required):
