@@ -172,10 +172,16 @@ jobs:
             echo "::error::could not extract version from one or both Homebrew formula templates"
             exit 2
           fi
+          compat_engine_version="$(sed -nE 's/^[[:space:]]*"sparrow-engine==([^"]+)",[[:space:]]*$/\1/p' pytorchwildlife-compat/pyproject.toml | head -1)"
+          if [ -z "$compat_engine_version" ]; then
+            echo "::error::could not extract the sparrow-engine dependency pin from pytorchwildlife-compat/pyproject.toml"
+            exit 2
+          fi
 
           echo "Tag version (stripped 'v'):           ${tag_version:-<n/a — workflow_dispatch>}"
           echo "sparrow-engine-cli Cargo.toml:        $cli_version"
           echo "sparrow-engine-python pyproject.toml: $py_version"
+          echo "pytorchwildlife compatibility pin:    $compat_engine_version"
           echo "shell installer default:              $sh_installer_version"
           echo "PowerShell installer default:         $ps_installer_version"
           echo "Homebrew sparrow-engine.rb:            $brew_cpu_version"
@@ -200,6 +206,11 @@ jobs:
           # gives false-PASS while the eventual tag still fails.
           if [ "$cli_version" != "$py_version" ]; then
             echo "::error::sparrow-engine-cli Cargo.toml ($cli_version) ≠ sparrow-engine-python pyproject.toml ($py_version)"
+            fail=1
+          fi
+          if [ "$cli_version" != "$compat_engine_version" ]; then
+            echo "::error::compatibility shim drift: cli=$cli_version pytorchwildlife dependency=$compat_engine_version"
+            echo "  -> bump pytorchwildlife-compat/pyproject.toml's sparrow-engine pin to '$cli_version'."
             fail=1
           fi
           if [ "$cli_version" != "$sh_installer_version" ] || [ "$cli_version" != "$ps_installer_version" ]; then
