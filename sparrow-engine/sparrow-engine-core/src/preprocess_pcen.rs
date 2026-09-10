@@ -2,6 +2,7 @@
 
 use std::f32::consts::PI;
 use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
 use realfft::{RealFftPlanner, RealToComplex};
@@ -88,22 +89,100 @@ impl PcenFrontend {
         self.clip_samples
     }
 
-    /// Source frames for one model clip, rounded to nearest with positive ties up.
+    /// Source frames in the first clip; later clips can have different lengths.
     pub fn source_clip_samples(&self, source_sample_rate: u32) -> Result<usize> {
+        self.source_clip_boundary(1, source_sample_rate)
+    }
+
+    /// Independently round `clip_index * clip_samples * source_rate / target_rate`,
+    /// using Python's nearest-ties-to-even boundary rule.
+    pub fn source_clip_boundary(
+        &self,
+        clip_index: usize,
+        source_sample_rate: u32,
+    ) -> Result<usize> {
+        let (clip_numerator, denominator) = self.source_clip_ratio(source_sample_rate)?;
+        let numerator = (clip_index as u128)
+            .checked_mul(clip_numerator)
+            .ok_or_else(|| {
+                SparrowEngineError::AudioPreprocess(
+                    "PCEN source clip boundary overflowed u128".to_string(),
+                )
+            })?;
+        let rounded = round_rational_ties_even(numerator, denominator)?;
+        usize::try_from(rounded).map_err(|_| {
+            SparrowEngineError::AudioPreprocess(
+                "PCEN source clip boundary overflowed usize".to_string(),
+            )
+        })
+    }
+
+    /// Exact source range of one clip, with both boundaries rounded independently.
+    pub fn source_clip_range(
+        &self,
+        clip_index: usize,
+        source_sample_rate: u32,
+    ) -> Result<Range<usize>> {
+        let next_index = clip_index.checked_add(1).ok_or_else(|| {
+            SparrowEngineError::AudioPreprocess(
+                "PCEN source clip index overflowed usize".to_string(),
+            )
+        })?;
+        Ok(self.source_clip_boundary(clip_index, source_sample_rate)?
+            ..self.source_clip_boundary(next_index, source_sample_rate)?)
+    }
+
+    /// Largest clip index whose rounded source boundary fits the recording.
+    pub fn complete_source_clip_count(
+        &self,
+        total_source_samples: usize,
+        source_sample_rate: u32,
+    ) -> Result<usize> {
+        let (clip_numerator, denominator) = self.source_clip_ratio(source_sample_rate)?;
+        // round(x) <= total includes x == total + 1/2 only when total is even.
+        // Keeping the doubled inequality integral also handles zero-length ranges.
+        let limit = (total_source_samples as u128)
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .and_then(|value| value.checked_mul(denominator))
+            .ok_or_else(|| {
+                SparrowEngineError::AudioPreprocess(
+                    "PCEN complete source clip limit overflowed u128".to_string(),
+                )
+            })?
+            - u128::from(!total_source_samples.is_multiple_of(2));
+        let divisor = clip_numerator.checked_mul(2).ok_or_else(|| {
+            SparrowEngineError::AudioPreprocess(
+                "PCEN complete source clip divisor overflowed u128".to_string(),
+            )
+        })?;
+        usize::try_from(limit / divisor).map_err(|_| {
+            SparrowEngineError::AudioPreprocess(
+                "PCEN complete source clip count overflowed usize".to_string(),
+            )
+        })
+    }
+
+    fn source_clip_ratio(&self, source_sample_rate: u32) -> Result<(u128, u128)> {
         if source_sample_rate == 0 || self.config.sample_rate == 0 {
             return Err(SparrowEngineError::AudioPreprocess(format!(
                 "PCEN sample rates must be positive, got source {source_sample_rate} and model {}",
                 self.config.sample_rate
             )));
         }
-        let numerator = (self.clip_samples as u128) * u128::from(source_sample_rate);
-        let denominator = u128::from(self.config.sample_rate);
-        let rounded = (numerator + denominator / 2) / denominator;
-        usize::try_from(rounded).map_err(|_| {
-            SparrowEngineError::AudioPreprocess(
-                "PCEN source clip sample count overflowed usize".to_string(),
-            )
-        })
+        if self.clip_samples == 0 {
+            return Err(SparrowEngineError::AudioPreprocess(
+                "PCEN clip sample count must be positive".to_string(),
+            ));
+        }
+        let numerator = (self.clip_samples as u128)
+            .checked_mul(u128::from(source_sample_rate))
+            .ok_or_else(|| {
+                SparrowEngineError::AudioPreprocess(
+                    "PCEN source clip sample count overflowed u128".to_string(),
+                )
+            })?;
+        Ok((numerator, u128::from(self.config.sample_rate)))
     }
 
     pub fn crop_rows(&self) -> usize {
@@ -134,12 +213,16 @@ impl PcenFrontend {
         &self,
         source_samples: &[f32],
         source_sample_rate: u32,
+        clip_index: usize,
     ) -> Result<Vec<f32>> {
-        let expected_source_samples = self.source_clip_samples(source_sample_rate)?;
+        let range = self.source_clip_range(clip_index, source_sample_rate)?;
+        let expected_source_samples = range.end - range.start;
         if source_samples.len() != expected_source_samples {
             return Err(SparrowEngineError::AudioPreprocess(format!(
                 "PCEN source clip requires exactly {expected_source_samples} samples at \
-                 {source_sample_rate} Hz, got {}",
+                 {source_sample_rate} Hz for clip {clip_index} ({}..{}), got {}",
+                range.start,
+                range.end,
                 source_samples.len()
             )));
         }
@@ -218,6 +301,22 @@ pub fn complete_clip_count(total_samples: usize, clip_samples: usize) -> usize {
     total_samples.checked_div(clip_samples).unwrap_or(0)
 }
 
+fn round_rational_ties_even(numerator: u128, denominator: u128) -> Result<u128> {
+    if denominator == 0 {
+        return Err(SparrowEngineError::AudioPreprocess(
+            "rational rounding denominator must be positive".to_string(),
+        ));
+    }
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let complement = denominator - remainder;
+    let round_up =
+        remainder > complement || (remainder == complement && !quotient.is_multiple_of(2));
+    quotient.checked_add(u128::from(round_up)).ok_or_else(|| {
+        SparrowEngineError::AudioPreprocess("rational rounding overflowed u128".to_string())
+    })
+}
+
 /// Reproduce `scipy.signal.resample_poly` with its default Kaiser(5.0) filter.
 ///
 /// This path is used only by the PCEN frontend. Existing audio models retain
@@ -240,59 +339,73 @@ pub fn scipy_resample_poly(
     }
 
     let divisor = gcd(source_rate, target_rate);
-    let up = (target_rate / divisor) as usize;
-    let down = (source_rate / divisor) as usize;
-    let n_out = ceil_div(
-        samples
-            .len()
-            .checked_mul(up)
-            .ok_or_else(|| SparrowEngineError::Resample("output length overflow".to_string()))?,
-        down,
-    );
+    let up = u128::from(target_rate / divisor);
+    let down = u128::from(source_rate / divisor);
+    let input_len = samples.len() as u128;
+    let n_out = resample_output_len(input_len, up, down)?;
 
     let max_rate = up.max(down);
-    let half_len = 10usize
-        .checked_mul(max_rate)
+    let half_len = max_rate
+        .checked_mul(10)
         .ok_or_else(|| SparrowEngineError::Resample("filter length overflow".to_string()))?;
     let filter_len = half_len
         .checked_mul(2)
         .and_then(|value| value.checked_add(1))
         .ok_or_else(|| SparrowEngineError::Resample("filter length overflow".to_string()))?;
-    let mut coefficients = firwin_kaiser(filter_len, 1.0 / max_rate as f64, 5.0);
+
+    let pre_pad = down - half_len % down;
+    let pre_remove = half_len
+        .checked_add(pre_pad)
+        .ok_or_else(|| SparrowEngineError::Resample("filter padding overflow".to_string()))?
+        / down;
+    let required_output_len = n_out
+        .checked_add(pre_remove)
+        .ok_or_else(|| SparrowEngineError::Resample("filtered length overflow".to_string()))?;
+    let mut padded_filter_len = filter_len
+        .checked_add(pre_pad)
+        .ok_or_else(|| SparrowEngineError::Resample("filter padding overflow".to_string()))?;
+    while upfirdn_output_len(padded_filter_len, input_len, up, down)? < required_output_len {
+        padded_filter_len = padded_filter_len
+            .checked_add(1)
+            .ok_or_else(|| SparrowEngineError::Resample("filter padding overflow".to_string()))?;
+    }
+
+    let output_capacity = resample_usize(n_out, "output length")?;
+    let filter_capacity = resample_usize(padded_filter_len, "padded filter length")?;
+    let mut coefficients = firwin_kaiser(
+        resample_usize(filter_len, "filter length")?,
+        1.0 / max_rate as f64,
+        5.0,
+    );
     for coefficient in &mut coefficients {
         *coefficient *= up as f32;
     }
-
-    let pre_pad = down - half_len % down;
-    let pre_remove = (half_len + pre_pad) / down;
-    let mut post_pad = 0usize;
-    while upfirdn_output_len(filter_len + pre_pad + post_pad, samples.len(), up, down)?
-        < n_out + pre_remove
-    {
-        post_pad += 1;
-    }
-    let mut filter = vec![0.0f32; pre_pad];
+    let mut filter = vec![0.0f32; resample_usize(pre_pad, "filter padding")?];
     filter.extend(coefficients);
-    filter.resize(filter.len() + post_pad, 0.0);
+    filter.resize(filter_capacity, 0.0);
 
-    let mut output = Vec::with_capacity(n_out);
-    for output_index in 0..n_out {
-        let filtered_index = output_index
+    let mut output = Vec::with_capacity(output_capacity);
+    for output_index in 0..output_capacity {
+        let filtered_index = (output_index as u128)
             .checked_add(pre_remove)
             .and_then(|value| value.checked_mul(down))
             .ok_or_else(|| SparrowEngineError::Resample("filter index overflow".to_string()))?;
-        let first_input = filtered_index.saturating_sub(filter.len() - 1).div_ceil(up);
-        let last_input = (filtered_index / up).min(samples.len() - 1);
+        let first_input = filtered_index
+            .saturating_sub(padded_filter_len - 1)
+            .div_ceil(up);
+        let last_input = (filtered_index / up).min(input_len - 1);
         let mut sum = 0.0f32;
         if first_input <= last_input {
+            let first_input = resample_usize(first_input, "first input index")?;
+            let last_input = resample_usize(last_input, "last input index")?;
             for (input_index, sample) in samples
                 .iter()
                 .enumerate()
                 .take(last_input + 1)
                 .skip(first_input)
             {
-                let filter_index = filtered_index - input_index * up;
-                sum += sample * filter[filter_index];
+                let filter_index = filtered_index - input_index as u128 * up;
+                sum += sample * filter[resample_usize(filter_index, "filter index")?];
             }
         }
         output.push(sum);
@@ -452,22 +565,38 @@ fn gcd(mut left: u32, mut right: u32) -> u32 {
     left
 }
 
-fn ceil_div(numerator: usize, denominator: usize) -> usize {
-    numerator / denominator + usize::from(!numerator.is_multiple_of(denominator))
+fn ceil_div(numerator: u128, denominator: u128) -> u128 {
+    numerator / denominator + u128::from(!numerator.is_multiple_of(denominator))
 }
 
-fn upfirdn_output_len(
-    filter_len: usize,
-    input_len: usize,
-    up: usize,
-    down: usize,
-) -> Result<usize> {
+fn resample_usize(value: u128, context: &str) -> Result<usize> {
+    usize::try_from(value)
+        .map_err(|_| SparrowEngineError::Resample(format!("{context} overflowed usize")))
+}
+
+fn resample_output_len(input_len: u128, up: u128, down: u128) -> Result<u128> {
+    if up == 0 || down == 0 {
+        return Err(SparrowEngineError::Resample(
+            "sample rate ratios must be positive".to_string(),
+        ));
+    }
     let high_rate_len = input_len
-        .saturating_sub(1)
+        .checked_mul(up)
+        .ok_or_else(|| SparrowEngineError::Resample("output length overflow".to_string()))?;
+    Ok(ceil_div(high_rate_len, down))
+}
+
+fn upfirdn_output_len(filter_len: u128, input_len: u128, up: u128, down: u128) -> Result<u128> {
+    if filter_len == 0 || input_len == 0 || up == 0 || down == 0 {
+        return Err(SparrowEngineError::Resample(
+            "polyphase dimensions and rate ratios must be positive".to_string(),
+        ));
+    }
+    let high_rate_len = (input_len - 1)
         .checked_mul(up)
         .and_then(|value| value.checked_add(filter_len))
         .ok_or_else(|| SparrowEngineError::Resample("filtered length overflow".to_string()))?;
-    Ok((high_rate_len - 1) / down + 1)
+    Ok(ceil_div(high_rate_len, down))
 }
 
 fn firwin_kaiser(length: usize, cutoff: f64, beta: f64) -> Vec<f32> {
@@ -510,6 +639,52 @@ fn modified_bessel_i0(value: f64) -> f64 {
 mod tests {
     use super::*;
     use sparrow_engine_types::manifest::{AudioResampler, AudioTailPolicy};
+
+    // Python round(n * 128000 * rate / 256000), for n = 0..8.
+    const SOURCE_BOUNDARIES: [(u32, [usize; 9]); 7] = [
+        (
+            48_000,
+            [
+                0, 24_000, 48_000, 72_000, 96_000, 120_000, 144_000, 168_000, 192_000,
+            ],
+        ),
+        (
+            48_001,
+            [
+                0, 24_000, 48_001, 72_002, 96_002, 120_002, 144_003, 168_004, 192_004,
+            ],
+        ),
+        (
+            48_003,
+            [
+                0, 24_002, 48_003, 72_004, 96_006, 120_008, 144_009, 168_010, 192_012,
+            ],
+        ),
+        (
+            192_000,
+            [
+                0, 96_000, 192_000, 288_000, 384_000, 480_000, 576_000, 672_000, 768_000,
+            ],
+        ),
+        (
+            250_000,
+            [
+                0, 125_000, 250_000, 375_000, 500_000, 625_000, 750_000, 875_000, 1_000_000,
+            ],
+        ),
+        (
+            256_000,
+            [
+                0, 128_000, 256_000, 384_000, 512_000, 640_000, 768_000, 896_000, 1_024_000,
+            ],
+        ),
+        (
+            256_001,
+            [
+                0, 128_000, 256_001, 384_002, 512_002, 640_002, 768_003, 896_004, 1_024_004,
+            ],
+        ),
+    ];
 
     fn config() -> PcenSpectrogramConfig {
         PcenSpectrogramConfig {
@@ -563,26 +738,126 @@ mod tests {
     }
 
     #[test]
-    fn source_clip_sample_count_rounds_positive_ties_up_exactly() {
-        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
-        for (rate, expected) in [
-            (48_000, 24_000),
-            (48_001, 24_001),
-            (48_003, 24_002),
-            (192_000, 96_000),
-            (250_000, 125_000),
-            (256_000, 128_000),
-            (256_001, 128_001),
-            (u32::MAX, 2_147_483_648),
+    fn rational_rounding_uses_ties_to_even_without_overflow() {
+        for (numerator, denominator, expected) in [
+            (0, 1, 0),
+            (1, 2, 0),
+            (3, 2, 2),
+            (5, 2, 2),
+            (7, 2, 4),
+            (4, 3, 1),
+            (5, 3, 2),
+            (u128::MAX, 1, u128::MAX),
+            (u128::MAX, 2, 1 << 127),
+            (u128::MAX, u128::MAX, 1),
+            (u128::MAX / 2, u128::MAX, 0),
+            (u128::MAX / 2 + 1, u128::MAX, 1),
         ] {
-            let count = frontend.source_clip_samples(rate).unwrap();
-            assert_eq!(count, expected, "source rate {rate}");
-            assert_eq!(complete_clip_count(count + (count - 1), count), 1);
+            assert_eq!(
+                round_rational_ties_even(numerator, denominator).unwrap(),
+                expected,
+                "{numerator}/{denominator}"
+            );
+        }
+        assert!(round_rational_ties_even(1, 0).is_err());
+    }
+
+    #[test]
+    fn source_boundaries_and_ranges_match_python_reference() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for (rate, boundaries) in SOURCE_BOUNDARIES {
+            assert_eq!(frontend.source_clip_samples(rate).unwrap(), boundaries[1]);
+            for (index, expected) in boundaries.into_iter().enumerate() {
+                assert_eq!(
+                    frontend.source_clip_boundary(index, rate).unwrap(),
+                    expected,
+                    "source rate {rate}, boundary {index}"
+                );
+            }
+            for (index, pair) in boundaries.windows(2).enumerate() {
+                assert_eq!(
+                    frontend.source_clip_range(index, rate).unwrap(),
+                    pair[0]..pair[1],
+                    "source rate {rate}, clip {index}"
+                );
+            }
+        }
+        assert_eq!(
+            frontend.source_clip_samples(u32::MAX).unwrap(),
+            2_147_483_648
+        );
+        assert_ne!(
+            frontend.source_clip_boundary(2, 48_001).unwrap(),
+            2 * frontend.source_clip_samples(48_001).unwrap()
+        );
+    }
+
+    #[test]
+    fn complete_source_clips_follow_boundaries_and_drop_only_incomplete_tails() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for (rate, boundaries) in SOURCE_BOUNDARIES {
+            assert_eq!(frontend.complete_source_clip_count(0, rate).unwrap(), 0);
+            for (index, boundary) in boundaries.into_iter().enumerate().skip(1) {
+                assert_eq!(
+                    frontend
+                        .complete_source_clip_count(boundary - 1, rate)
+                        .unwrap(),
+                    index - 1,
+                    "source rate {rate}, before boundary {index}"
+                );
+                for total in [boundary, boundary + 1] {
+                    assert_eq!(
+                        frontend.complete_source_clip_count(total, rate).unwrap(),
+                        index,
+                        "source rate {rate}, total {total}"
+                    );
+                }
+            }
+        }
+        assert_eq!(frontend.source_clip_range(0, 48_001).unwrap(), 0..24_000);
+        assert_eq!(
+            frontend.source_clip_range(1, 48_001).unwrap(),
+            24_000..48_001
+        );
+        assert_eq!(
+            frontend.complete_source_clip_count(48_001, 48_001).unwrap(),
+            2
+        );
+        assert_eq!(
+            frontend.complete_source_clip_count(60_001, 48_001).unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn complete_source_clip_count_is_maximal_even_with_repeated_boundaries() {
+        let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for clip_samples in [1, 2, 3, 5] {
+            frontend.clip_samples = clip_samples;
+            for target_rate in [1, 2, 3, 8] {
+                frontend.config.sample_rate = target_rate;
+                for source_rate in [1, 2, 3, 7] {
+                    for total in 0..33 {
+                        let count = frontend
+                            .complete_source_clip_count(total, source_rate)
+                            .unwrap();
+                        assert!(
+                            frontend.source_clip_boundary(count, source_rate).unwrap() <= total
+                        );
+                        assert!(
+                            frontend
+                                .source_clip_boundary(count + 1, source_rate)
+                                .unwrap()
+                                > total
+                        );
+                    }
+                }
+            }
         }
     }
 
     #[test]
-    fn source_clip_sample_count_handles_large_products_and_overflow() {
+    fn source_clip_boundaries_and_counts_handle_large_products_and_overflow() {
         let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
         frontend.clip_samples = usize::MAX;
         assert_eq!(frontend.source_clip_samples(256_000).unwrap(), usize::MAX);
@@ -594,63 +869,89 @@ mod tests {
         assert!(
             matches!(error, SparrowEngineError::AudioPreprocess(message) if message.contains("overflowed usize"))
         );
+        assert_eq!(
+            frontend
+                .complete_source_clip_count(usize::MAX, 256_000)
+                .unwrap(),
+            1
+        );
+        assert!(frontend.source_clip_boundary(2, 256_000).is_err());
+        assert!(frontend.source_clip_boundary(usize::MAX, u32::MAX).is_err());
+        assert!(frontend.source_clip_range(usize::MAX, 128_000).is_err());
+        frontend.clip_samples = 1;
+        assert!(frontend.complete_source_clip_count(usize::MAX, 1).is_err());
     }
 
     #[test]
-    fn source_clip_sample_count_rejects_zero_rates() {
+    fn source_clip_helpers_reject_zero_rates_and_zero_clip_size() {
         let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
-        assert!(matches!(
-            frontend.source_clip_samples(0),
-            Err(SparrowEngineError::AudioPreprocess(_))
-        ));
-        assert!(matches!(
-            frontend.prepare_source_clip(&[], 0),
-            Err(SparrowEngineError::AudioPreprocess(_))
-        ));
-        frontend.config.sample_rate = 0;
-        assert!(matches!(
-            frontend.source_clip_samples(48_001),
-            Err(SparrowEngineError::AudioPreprocess(_))
-        ));
-        assert!(matches!(
-            frontend.prepare_source_clip(&[], 0),
-            Err(SparrowEngineError::AudioPreprocess(_))
-        ));
+        for (target_rate, source_rate) in [(256_000, 0), (0, 48_001), (0, 0)] {
+            frontend.config.sample_rate = target_rate;
+            assert!(frontend.source_clip_samples(source_rate).is_err());
+            assert!(frontend.source_clip_boundary(0, source_rate).is_err());
+            assert!(frontend.source_clip_range(0, source_rate).is_err());
+            assert!(frontend.complete_source_clip_count(0, source_rate).is_err());
+            assert!(frontend.prepare_source_clip(&[], source_rate, 0).is_err());
+        }
+        frontend.config.sample_rate = 256_000;
+        frontend.clip_samples = 0;
+        assert!(frontend.source_clip_boundary(0, 48_001).is_err());
+        assert!(frontend.complete_source_clip_count(0, 48_001).is_err());
     }
 
     #[test]
-    fn source_clip_requires_exact_rounded_source_length() {
+    fn source_clip_requires_exact_index_specific_source_length() {
         let frontend = PcenFrontend::new(config(), 128_000).unwrap();
-        for rate in [48_001, 192_000, 250_000, 256_000] {
-            let count = frontend.source_clip_samples(rate).unwrap();
-            for length in [0, count - 1, count + 1] {
-                let error = frontend
-                    .prepare_source_clip(&vec![0.0; length], rate)
-                    .unwrap_err();
-                assert!(
-                    matches!(error, SparrowEngineError::AudioPreprocess(message) if message.contains("source clip requires exactly")),
-                    "source rate {rate}, length {length}"
-                );
+        for (rate, boundaries) in SOURCE_BOUNDARIES {
+            for (index, pair) in boundaries.windows(2).enumerate() {
+                let count = pair[1] - pair[0];
+                for length in [0, count - 1, count + 1] {
+                    let error = frontend
+                        .prepare_source_clip(&vec![0.0; length], rate, index)
+                        .unwrap_err();
+                    assert!(
+                        matches!(error, SparrowEngineError::AudioPreprocess(message) if message.contains("source clip requires exactly")),
+                        "source rate {rate}, index {index}, length {length}"
+                    );
+                }
             }
         }
+        assert!(frontend
+            .prepare_source_clip(&vec![0.0; 24_000], 48_001, 1)
+            .is_err());
+        assert!(frontend
+            .prepare_source_clip(&vec![0.0; 24_001], 48_001, 0)
+            .is_err());
     }
 
     #[test]
     fn source_clip_normalization_preserves_resampler_prefix_and_fixed_length() {
         let frontend = PcenFrontend::new(config(), 128_000).unwrap();
-        for (rate, source_count, resampled_count) in [
-            (48_001, 24_001, 128_003),
-            (192_000, 96_000, 128_000),
-            (250_000, 125_000, 128_000),
+        for (rate, index, source_count, resampled_count) in [
+            (48_001, 0, 24_000, 127_998),
+            (48_001, 1, 24_001, 128_003),
+            (48_003, 0, 24_002, 128_003),
+            (48_003, 1, 24_001, 127_998),
+            (192_000, 0, 96_000, 128_000),
+            (250_000, 0, 125_000, 128_000),
+            (256_001, 0, 128_000, 128_000),
+            (256_001, 1, 128_001, 128_001),
         ] {
             let source: Vec<f32> = (0..source_count)
                 .map(|index| ((index % 31) as f32 - 15.0) / 16.0)
                 .collect();
             let resampled = scipy_resample_poly(&source, rate, 256_000).unwrap();
             assert_eq!(resampled.len(), resampled_count);
-            let prepared = frontend.prepare_source_clip(&source, rate).unwrap();
+            let prepared = frontend.prepare_source_clip(&source, rate, index).unwrap();
             assert_eq!(prepared.len(), 128_000);
-            assert_eq!(prepared, resampled[..128_000]);
+            let preserved = resampled.len().min(prepared.len());
+            assert!(prepared[..preserved]
+                .iter()
+                .zip(&resampled[..preserved])
+                .all(|(actual, expected)| actual.to_bits() == expected.to_bits()));
+            assert!(prepared[preserved..]
+                .iter()
+                .all(|value| value.to_bits() == 0));
             assert!(prepared.iter().all(|value| value.is_finite()));
         }
     }
@@ -663,7 +964,7 @@ mod tests {
         source[23_999] = 1.0;
         let resampled = scipy_resample_poly(&source, 48_000, 256_000).unwrap();
         assert_eq!(resampled.len(), 128_000);
-        let prepared = frontend.prepare_source_clip(&source, 48_000).unwrap();
+        let prepared = frontend.prepare_source_clip(&source, 48_000, 0).unwrap();
         assert_eq!(prepared.len(), 128_002);
         assert_eq!(prepared[..128_000], resampled);
         assert_eq!(prepared[128_000..], [0.0, 0.0]);
@@ -674,25 +975,30 @@ mod tests {
         let frontend = PcenFrontend::new(config(), 128_000).unwrap();
         let values = [0.0f32, -0.0, 0.25, -0.5, 1.0];
         let source: Vec<f32> = values.into_iter().cycle().take(128_000).collect();
-        let prepared = frontend.prepare_source_clip(&source, 256_000).unwrap();
-        assert_eq!(prepared.len(), source.len());
-        assert!(prepared
-            .iter()
-            .zip(source)
-            .all(|(actual, expected)| actual.to_bits() == expected.to_bits()));
+        for index in [0, 1, 2, 7] {
+            let prepared = frontend
+                .prepare_source_clip(&source, 256_000, index)
+                .unwrap();
+            assert_eq!(prepared.len(), source.len());
+            assert!(prepared
+                .iter()
+                .zip(&source)
+                .all(|(actual, expected)| actual.to_bits() == expected.to_bits()));
+        }
     }
 
     #[test]
     fn source_clip_resampling_does_not_cross_clip_boundaries() {
         let frontend = PcenFrontend::new(config(), 128_000).unwrap();
         for rate in [48_001, 192_000] {
-            let source_count = frontend.source_clip_samples(rate).unwrap();
-            let mut first_clip = vec![0.0; source_count];
-            first_clip[source_count - 1] = 1.0;
-            let mut second_clip = vec![0.0; source_count];
+            let first_range = frontend.source_clip_range(0, rate).unwrap();
+            let second_range = frontend.source_clip_range(1, rate).unwrap();
+            let mut first_clip = vec![0.0; first_range.len()];
+            first_clip[first_range.len() - 1] = 1.0;
+            let mut second_clip = vec![0.0; second_range.len()];
             second_clip[0] = -1.0;
 
-            let prepared = frontend.prepare_source_clip(&first_clip, rate).unwrap();
+            let prepared = frontend.prepare_source_clip(&first_clip, rate, 0).unwrap();
             let mut independently_resampled =
                 scipy_resample_poly(&first_clip, rate, 256_000).unwrap();
             independently_resampled.resize(128_000, 0.0);
@@ -700,8 +1006,20 @@ mod tests {
 
             let mut combined = first_clip;
             combined.extend(second_clip);
-            combined.resize(source_count * 3 - 1, 0.0);
-            assert_eq!(complete_clip_count(combined.len(), source_count), 2);
+            combined.resize(frontend.source_clip_boundary(3, rate).unwrap() - 1, 0.0);
+            assert_eq!(
+                frontend
+                    .complete_source_clip_count(combined.len(), rate)
+                    .unwrap(),
+                2
+            );
+            let second = frontend
+                .prepare_source_clip(&combined[second_range.clone()], rate, 1)
+                .unwrap();
+            let mut independent_second =
+                scipy_resample_poly(&combined[second_range], rate, 256_000).unwrap();
+            independent_second.resize(128_000, 0.0);
+            assert_eq!(second, independent_second);
             let whole_recording = scipy_resample_poly(&combined, rate, 256_000).unwrap();
             let maximum_boundary_difference = prepared
                 .iter()
@@ -709,6 +1027,103 @@ mod tests {
                 .map(|(separate, whole)| (separate - whole).abs())
                 .fold(0.0f32, f32::max);
             assert!(maximum_boundary_difference > 1e-4, "source rate {rate}");
+        }
+    }
+
+    #[test]
+    fn resampler_length_arithmetic_keeps_intermediates_wider_than_u32() {
+        assert!(24_001u32.checked_mul(256_000).is_none());
+        assert_eq!(
+            resample_output_len(24_000, 256_000, 48_001).unwrap(),
+            127_998
+        );
+        assert_eq!(
+            u32::try_from(resample_output_len(24_001, 256_000, 48_001).unwrap()).unwrap(),
+            128_003
+        );
+        assert_eq!(
+            upfirdn_output_len(1, 24_001, 256_000, 48_001).unwrap(),
+            127_998
+        );
+        assert_eq!(resample_output_len(u128::MAX, 1, 2).unwrap(), 1 << 127);
+        assert!(resample_output_len(u128::MAX, 2, 1).is_err());
+        assert!(resample_output_len(1, 1, 0).is_err());
+        assert!(upfirdn_output_len(2, u128::MAX, 1, 2).is_err());
+        assert!(upfirdn_output_len(1, 1, 1, 0).is_err());
+        assert!(resample_usize(usize::MAX as u128 + 1, "test length").is_err());
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn scipy_polyphase_matches_pre_widening_64_bit_bytes() {
+        // Freeze the original native-width arithmetic as a byte-equality oracle.
+        fn reference(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+            let divisor = gcd(source_rate, target_rate);
+            let up = (target_rate / divisor) as usize;
+            let down = (source_rate / divisor) as usize;
+            let n_out = (samples.len() * up).div_ceil(down);
+            let half_len = 10 * up.max(down);
+            let filter_len = 2 * half_len + 1;
+            let mut coefficients = firwin_kaiser(filter_len, 1.0 / up.max(down) as f64, 5.0);
+            for coefficient in &mut coefficients {
+                *coefficient *= up as f32;
+            }
+            let pre_pad = down - half_len % down;
+            let pre_remove = (half_len + pre_pad) / down;
+            let mut post_pad = 0;
+            while ((samples.len() - 1) * up + filter_len + pre_pad + post_pad - 1) / down + 1
+                < n_out + pre_remove
+            {
+                post_pad += 1;
+            }
+            let mut filter = vec![0.0f32; pre_pad];
+            filter.extend(coefficients);
+            filter.resize(filter.len() + post_pad, 0.0);
+            let mut output = Vec::with_capacity(n_out);
+            for output_index in 0..n_out {
+                let filtered_index = (output_index + pre_remove) * down;
+                let first_input = filtered_index.saturating_sub(filter.len() - 1).div_ceil(up);
+                let last_input = (filtered_index / up).min(samples.len() - 1);
+                let mut sum = 0.0f32;
+                if first_input <= last_input {
+                    for (input_index, sample) in samples
+                        .iter()
+                        .enumerate()
+                        .take(last_input + 1)
+                        .skip(first_input)
+                    {
+                        sum += sample * filter[filtered_index - input_index * up];
+                    }
+                }
+                output.push(sum);
+            }
+            output
+        }
+
+        for (source_rate, target_rate, count) in [
+            (3, 4, 3),
+            (4, 3, 1),
+            (48_000, 256_000, 24_000),
+            (48_001, 256_000, 24_000),
+            (48_001, 256_000, 24_001),
+            (48_003, 256_000, 24_002),
+            (192_000, 256_000, 96_000),
+            (250_000, 256_000, 125_000),
+            (256_001, 256_000, 128_001),
+        ] {
+            let samples: Vec<f32> = (0..count)
+                .map(|index| ((index % 31) as f32 - 15.0) / 16.0)
+                .collect();
+            let expected = reference(&samples, source_rate, target_rate);
+            let actual = scipy_resample_poly(&samples, source_rate, target_rate).unwrap();
+            assert_eq!(actual.len(), expected.len());
+            assert!(
+                actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(left, right)| left.to_bits() == right.to_bits()),
+                "source rate {source_rate}, target rate {target_rate}, count {count}"
+            );
         }
     }
 

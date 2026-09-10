@@ -12,7 +12,7 @@ use ort::value::TensorRef;
 use sparrow_engine_core::postprocess_events::{
     decode_tf_event_clip, project_events_to_recording, AudioEventClip, TfEventHeads,
 };
-use sparrow_engine_core::preprocess_pcen::{complete_clip_count, PcenFrontend};
+use sparrow_engine_core::preprocess_pcen::PcenFrontend;
 use sparrow_engine_types::manifest::{
     InferenceStrategy, ModelManifest, PcenSpectrogramConfig, PostprocessMethod, Precision,
     PreprocessMethod, TfEventPeaksConfig,
@@ -152,17 +152,19 @@ impl AudioEventModel {
         }
         let started = Instant::now();
         let prepared = self.frontend.prepare_audio(audio, &self.model_id)?;
-        let source_clip_samples = self
+        let clip_count = self
             .frontend
-            .source_clip_samples(prepared.original_sample_rate)?;
-        let clip_count = complete_clip_count(prepared.samples.len(), source_clip_samples);
+            .complete_source_clip_count(prepared.samples.len(), prepared.original_sample_rate)?;
         let mut events = Vec::new();
 
         for clip_index in 0..clip_count {
-            let start_sample = clip_index * source_clip_samples;
+            let source_range = self
+                .frontend
+                .source_clip_range(clip_index, prepared.original_sample_rate)?;
             let clip = self.frontend.prepare_source_clip(
-                &prepared.samples[start_sample..start_sample + source_clip_samples],
+                &prepared.samples[source_range],
                 prepared.original_sample_rate,
+                clip_index,
             )?;
             let tensor = self.frontend.preprocess_clip(&clip)?;
             let input = Array4::from_shape_vec(

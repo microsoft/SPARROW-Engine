@@ -7,7 +7,7 @@ use ort::value::TensorRef;
 use sparrow_engine_core::postprocess_events::{
     decode_tf_event_clip, project_events_to_recording, AudioEventClip, TfEventHeads,
 };
-use sparrow_engine_core::preprocess_pcen::{complete_clip_count, PcenFrontend};
+use sparrow_engine_core::preprocess_pcen::PcenFrontend;
 use sparrow_engine_types::manifest::{InferenceStrategy, PostprocessMethod, PreprocessMethod};
 use sparrow_engine_types::{
     AudioEventOpts, AudioEventResult, AudioInput, Result, SparrowEngineError,
@@ -56,17 +56,17 @@ pub fn detect_audio_events(
         (f64::from(clip_duration_s) * preprocess.sample_rate as f64).round() as usize;
     let frontend = PcenFrontend::new(preprocess.clone(), clip_samples)?;
     let prepared = frontend.prepare_audio(audio, &manifest.id)?;
-    let source_clip_samples = frontend.source_clip_samples(prepared.original_sample_rate)?;
-    let clip_count = complete_clip_count(prepared.samples.len(), source_clip_samples);
+    let clip_count = frontend
+        .complete_source_clip_count(prepared.samples.len(), prepared.original_sample_rate)?;
     let session = handle.pin_session()?;
     let mut events = Vec::new();
 
     for clip_index in 0..clip_count {
-        let start_sample = clip_index * source_clip_samples;
-        let end_sample = start_sample + source_clip_samples;
+        let source_range = frontend.source_clip_range(clip_index, prepared.original_sample_rate)?;
         let clip = frontend.prepare_source_clip(
-            &prepared.samples[start_sample..end_sample],
+            &prepared.samples[source_range],
             prepared.original_sample_rate,
+            clip_index,
         )?;
         let tensor = frontend.preprocess_clip(&clip)?;
         let input = Array4::from_shape_vec(
