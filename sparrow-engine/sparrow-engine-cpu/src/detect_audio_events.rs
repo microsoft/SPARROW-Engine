@@ -58,6 +58,11 @@ pub fn detect_audio_events(
     let prepared = frontend.prepare_audio(audio, &manifest.id)?;
     let clip_count = frontend
         .complete_source_clip_count(prepared.samples.len(), prepared.original_sample_rate)?;
+    let analyzed_duration_s = frontend.analyzed_source_duration_s(
+        clip_count,
+        prepared.original_sample_rate,
+        prepared.duration_s,
+    )?;
     let session = handle.pin_session()?;
     let mut events = Vec::new();
 
@@ -135,7 +140,7 @@ pub fn detect_audio_events(
     Ok(AudioEventResult {
         events,
         duration_s: prepared.duration_s,
-        analyzed_duration_s: clip_count as f32 * clip_duration_s,
+        analyzed_duration_s,
         sample_rate: prepared.sample_rate,
         clip_duration_s,
         clip_stride_s,

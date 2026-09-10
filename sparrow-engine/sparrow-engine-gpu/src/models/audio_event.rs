@@ -155,6 +155,11 @@ impl AudioEventModel {
         let clip_count = self
             .frontend
             .complete_source_clip_count(prepared.samples.len(), prepared.original_sample_rate)?;
+        let analyzed_duration_s = self.frontend.analyzed_source_duration_s(
+            clip_count,
+            prepared.original_sample_rate,
+            prepared.duration_s,
+        )?;
         let mut events = Vec::new();
 
         for clip_index in 0..clip_count {
@@ -235,7 +240,7 @@ impl AudioEventModel {
         Ok(AudioEventResult {
             events,
             duration_s: prepared.duration_s,
-            analyzed_duration_s: clip_count as f32 * self.clip_duration_s,
+            analyzed_duration_s,
             sample_rate: prepared.sample_rate,
             clip_duration_s: self.clip_duration_s,
             clip_stride_s: self.clip_stride_s,

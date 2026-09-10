@@ -132,7 +132,7 @@ impl PcenFrontend {
             ..self.source_clip_boundary(next_index, source_sample_rate)?)
     }
 
-    /// Largest clip index whose rounded source boundary fits the recording.
+    /// Complete nonempty source clips, stopping at the first empty rounded range.
     pub fn complete_source_clip_count(
         &self,
         total_source_samples: usize,
@@ -140,7 +140,7 @@ impl PcenFrontend {
     ) -> Result<usize> {
         let (clip_numerator, denominator) = self.source_clip_ratio(source_sample_rate)?;
         // round(x) <= total includes x == total + 1/2 only when total is even.
-        // Keeping the doubled inequality integral also handles zero-length ranges.
+        // Keep the doubled inequality integral to preserve ties-to-even.
         let limit = (total_source_samples as u128)
             .checked_mul(2)
             .and_then(|value| value.checked_add(1))
@@ -156,11 +156,42 @@ impl PcenFrontend {
                 "PCEN complete source clip divisor overflowed u128".to_string(),
             )
         })?;
-        usize::try_from(limit / divisor).map_err(|_| {
+        let mut count = limit / divisor;
+        if clip_numerator < denominator {
+            // Sub-frame windows advance by at most one source frame. The first
+            // repeated boundary ends the prefix where round(n * ratio) == n.
+            let twice_deficit = 2 * (denominator - clip_numerator);
+            let mut nonempty_count = denominator / twice_deficit;
+            if denominator.is_multiple_of(twice_deficit) && !nonempty_count.is_multiple_of(2) {
+                nonempty_count -= 1;
+            }
+            count = count.min(nonempty_count);
+        }
+        usize::try_from(count).map_err(|_| {
             SparrowEngineError::AudioPreprocess(
                 "PCEN complete source clip count overflowed usize".to_string(),
             )
         })
+    }
+
+    /// Actual source coverage, bounded by decoded duration for float representation.
+    pub fn analyzed_source_duration_s(
+        &self,
+        clip_count: usize,
+        source_sample_rate: u32,
+        decoded_duration_s: f32,
+    ) -> Result<f32> {
+        if !decoded_duration_s.is_finite() || decoded_duration_s < 0.0 {
+            return Err(SparrowEngineError::AudioPreprocess(format!(
+                "PCEN decoded duration must be finite and nonnegative, got {decoded_duration_s}"
+            )));
+        }
+        let source_end = self.source_clip_boundary(clip_count, source_sample_rate)?;
+        if clip_count == 0 {
+            return Ok(0.0);
+        }
+        let analyzed_duration_s = (source_end as f64 / f64::from(source_sample_rate)) as f32;
+        Ok(analyzed_duration_s.min(decoded_duration_s))
     }
 
     fn source_clip_ratio(&self, source_sample_rate: u32) -> Result<(u128, u128)> {
@@ -830,11 +861,11 @@ mod tests {
     }
 
     #[test]
-    fn complete_source_clip_count_is_maximal_even_with_repeated_boundaries() {
+    fn complete_source_clip_count_stops_at_first_incomplete_or_empty_range() {
         let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
         for clip_samples in [1, 2, 3, 5] {
             frontend.clip_samples = clip_samples;
-            for target_rate in [1, 2, 3, 8] {
+            for target_rate in [1, 2, 3, 8, 10] {
                 frontend.config.sample_rate = target_rate;
                 for source_rate in [1, 2, 3, 7] {
                     for total in 0..33 {
@@ -844,11 +875,16 @@ mod tests {
                         assert!(
                             frontend.source_clip_boundary(count, source_rate).unwrap() <= total
                         );
+                        for index in 0..count {
+                            let range = frontend.source_clip_range(index, source_rate).unwrap();
+                            assert!(!range.is_empty());
+                            assert!(range.end <= total);
+                        }
+                        let next = frontend.source_clip_range(count, source_rate).unwrap();
                         assert!(
-                            frontend
-                                .source_clip_boundary(count + 1, source_rate)
-                                .unwrap()
-                                > total
+                            next.is_empty() || next.end > total,
+                            "clip samples {clip_samples}, model rate {target_rate}, \
+                             source rate {source_rate}, total {total}, count {count}"
                         );
                     }
                 }
@@ -879,7 +915,10 @@ mod tests {
         assert!(frontend.source_clip_boundary(usize::MAX, u32::MAX).is_err());
         assert!(frontend.source_clip_range(usize::MAX, 128_000).is_err());
         frontend.clip_samples = 1;
-        assert!(frontend.complete_source_clip_count(usize::MAX, 1).is_err());
+        assert_eq!(
+            frontend.complete_source_clip_count(usize::MAX, 1).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -891,12 +930,174 @@ mod tests {
             assert!(frontend.source_clip_boundary(0, source_rate).is_err());
             assert!(frontend.source_clip_range(0, source_rate).is_err());
             assert!(frontend.complete_source_clip_count(0, source_rate).is_err());
+            for count in [0, 1] {
+                assert!(frontend
+                    .analyzed_source_duration_s(count, source_rate, 1.0)
+                    .is_err());
+            }
             assert!(frontend.prepare_source_clip(&[], source_rate, 0).is_err());
         }
         frontend.config.sample_rate = 256_000;
         frontend.clip_samples = 0;
         assert!(frontend.source_clip_boundary(0, 48_001).is_err());
         assert!(frontend.complete_source_clip_count(0, 48_001).is_err());
+        assert!(frontend.analyzed_source_duration_s(0, 48_001, 1.0).is_err());
+    }
+
+    #[test]
+    fn empty_first_source_range_never_skips_to_later_nonempty_clips() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        assert_eq!(frontend.source_clip_range(0, 1).unwrap(), 0..0);
+        assert_eq!(frontend.source_clip_range(1, 1).unwrap(), 0..1);
+        for total in [0, 1, 2, 10, 1_000, usize::MAX] {
+            let count = frontend.complete_source_clip_count(total, 1).unwrap();
+            assert_eq!(count, 0);
+            assert_eq!(
+                frontend
+                    .analyzed_source_duration_s(count, 1, total as f32)
+                    .unwrap()
+                    .to_bits(),
+                0.0f32.to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn subframe_clip_count_preserves_nonempty_prefix_and_tie_parity() {
+        let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for (clip_samples, target_rate, expected) in [
+            (1, 3, 0),
+            (1, 2, 0),
+            (2, 3, 1),
+            (3, 4, 2),
+            (5, 6, 2),
+            (9, 10, 4),
+        ] {
+            frontend.clip_samples = clip_samples;
+            frontend.config.sample_rate = target_rate;
+            assert_eq!(
+                frontend.complete_source_clip_count(100, 1).unwrap(),
+                expected
+            );
+            let empty = frontend.source_clip_range(expected, 1).unwrap();
+            assert!(empty.is_empty());
+            assert!(frontend.source_clip_boundary(100, 1).unwrap() > empty.end);
+        }
+    }
+
+    #[test]
+    fn analyzed_source_duration_uses_actual_rounded_boundary() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for (total, expected_count, expected_end) in [
+            (0, 0, 0),
+            (23_999, 0, 0),
+            (24_000, 1, 24_000),
+            (24_001, 1, 24_000),
+            (48_000, 1, 24_000),
+            (48_001, 2, 48_001),
+            (60_001, 2, 48_001),
+        ] {
+            let prepared = frontend
+                .prepare_audio(
+                    &AudioInput::Samples {
+                        data: vec![0.0; total],
+                        sample_rate: 48_001,
+                    },
+                    "event",
+                )
+                .unwrap();
+            let count = frontend
+                .complete_source_clip_count(prepared.samples.len(), prepared.original_sample_rate)
+                .unwrap();
+            assert_eq!(count, expected_count);
+            let analyzed = frontend
+                .analyzed_source_duration_s(
+                    count,
+                    prepared.original_sample_rate,
+                    prepared.duration_s,
+                )
+                .unwrap();
+            assert_eq!(analyzed, (expected_end as f64 / 48_001.0) as f32);
+            assert!(analyzed <= prepared.duration_s);
+            if total == 24_000 {
+                assert_eq!(analyzed, prepared.duration_s);
+                assert!(analyzed < 0.5);
+                assert!(!frontend.source_clip_range(0, 48_001).unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn analyzed_source_duration_preserves_even_rate_coverage() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for rate in [2, 48_000, 192_000, 250_000, 256_000] {
+            for count in 0..9 {
+                let end = frontend.source_clip_boundary(count, rate).unwrap();
+                let next = frontend.source_clip_boundary(count + 1, rate).unwrap();
+                for total in [end, next - 1] {
+                    let actual_count = frontend.complete_source_clip_count(total, rate).unwrap();
+                    assert_eq!(actual_count, count);
+                    assert_eq!(
+                        frontend
+                            .analyzed_source_duration_s(
+                                actual_count,
+                                rate,
+                                total as f32 / rate as f32,
+                            )
+                            .unwrap(),
+                        count as f32 * 0.5
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn analyzed_source_duration_clamps_only_to_decoded_float_duration() {
+        let frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        let actual = (24_000.0f64 / 48_001.0) as f32;
+        assert_eq!(
+            frontend.analyzed_source_duration_s(1, 48_001, 1.0).unwrap(),
+            actual
+        );
+        let decoded = f32::from_bits(actual.to_bits() - 1);
+        assert_eq!(
+            frontend
+                .analyzed_source_duration_s(1, 48_001, decoded)
+                .unwrap(),
+            decoded
+        );
+        assert_eq!(
+            frontend.analyzed_source_duration_s(0, 48_001, 1.0).unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn analyzed_source_duration_rejects_invalid_metadata_atomically() {
+        let mut frontend = PcenFrontend::new(config(), 128_000).unwrap();
+        for count in [0, 1, 2] {
+            for duration in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+                let error = frontend
+                    .analyzed_source_duration_s(count, 48_001, duration)
+                    .unwrap_err();
+                assert!(matches!(error, SparrowEngineError::AudioPreprocess(message)
+                        if message.contains("finite and nonnegative")));
+            }
+            let error = frontend
+                .analyzed_source_duration_s(count, 0, 1.0)
+                .unwrap_err();
+            assert!(matches!(error, SparrowEngineError::AudioPreprocess(message)
+                    if message.contains("sample rates must be positive")));
+        }
+        assert_eq!(
+            frontend.analyzed_source_duration_s(2, 48_001, 1.0).unwrap(),
+            1.0
+        );
+        frontend.clip_samples = usize::MAX;
+        assert!(frontend
+            .analyzed_source_duration_s(2, 256_000, 1.0)
+            .is_err());
     }
 
     #[test]
