@@ -97,4 +97,176 @@ grep -Fq 'trap - EXIT' "$HELPER"  || fail "helper cleanup does not disable its o
 grep -Eiq 'cleanup FAILED|refusing to recursively delete' "$HELPER" \
     || fail "helper cleanup does not emit an explicit failure/refusal error"
 
+echo "[9] both flavors stage packaging only under target/wheels and regenerate RECORD"
+if grep -Eq 'FLAVOR_SENTINEL|write_flavor_sentinel|remove_flavor_sentinel|python/sparrow_engine/_flavor\.py|\.console-scripts\.|\.wheel-metadata\.|pyproject\.toml\.bak|sed -i|trash-put|ls -t' "$BUILD_SH"; then
+    fail "build.sh contains source-local packaging writes, undeclared cleanup, or stale-wheel selection"
+fi
+grep -Fq 'wheels_dir="$(cd .. && pwd -P)/target/wheels"' "$BUILD_SH" \
+    || fail "packaging output root is not the declared target/wheels"
+grep -Fq 'mktemp -d "$wheels_dir/.wheel-packaging.XXXXXX"' "$BUILD_SH" \
+    || fail "packaging scratch is not output-owned and run-unique"
+grep -Fq -- '--out "$scratch/raw"' "$BUILD_SH" || fail "maturin does not isolate newly built wheels"
+grep -Fq 'repack_wheel "$wheel" "$scratch" "$flavor"' "$BUILD_SH" || fail "flavors do not share wheel repacking"
+grep -Fq 'build_wheel cpu' "$BUILD_SH" || fail "CPU does not use output-owned packaging"
+grep -Fq 'build_wheel gpu' "$BUILD_SH" || fail "GPU does not use output-owned packaging"
+grep -Fq 'wheel unpack "$wheel" -d "$scratch/unpacked"' "$BUILD_SH" || fail "wheel unpack escapes scratch"
+grep -Fq 'wheel pack "$unpacked" -d "$scratch/packed"' "$BUILD_SH" || fail "RECORD-regenerating wheel pack is missing"
+grep -Fq -- '--wheel-dir "$scratch/repaired/"' "$BUILD_SH" || fail "auditwheel repair escapes scratch"
+console_code="$(sed -n '/^report_console_scripts() {/,/^}/p' "$BUILD_SH")"
+printf '%s\n' "$console_code" | grep -Fq 'with ZipFile(' || fail "console metadata is not read directly from the wheel"
+if printf '%s\n' "$console_code" | grep -Eq 'mktemp|wheel unpack|mkdir'; then
+    fail "console inspection must not create packaging scratch"
+fi
+grep -Fq 'cleanup FAILED' "$BUILD_SH" || fail "packaging cleanup failures are not surfaced"
+grep -Fq 'trap - EXIT' "$BUILD_SH" || fail "packaging cleanup does not disable its own trap"
+
+echo "[10] real wheel unpack/repack preserves flavor metadata, RECORD, and cleanup failures"
+# Only compilation/repair are fixture commands here; packaging runs the actual
+# build.sh functions with its existing wheel dependency. Manual tests build both
+# native wheels and exercise the real Linux auditwheel gate separately.
+uv run --no-project --with wheel python - "$BUILD_SH" "$SPARROW_ENGINE_DIR/target/wheels" <<'PY'
+import base64
+import csv
+from email.parser import Parser
+import hashlib
+import io
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+from zipfile import ZipFile
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+helpers = source[source.index("cleanup_packaging_dir() {"):source.index('\ncase "$SPARROW_ENGINE_FLAVOR" in')]
+output_root = Path(sys.argv[2]).resolve()
+output_root.mkdir(parents=True, exist_ok=True)
+stem = "sparrow_engine-0.0.0"
+metadata = (
+    "Metadata-Version: 2.1\nName: sparrow-engine\nVersion: 0.0.0\n"
+    "Summary: API (sparrow-engine CPU pipeline)\n"
+    "Requires-Dist: onnxruntime>=1.25.1,<1.26\nRequires-Dist: numpy>=1.26\n\n"
+    "Unchanged body: Name: sparrow-engine; onnxruntime.\n"
+)
+
+def digest(data):
+    return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+
+def make_seed(path):
+    payload = {
+        "sparrow_engine/__init__.py": b"# wheel fixture\n",
+        f"{stem}.data/data/example.txt": b"wheel data\n",
+        f"{stem}.dist-info/METADATA": metadata.encode(),
+        f"{stem}.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        f"{stem}.dist-info/entry_points.txt": b"[console_scripts]\nexample = sparrow_engine:main\n",
+    }
+    record = f"{stem}.dist-info/RECORD"
+    rows = io.StringIO()
+    csv.writer(rows, lineterminator="\n").writerows(
+        [(name, digest(data), str(len(data))) for name, data in payload.items()] + [(record, "", "")]
+    )
+    payload[record] = rows.getvalue().encode()
+    with ZipFile(path, "w") as wheel:
+        for name, data in payload.items():
+            wheel.writestr(name, data)
+
+with tempfile.TemporaryDirectory(prefix=".wheel-contract.", dir=output_root) as temporary:
+    root = Path(temporary)
+    seed = root / f"{stem}-py3-none-any.whl"
+    make_seed(seed)
+    fixture_maturin = """
+fixture_maturin() {
+    local output=""
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in --out) output="$2"; shift 2 ;; *) shift ;; esac
+    done
+    [[ -n "$output" ]] || return 65
+    cp -- "$seed" "$output/"
+}
+"""
+
+    def run_case(label, command, expected=0, cleanup_failed=False, stale=False):
+        case = root / label
+        checkout = case / "workspace" / "sparrow-engine-python"
+        package = checkout / "python" / "sparrow_engine"
+        package.mkdir(parents=True)
+        (checkout / "pyproject.toml").write_text("unchanged CPU template\n")
+        (package / "__init__.py").write_text("unchanged source\n")
+        before = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
+        wheels = case / "workspace" / "target" / "wheels"
+        wheels.mkdir(parents=True)
+        if stale:
+            (wheels / seed.name).write_bytes(seed.read_bytes())
+        script = case / "run.sh"
+        script.write_text(
+            "set -euo pipefail\n" + helpers + "\nIS_WINDOWS=1\nMATURIN=fixture_maturin\n"
+            + "seed=" + shlex.quote(str(seed)) + "\n" + fixture_maturin + command + "\n"
+        )
+        result = subprocess.run(["bash", str(script)], cwd=checkout, capture_output=True, text=True)
+        assert result.returncode == expected, (label, result.returncode, result.stdout, result.stderr)
+        after = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
+        assert before == after, (label, "source checkout changed")
+        scratch = list(wheels.glob(".wheel-packaging.*"))
+        assert bool(scratch) == cleanup_failed, (label, "unexpected scratch cleanup state", scratch)
+        assert ("cleanup FAILED" in result.stderr) == cleanup_failed, (label, result.stderr)
+        print(f"PASS: {label} (exit {result.returncode})")
+        return wheels, result
+
+    for flavor in ("cpu", "gpu"):
+        wheels, result = run_case(flavor, f"build_wheel {flavor}")
+        paths = list(wheels.glob("*.whl"))
+        assert len(paths) == 1, paths
+        expected_stem = stem if flavor == "cpu" else stem.replace("sparrow_engine-", "sparrow_engine_gpu-")
+        assert paths[0].name == f"{expected_stem}-py3-none-any.whl"
+        with ZipFile(paths[0]) as wheel:
+            names = wheel.namelist()
+            assert len(names) == len(set(names)), "duplicate wheel members"
+            meta = wheel.read(f"{expected_stem}.dist-info/METADATA").decode()
+            headers = Parser().parsestr(meta)
+            assert headers["Name"] == ("sparrow-engine" if flavor == "cpu" else "sparrow-engine-gpu")
+            assert headers["Version"] == "0.0.0"
+            assert headers.get_all("Conflicts-Dist", []) == []
+            assert headers.get_all("Provides-Dist", []) == ([] if flavor == "cpu" else ["sparrow-engine"])
+            dependencies = headers.get_all("Requires-Dist", [])
+            runtime = "onnxruntime" if flavor == "cpu" else "onnxruntime-gpu"
+            assert f"{runtime}>=1.25.1,<1.26" in dependencies
+            assert "numpy>=1.26" in dependencies
+            if flavor == "cpu":
+                assert meta == metadata
+            else:
+                assert "(sparrow-engine GPU pipeline)" in headers["Summary"]
+                for dependency in ("nvidia-cudnn-cu12>=9,<10", "nvidia-cublas-cu12", "nvidia-curand-cu12", "nvidia-cufft-cu12"):
+                    assert f'{dependency}; sys_platform == "linux"' in dependencies
+                assert len(dependencies) == 6
+                assert not any(name.startswith(stem + ".dist-info/") or name.startswith(stem + ".data/") for name in names)
+            assert meta.endswith("Unchanged body: Name: sparrow-engine; onnxruntime.\n")
+            assert wheel.read(f"{expected_stem}.data/data/example.txt") == b"wheel data\n"
+            assert wheel.read("sparrow_engine/_flavor.py").decode().endswith(f'FLAVOR = "{flavor}"\n')
+            record = f"{expected_stem}.dist-info/RECORD"
+            rows = list(csv.reader(io.StringIO(wheel.read(record).decode())))
+            assert len(rows) == len(names) and {row[0] for row in rows} == set(names)
+            for name, checksum, size in rows:
+                if name == record:
+                    assert checksum == size == ""
+                else:
+                    data = wheel.read(name)
+                    assert checksum == digest(data) and size == str(len(data)), name
+        assert "example = sparrow_engine:main" in result.stdout
+
+    wheels, result = run_case("missing-output", "fixture_maturin() { :; }\nbuild_wheel cpu", 1, stale=True)
+    assert "expected exactly one new" in result.stderr
+    assert (wheels / seed.name).read_bytes() == seed.read_bytes(), "stale wheel was changed"
+    wheels, _ = run_case("build-failure", "fixture_maturin() { return 42; }\nbuild_wheel cpu", 42)
+    assert not list(wheels.glob("*.whl"))
+    wheels, _ = run_case("repair-failure", "IS_WINDOWS=0\nauditwheel() { return 53; }\nbuild_wheel gpu", 53)
+    assert not list(wheels.glob("*.whl")), "unrepaired GPU wheel escaped"
+    wheels, result = run_case("missing-repair-output", "IS_WINDOWS=0\nauditwheel() { :; }\nbuild_wheel gpu", 1)
+    assert "expected exactly one new" in result.stderr and not list(wheels.glob("*.whl"))
+    run_case("cleanup-failure", "rm() { return 47; }\nbuild_wheel cpu", 3, cleanup_failed=True)
+    run_case("build-and-cleanup-failure", "fixture_maturin() { return 42; }\nrm() { return 47; }\nbuild_wheel cpu", 42, cleanup_failed=True)
+    _, result = run_case("cleanup-refuses-source", 'cleanup_packaging_dir "$PWD" "$(cd ../target/wheels && pwd -P)"', 2)
+    assert "cleanup refuses scratch outside" in result.stderr
+print("PASS: CPU/GPU metadata, RECORD regeneration, fresh-output selection, hard repair, and exact cleanup")
+PY
+
 echo "PASS: manylinux GPU wheel build contract (release-locked env, dispatch, no auditwheel escape, docs not overclaiming)"
