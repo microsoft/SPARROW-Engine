@@ -2,6 +2,7 @@
 //!
 //! Cached spectrogram preprocessing is intentionally shared CPU logic. Member
 //! ONNX sessions use the GPU flavor's CUDA-first execution-provider policy.
+//! TF32 is disabled for these members to retain full-mantissa FP32 probabilities.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -484,7 +485,7 @@ impl Engine {
             id,
             None,
             &gpu,
-            CudaEpConfig::new(device_id),
+            CudaEpConfig::new(device_id).with_tf32(false),
             path,
             "audio_frame_ensemble",
         )

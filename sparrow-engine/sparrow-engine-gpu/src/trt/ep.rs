@@ -137,6 +137,7 @@ pub(crate) struct CudaEpConfig {
     pub(crate) device_id: i32,
     pub(crate) compute_stream: Option<*mut ()>,
     pub(crate) conv_algorithm_search: Option<ConvAlgorithmSearch>,
+    pub(crate) use_tf32: Option<bool>,
 }
 
 impl CudaEpConfig {
@@ -145,6 +146,7 @@ impl CudaEpConfig {
             device_id,
             compute_stream: None,
             conv_algorithm_search: None,
+            use_tf32: None,
         }
     }
 
@@ -155,6 +157,12 @@ impl CudaEpConfig {
 
     pub(crate) fn with_conv_algorithm_search(mut self, search: ConvAlgorithmSearch) -> Self {
         self.conv_algorithm_search = Some(search);
+        self
+    }
+
+    /// Override CUDA math without changing TensorRT eligibility or precision.
+    pub(crate) const fn with_tf32(mut self, enabled: bool) -> Self {
+        self.use_tf32 = Some(enabled);
         self
     }
 }
@@ -276,7 +284,10 @@ impl<'a> TrtEpBuilder<'a> {
                     );
                 }
                 TrtProviderKind::Cuda => {
-                    let use_tf32 = effective_trt.is_none_or(|config| config.cuda_tf32);
+                    let use_tf32 = self
+                        .cuda
+                        .use_tf32
+                        .unwrap_or_else(|| effective_trt.is_none_or(|config| config.cuda_tf32));
                     providers.push(self.build_cuda_provider(use_tf32).error_on_failure())
                 }
                 TrtProviderKind::Cpu => providers.push(ort::ep::CPU::default().build()),
@@ -564,6 +575,83 @@ mod tests {
             profile_opt: None,
             profile_max: None,
         }
+    }
+
+    #[test]
+    fn cuda_tf32_override_reaches_provider_and_preserves_existing_defaults() {
+        let gpu = GpuIdentity {
+            name: "test GPU".into(),
+            sm_major: 8,
+            sm_minor: 9,
+        };
+        for (manifest_tf32, override_tf32, expected) in [
+            (None, None, true),
+            (None, Some(false), false),
+            (None, Some(true), true),
+            (Some(false), None, false),
+            (Some(false), Some(false), false),
+            (Some(false), Some(true), true),
+            (Some(true), None, true),
+            (Some(true), Some(false), false),
+            (Some(true), Some(true), true),
+        ] {
+            let trt = manifest_tf32.map(|cuda_tf32| TrtConfig {
+                cuda_tf32,
+                ..enabled_trt()
+            });
+            let cuda = match override_tf32 {
+                Some(value) => CudaEpConfig::new(2).with_tf32(value),
+                None => CudaEpConfig::new(2),
+            };
+            let providers = TrtEpBuilder::new(
+                "test",
+                trt.as_ref(),
+                &gpu,
+                cuda,
+                Path::new("unused.onnx"),
+                "",
+            )
+            .execution_providers()
+            .unwrap();
+            assert_eq!(providers.len(), 2);
+            assert!(providers[1].downcast_ref::<ort::ep::CPU>().is_some());
+            let actual = providers[0].downcast_ref::<ort::ep::CUDA>().unwrap();
+            let expected = ort::ep::CUDA::default()
+                .with_device_id(2)
+                .with_tf32(expected);
+            assert_eq!(
+                format!("{actual:?}"),
+                format!("{expected:?}"),
+                "manifest={manifest_tf32:?}, override={override_tf32:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cuda_tf32_override_keeps_device_and_convolution_policy() {
+        let gpu = GpuIdentity {
+            name: "test GPU".into(),
+            sm_major: 8,
+            sm_minor: 9,
+        };
+        let providers = TrtEpBuilder::new(
+            "test",
+            None,
+            &gpu,
+            CudaEpConfig::new(3)
+                .with_conv_algorithm_search(ConvAlgorithmSearch::Heuristic)
+                .with_tf32(false),
+            Path::new("unused.onnx"),
+            "",
+        )
+        .execution_providers()
+        .unwrap();
+        let actual = providers[0].downcast_ref::<ort::ep::CUDA>().unwrap();
+        let expected = ort::ep::CUDA::default()
+            .with_device_id(3)
+            .with_tf32(false)
+            .with_conv_algorithm_search(ConvAlgorithmSearch::Heuristic);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
 
     #[test]
