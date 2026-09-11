@@ -120,6 +120,19 @@ fn trt_state_view_to_dict(
     Ok(dict.into())
 }
 
+fn require_trt_ready(view: sparrow_engine::TrtStateView) -> PyResult<()> {
+    if view.state == sparrow_engine::TrtState::TrtReady {
+        return Ok(());
+    }
+    Err(SparrowEngineError::new_err(format!(
+        "TensorRT warm-up did not become ready ({}): {}",
+        view.state.as_token(),
+        view.detail
+            .as_deref()
+            .unwrap_or("warm-up returned no terminal detail")
+    )))
+}
+
 fn warmup_outcome_to_dict(
     py: Python<'_>,
     outcome: sparrow_engine::WarmupOutcome,
@@ -564,22 +577,22 @@ impl AudioResult {
 #[pyclass(frozen, from_py_object, module = "sparrow_engine._sparrow_engine_core")]
 #[derive(Clone)]
 pub struct AudioEvent {
-        #[pyo3(get)]
-        pub start_time_s: f32,
-        #[pyo3(get)]
-        pub end_time_s: f32,
-        #[pyo3(get)]
-        pub low_freq_hz: f32,
-        #[pyo3(get)]
-        pub high_freq_hz: f32,
-        #[pyo3(get)]
-        pub peak_time_s: f32,
-        #[pyo3(get)]
-        pub peak_freq_hz: f32,
-        #[pyo3(get)]
-        pub confidence: f32,
-        #[pyo3(get)]
-        pub classes: Vec<AudioClass>,
+    #[pyo3(get)]
+    pub start_time_s: f32,
+    #[pyo3(get)]
+    pub end_time_s: f32,
+    #[pyo3(get)]
+    pub low_freq_hz: f32,
+    #[pyo3(get)]
+    pub high_freq_hz: f32,
+    #[pyo3(get)]
+    pub peak_time_s: f32,
+    #[pyo3(get)]
+    pub peak_freq_hz: f32,
+    #[pyo3(get)]
+    pub confidence: f32,
+    #[pyo3(get)]
+    pub classes: Vec<AudioClass>,
 }
 
 #[pymethods]
@@ -598,22 +611,22 @@ impl AudioEvent {
 
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct AudioEventResult {
-        #[pyo3(get)]
-        pub model_id: String,
-        #[pyo3(get)]
-        pub duration_s: f32,
-        #[pyo3(get)]
-        pub analyzed_duration_s: f32,
-        #[pyo3(get)]
-        pub sample_rate: u32,
-        #[pyo3(get)]
-        pub clip_duration_s: f32,
-        #[pyo3(get)]
-        pub clip_stride_s: f32,
-        #[pyo3(get)]
-        pub processing_time_ms: f32,
-        #[pyo3(get)]
-        pub events: Vec<AudioEvent>,
+    #[pyo3(get)]
+    pub model_id: String,
+    #[pyo3(get)]
+    pub duration_s: f32,
+    #[pyo3(get)]
+    pub analyzed_duration_s: f32,
+    #[pyo3(get)]
+    pub sample_rate: u32,
+    #[pyo3(get)]
+    pub clip_duration_s: f32,
+    #[pyo3(get)]
+    pub clip_stride_s: f32,
+    #[pyo3(get)]
+    pub processing_time_ms: f32,
+    #[pyo3(get)]
+    pub events: Vec<AudioEvent>,
 }
 
 #[pymethods]
@@ -1196,7 +1209,7 @@ impl PyEngine {
                         "TensorRT warm-up is not supported for audio frame ensembles",
                     ));
                 }
-                self.engine.trt_warmup_blocking(id).map_err(to_pyerr)?;
+                require_trt_ready(self.engine.trt_warmup_blocking(id).map_err(to_pyerr)?)?;
             }
             Ok(())
         })
@@ -1540,9 +1553,7 @@ impl PyEngine {
                 );
             }
             if errors == total && total > 0 {
-                return Err(SparrowEngineError::new_err(
-                    "All files failed processing.",
-                ));
+                return Err(SparrowEngineError::new_err("All files failed processing."));
             }
             Ok(results)
         })
@@ -2455,6 +2466,104 @@ fn _sparrow_engine_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn trt_wait_state_dict_retains_timeout_instead_of_raising() {
+        Python::initialize();
+        Python::attach(|py| {
+            let detail = "TensorRT warm-up exceeded 300 seconds without completing";
+            let value = trt_state_view_to_dict(
+                py,
+                sparrow_engine::TrtStateView {
+                    state: sparrow_engine::TrtState::TrtError,
+                    detail: Some(detail.to_string()),
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                value
+                    .bind(py)
+                    .get_item("state")
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "trt_error",
+            );
+            assert_eq!(
+                value
+                    .bind(py)
+                    .get_item("detail")
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                detail,
+            );
+        });
+    }
+
+    #[test]
+    fn trt_load_requires_ready_and_raises_catchable_retained_detail() {
+        Python::initialize();
+        Python::attach(|py| {
+            let detail = "TensorRT warm-up exceeded 300 seconds without completing";
+            for state in [
+                sparrow_engine::TrtState::TrtError,
+                sparrow_engine::TrtState::TrtWarming,
+                sparrow_engine::TrtState::CudaReady,
+                sparrow_engine::TrtState::NotLoaded,
+                sparrow_engine::TrtState::Unsupported,
+            ] {
+                let error = require_trt_ready(sparrow_engine::TrtStateView {
+                    state,
+                    detail: Some(detail.to_string()),
+                })
+                .unwrap_err();
+                assert!(error.is_instance_of::<SparrowEngineError>(py));
+                assert!(error.is_instance_of::<pyo3::exceptions::PyException>(py));
+                assert!(error.to_string().contains(detail));
+            }
+            require_trt_ready(sparrow_engine::TrtStateView {
+                state: sparrow_engine::TrtState::TrtReady,
+                detail: None,
+            })
+            .unwrap();
+        });
+    }
+
+    #[test]
+    fn trt_async_outcome_dicts_preserve_started_and_ready() {
+        Python::initialize();
+        Python::attach(|py| {
+            for (outcome, token) in [
+                (sparrow_engine::WarmupOutcome::Started, "started"),
+                (sparrow_engine::WarmupOutcome::AlreadyReady, "already_ready"),
+            ] {
+                let value = warmup_outcome_to_dict(py, outcome).unwrap();
+                assert_eq!(
+                    value
+                        .bind(py)
+                        .get_item("outcome")
+                        .unwrap()
+                        .extract::<String>()
+                        .unwrap(),
+                    token,
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn trt_cpu_rejection_remains_catchable_unsupported_hardware() {
+        Python::initialize();
+        Python::attach(|py| {
+            let error = to_pyerr(sparrow_engine::SparrowEngineError::TrtWarmupRejected(
+                sparrow_engine::TrtWarmupRejection::CpuBuild,
+            ));
+            assert!(error.is_instance_of::<TrtUnsupportedHardware>(py));
+            assert!(error.is_instance_of::<pyo3::exceptions::PyException>(py));
+            assert!(error.to_string().contains("cpu_build"));
+        });
+    }
 
     fn native_model_info(id: &str, model_type: ModelType) -> NativeModelInfo {
         NativeModelInfo {

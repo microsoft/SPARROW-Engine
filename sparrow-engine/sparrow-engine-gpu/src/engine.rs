@@ -84,7 +84,7 @@ use crate::models::encoder::EncoderModel;
 use crate::models::tiled::TiledModel;
 use crate::models::yolo::YoloModel;
 use crate::trt::ep::{find_tensorrt_runtime, sm_supports_trt, trt_disabled_env_is_set};
-use crate::trt::warm::{BeginWarm, WarmSlot};
+use crate::trt::warm::{BeginWarm, DeadlineWatcher, WarmSlot, WarmTicket, WarmWorkerGuard};
 
 // ---------------------------------------------------------------------------
 // Singleton guard
@@ -312,7 +312,7 @@ pub struct Engine {
     /// race in [`Engine::get_or_load_model`]. Mirrors `sparrow-engine-cpu`.
     pub(crate) loading_lock: Mutex<()>,
     trt_build_gate: Arc<Mutex<()>>,
-    trt_warmup_threads: Mutex<HashMap<String, std::thread::JoinHandle<()>>>,
+    trt_warmup_threads: Mutex<TrtWarmupRegistry>,
     trt_hw_capable: bool,
 }
 
@@ -460,18 +460,158 @@ fn recover_trt_build_gate(build_gate: &Mutex<()>) -> MutexGuard<'_, ()> {
     }
 }
 
-/// Acquire the process-wide TensorRT build gate and THEN arm the active-build
-/// timeout clock for `warm`, immediately before the caller runs the ORT build.
-/// Splitting the gate wait from the clock start is the queue-013 fix: a model
-/// waiting behind the gate is `TrtWarming` (queued) with a disarmed clock, so
-/// that queue time never counts toward the 300s active-build timeout.
-fn acquire_build_gate_and_arm<'a>(
-    build_gate: &'a Mutex<()>,
-    warm: &WarmSlot,
-) -> MutexGuard<'a, ()> {
-    let gate = recover_trt_build_gate(build_gate);
-    warm.mark_build_started();
-    gate
+struct TrtWarmupJob {
+    model_id: String,
+    // Retain the incarnation allocation, not just its address or reusable ID.
+    incarnation: Arc<AtomicBool>,
+    ticket: WarmTicket,
+    thread: std::thread::JoinHandle<()>,
+}
+
+#[derive(Default)]
+struct TrtWarmupRegistry {
+    jobs: Vec<TrtWarmupJob>,
+    shutting_down: bool,
+}
+
+impl TrtWarmupRegistry {
+    // The caller holds the registry and model-map locks through admission,
+    // spawn and registration. A vector retains every incarnation/generation;
+    // reloading an ID can never overwrite a still-live native thread handle.
+    fn admit_with(
+        &mut self,
+        id: &str,
+        incarnation: &Arc<AtomicBool>,
+        warm: &Arc<WarmSlot>,
+        spawn: impl FnOnce(WarmTicket) -> std::io::Result<std::thread::JoinHandle<()>>,
+    ) -> Result<BeginWarm> {
+        if self.shutting_down {
+            return Err(SparrowEngineError::Ort(
+                "TensorRT warm-up rejected during engine shutdown".to_string(),
+            ));
+        }
+        let admission = warm.begin_or_join()?;
+        if let BeginWarm::Owner(ticket) = &admission {
+            match spawn(ticket.clone()) {
+                Ok(thread) => self.jobs.push(TrtWarmupJob {
+                    model_id: id.to_string(),
+                    incarnation: Arc::clone(incarnation),
+                    ticket: ticket.clone(),
+                    thread,
+                }),
+                Err(error) => {
+                    ticket.fail(format!("failed to spawn TensorRT warm-up thread: {error}"));
+                    ticket.retire();
+                    return Ok(BeginWarm::Rejected(ticket.clone()));
+                }
+            }
+        }
+        Ok(admission)
+    }
+
+    fn take_finished(&mut self) -> Vec<TrtWarmupJob> {
+        let (finished, pending) = std::mem::take(&mut self.jobs)
+            .into_iter()
+            .partition(|job| job.thread.is_finished());
+        self.jobs = pending;
+        finished
+    }
+
+    fn close(&mut self) -> Vec<TrtWarmupJob> {
+        self.shutting_down = true;
+        for job in &self.jobs {
+            job.ticket.cancel_queued();
+        }
+        std::mem::take(&mut self.jobs)
+    }
+}
+
+fn retained_trt_error(ticket: &WarmTicket) -> SparrowEngineError {
+    SparrowEngineError::Ort(
+        ticket
+            .retained_result()
+            .and_then(|view| view.detail)
+            .unwrap_or_else(|| "TensorRT warm-up rejected without a terminal detail".to_string()),
+    )
+}
+
+fn trt_admission_outcome(admission: &BeginWarm) -> Result<WarmupOutcome> {
+    match admission {
+        BeginWarm::AlreadyReady => Ok(WarmupOutcome::AlreadyReady),
+        BeginWarm::Owner(_) | BeginWarm::Coalesced(_) => Ok(WarmupOutcome::Started),
+        BeginWarm::Rejected(ticket) => Err(retained_trt_error(ticket)),
+    }
+}
+
+fn join_trt_jobs(jobs: Vec<TrtWarmupJob>) {
+    for job in jobs {
+        if let Err(payload) = job.thread.join() {
+            let detail = format!(
+                "TensorRT warm-up thread panicked: {}",
+                panic_payload_to_string(payload)
+            );
+            tracing::error!(
+                model_id = %job.model_id,
+                incarnation = ?Arc::as_ptr(&job.incarnation),
+                generation = job.ticket.generation(),
+                %detail,
+            );
+            job.ticket.fail(detail);
+        }
+        job.ticket.retire();
+    }
+}
+
+fn arm_current_trt_attempt(
+    models: &RwLock<HashMap<String, Arc<LoadedModel>>>,
+    id: &str,
+    expected: &LoadedModel,
+    ticket: &WarmTicket,
+) -> Result<bool> {
+    let models = models.read().map_err(|_| {
+        SparrowEngineError::Ort("models lock poisoned before TensorRT warm-up build".to_string())
+    })?;
+    if !models
+        .get(id)
+        .is_some_and(|current| Arc::ptr_eq(&current.active, &expected.active))
+        || !expected.active.load(Ordering::Acquire)
+    {
+        ticket.fail("model was unloaded or reloaded before TensorRT warm-up build");
+        return Ok(false);
+    }
+    Ok(ticket.arm())
+}
+
+fn run_trt_warmup_task(
+    build_gate: &Mutex<()>,
+    ticket: &WarmTicket,
+    start: impl FnOnce() -> Result<bool>,
+    build_and_commit: impl FnOnce() -> Result<()>,
+    spawn_watcher: impl FnOnce(WarmTicket) -> std::io::Result<DeadlineWatcher>,
+) {
+    let mut cleanup = WarmWorkerGuard::new(ticket.clone());
+    let _gate = recover_trt_build_gate(build_gate);
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        if !start()? {
+            return Ok(());
+        }
+        cleanup.watch_with(spawn_watcher).map_err(|error| {
+            SparrowEngineError::Ort(format!(
+                "failed to spawn TensorRT warm-up deadline watcher: {error}"
+            ))
+        })?;
+        build_and_commit()
+    }));
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => ticket.fail(error.to_string()),
+        Err(payload) => ticket.fail(format!(
+            "TensorRT warm-up build panicked: {}",
+            panic_payload_to_string(payload)
+        )),
+    }
+    // Native build, validation and disposal of rejected sessions are all over
+    // before releasing the gate. Cleanup wakes and joins the attempt watcher.
 }
 
 #[cfg(test)]
@@ -483,74 +623,47 @@ fn run_trt_warmup_build(
     build_gate: Arc<Mutex<()>>,
     model_id: String,
     expected: Arc<LoadedModel>,
+    ticket: WarmTicket,
 ) {
-    // queue-013: acquire the build gate, THEN arm the active-build timeout
-    // clock, so time spent queued behind the gate is excluded from the 300s
-    // active-build budget. See `acquire_build_gate_and_arm`.
-    let _gate = acquire_build_gate_and_arm(&build_gate, &expected.warm);
-    let result = catch_unwind(AssertUnwindSafe(|| -> Result<LoadedModelInner> {
-        let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
-        // Force the effective TRT config so a section-less ONNX manifest (which
-        // resolves to on-demand, matching /v1/catalog) actually lowers to
-        // TensorRT here — not just the explicit-section models (OQ-2026-07-07-1).
-        let forced =
-            manifest::warmup_trt_config(expected.manifest.trt.as_ref(), &expected.manifest.format);
-        crate::trt::ep::with_trt_warmup_build(forced, || {
-            build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
-        })
-    }));
-
-    let trt_inner = match result {
-        Ok(Ok(inner)) => inner,
-        Ok(Err(err)) => {
-            expected.warm.mark_error(err.to_string());
-            return;
-        }
-        Err(payload) => {
-            expected.warm.mark_error(format!(
-                "TensorRT warm-up build panicked: {}",
-                panic_payload_to_string(payload)
-            ));
-            return;
-        }
-    };
-
-    commit_validated_trt_loaded_model(&engine_inner, &models, model_id, &expected, trt_inner);
+    run_trt_warmup_task(
+        &build_gate,
+        &ticket,
+        || arm_current_trt_attempt(&models, &model_id, &expected, &ticket),
+        || {
+            let manifest_dir = expected.path.parent().unwrap_or_else(|| Path::new("."));
+            let forced = manifest::warmup_trt_config(
+                expected.manifest.trt.as_ref(),
+                &expected.manifest.format,
+            );
+            let trt_inner = crate::trt::ep::with_trt_warmup_build(forced, || {
+                build_loaded_model_inner(&engine_inner.ctx, &expected.manifest, manifest_dir)
+            })?;
+            commit_validated_trt_loaded_model(
+                &engine_inner,
+                &models,
+                &model_id,
+                &expected,
+                &ticket,
+                trt_inner,
+            );
+            Ok(())
+        },
+        DeadlineWatcher::spawn,
+    );
 }
 
 fn commit_validated_trt_loaded_model(
     engine_inner: &Arc<EngineInner>,
-    models: &Arc<RwLock<HashMap<String, Arc<LoadedModel>>>>,
-    model_id: String,
+    models: &RwLock<HashMap<String, Arc<LoadedModel>>>,
+    model_id: &str,
     expected: &Arc<LoadedModel>,
+    ticket: &WarmTicket,
     trt_inner: LoadedModelInner,
 ) {
     if let Err(err) = validate_trt_loaded_model(engine_inner, expected, &trt_inner) {
-        expected.warm.mark_error(err.to_string());
+        ticket.fail(err.to_string());
         return;
     }
-
-    let mut guard = match models.write() {
-        Ok(guard) => guard,
-        Err(_) => {
-            expected
-                .warm
-                .mark_error("models lock poisoned while committing TensorRT warm-up".to_string());
-            return;
-        }
-    };
-
-    let still_current = guard
-        .get(&model_id)
-        .is_some_and(|current| Arc::ptr_eq(&current.active, &expected.active));
-    if !still_current || !expected.active.load(Ordering::Acquire) {
-        expected.warm.mark_error(
-            "model was unloaded or reloaded before TensorRT warm-up commit".to_string(),
-        );
-        return;
-    }
-
-    touch_last_used(&expected.last_used);
     let warmed = Arc::new(LoadedModel {
         manifest: Arc::clone(&expected.manifest),
         labels: Arc::clone(&expected.labels),
@@ -560,8 +673,34 @@ fn commit_validated_trt_loaded_model(
         last_used: Arc::clone(&expected.last_used),
         warm: Arc::clone(&expected.warm),
     });
-    guard.insert(model_id, warmed);
-    expected.warm.mark_ready();
+    commit_prepared_trt_loaded_model(models, model_id, expected, ticket, warmed);
+}
+
+fn commit_prepared_trt_loaded_model(
+    models: &RwLock<HashMap<String, Arc<LoadedModel>>>,
+    model_id: &str,
+    expected: &LoadedModel,
+    ticket: &WarmTicket,
+    warmed: Arc<LoadedModel>,
+) {
+    let mut guard = match models.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            ticket.fail("models lock poisoned while committing TensorRT warm-up");
+            return;
+        }
+    };
+    let Some(current) = guard.get_mut(model_id).filter(|current| {
+        Arc::ptr_eq(&current.active, &expected.active) && expected.active.load(Ordering::Acquire)
+    }) else {
+        ticket.fail("model was unloaded or reloaded before TensorRT warm-up commit");
+        return;
+    };
+    touch_last_used(&expected.last_used);
+    ticket.commit_ready(|| {
+        *current = Arc::clone(&warmed);
+    });
+    // `warmed` is dropped after both locks, still under the native build gate.
 }
 
 fn validate_trt_loaded_model(
@@ -597,6 +736,19 @@ fn validate_trt_loaded_model_once(
             ))
         }
         2 => panic!("injected TensorRT validation panic"),
+        mode @ 3..=5 => {
+            let deadline = expected.warm.deadline_for_test().expect("armed attempt");
+            expected.warm.set_time_for_test(deadline, false);
+            match mode {
+                4 => {
+                    return Err(SparrowEngineError::Ort(
+                        "late validation failure".to_string(),
+                    ))
+                }
+                5 => panic!("late validation panic"),
+                _ => {}
+            }
+        }
         _ => {}
     }
 
@@ -805,7 +957,7 @@ impl Engine {
             audio_ensembles: Arc::new(RwLock::new(HashMap::new())),
             loading_lock: Mutex::new(()),
             trt_build_gate: Arc::new(Mutex::new(())),
-            trt_warmup_threads: Mutex::new(HashMap::new()),
+            trt_warmup_threads: Mutex::new(TrtWarmupRegistry::default()),
             trt_hw_capable,
         })
     }
@@ -935,6 +1087,8 @@ impl Engine {
                 .map_err(|_| SparrowEngineError::Ort("models lock poisoned".into()))?;
             if let Some(old) = models.get(&model_id) {
                 old.active.store(false, Ordering::Release);
+                old.warm
+                    .invalidate("model was reloaded during TensorRT warm-up");
             }
             models.insert(model_id.clone(), Arc::clone(&loaded));
         }
@@ -956,6 +1110,10 @@ impl Engine {
         if handle.engine_ref.upgrade().is_none() {
             return Err(SparrowEngineError::EngineFreed);
         }
+        let mut models = self
+            .models
+            .write()
+            .map_err(|_| SparrowEngineError::Ort("models lock poisoned".into()))?;
         if handle
             .active
             .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
@@ -963,12 +1121,11 @@ impl Engine {
         {
             return Err(SparrowEngineError::ModelUnloaded);
         }
-        let mut models = self
-            .models
-            .write()
-            .map_err(|_| SparrowEngineError::Ort("models lock poisoned".into()))?;
         if let Some(entry) = models.get(&handle.model_id) {
             if Arc::ptr_eq(&entry.active, &handle.active) {
+                entry
+                    .warm
+                    .invalidate("model was unloaded during TensorRT warm-up");
                 models.remove(&handle.model_id);
             }
         }
@@ -987,6 +1144,9 @@ impl Engine {
         match models.remove(model_id) {
             Some(entry) => {
                 entry.active.store(false, Ordering::Release);
+                entry
+                    .warm
+                    .invalidate("model was unloaded during TensorRT warm-up");
                 Ok(true)
             }
             None => Ok(false),
@@ -1008,7 +1168,7 @@ impl Engine {
         let should_remove = match models.get(model_id) {
             Some(entry) => {
                 let current_last_used = entry.last_used.load(Ordering::Relaxed);
-                if entry.warm.is_warming() {
+                if entry.warm.has_live_worker() {
                     touch_last_used(&entry.last_used);
                     false
                 } else if !reaper_snapshot_still_matches(
@@ -1087,7 +1247,7 @@ impl Engine {
             };
             models
                 .iter()
-                .filter(|(_, m)| m.active.load(Ordering::Acquire) && !m.warm.is_warming())
+                .filter(|(_, m)| m.active.load(Ordering::Acquire) && !m.warm.has_live_worker())
                 .map(|(id, m)| {
                     (
                         id.clone(),
@@ -1224,134 +1384,73 @@ impl Engine {
     }
 
     pub fn trt_warmup(&self, id: &str) -> Result<WarmupOutcome> {
+        trt_admission_outcome(&self.start_or_join_trt_warmup(id)?)
+    }
+
+    fn trt_registry(&self) -> MutexGuard<'_, TrtWarmupRegistry> {
+        self.trt_warmup_threads.lock().unwrap_or_else(|poisoned| {
+            tracing::error!("TensorRT warm-up registry lock poisoned; retaining worker handles");
+            poisoned.into_inner()
+        })
+    }
+
+    fn start_or_join_trt_warmup(&self, id: &str) -> Result<BeginWarm> {
         let _manifest = self.trt_warmup_gate(id)?;
         let handle = self.get_or_load_model(id)?;
         self.trt_warmup_gate_for_manifest(id, &handle.inner.manifest)?;
         self.join_finished_trt_warmups();
-        if self.has_active_trt_warmup(id) {
-            return Ok(WarmupOutcome::Started);
+        let mut registry = self.trt_registry();
+        let models_guard = self.models.read().map_err(|_| {
+            SparrowEngineError::Ort("models lock poisoned during TRT admission".into())
+        })?;
+        if !models_guard.get(id).is_some_and(|current| {
+            Arc::ptr_eq(&current.active, &handle.active) && handle.active.load(Ordering::Acquire)
+        }) {
+            return Err(SparrowEngineError::ModelUnloaded);
         }
-        match handle.inner.warm.begin_warm() {
-            BeginWarm::AlreadyReady => Ok(WarmupOutcome::AlreadyReady),
-            BeginWarm::Coalesced => Ok(WarmupOutcome::Started),
-            BeginWarm::Owner => {
-                let models = Arc::clone(&self.models);
-                let engine_inner = Arc::clone(&self.inner);
-                let build_gate = Arc::clone(&self.trt_build_gate);
-                let model_id = id.to_string();
-                let loaded = Arc::clone(&handle.inner);
-                match std::thread::Builder::new()
-                    .name(format!("sparrow-trt-warmup-{id}"))
-                    .spawn(move || {
-                        run_trt_warmup_build(engine_inner, models, build_gate, model_id, loaded);
-                    }) {
-                    Ok(thread) => {
-                        match self.trt_warmup_threads.lock() {
-                            Ok(mut threads) => {
-                                threads.insert(id.to_string(), thread);
-                            }
-                            Err(poisoned) => {
-                                tracing::warn!(
-                                    "TensorRT warm-up thread registry lock poisoned; recovering"
-                                );
-                                poisoned.into_inner().insert(id.to_string(), thread);
-                            }
-                        }
-                        Ok(WarmupOutcome::Started)
-                    }
-                    Err(err) => {
-                        let detail = format!("failed to spawn TensorRT warm-up thread: {err}");
-                        handle.inner.warm.mark_error(detail.clone());
-                        Err(SparrowEngineError::Ort(detail))
-                    }
-                }
-            }
-        }
+        registry.admit_with(id, &handle.active, &handle.inner.warm, |ticket| {
+            let models = Arc::clone(&self.models);
+            let engine_inner = Arc::clone(&self.inner);
+            let build_gate = Arc::clone(&self.trt_build_gate);
+            let model_id = id.to_string();
+            let loaded = Arc::clone(&handle.inner);
+            std::thread::Builder::new()
+                .name(format!("sparrow-trt-warmup-{id}-{}", ticket.generation()))
+                .spawn(move || {
+                    run_trt_warmup_build(
+                        engine_inner,
+                        models,
+                        build_gate,
+                        model_id,
+                        loaded,
+                        ticket,
+                    );
+                })
+        })
     }
 
     fn join_finished_trt_warmups(&self) {
-        let mut threads = match self.trt_warmup_threads.lock() {
-            Ok(threads) => threads,
-            Err(poisoned) => {
-                tracing::warn!("TensorRT warm-up thread registry lock poisoned while reaping");
-                poisoned.into_inner()
-            }
-        };
-
-        let mut pending = HashMap::new();
-        for (model_id, thread) in threads.drain() {
-            if thread.is_finished() {
-                if let Err(payload) = thread.join() {
-                    tracing::warn!(
-                        model_id = %model_id,
-                        panic = %panic_payload_to_string(payload),
-                        "TensorRT warm-up thread panicked"
-                    );
-                }
-            } else {
-                pending.insert(model_id, thread);
-            }
-        }
-        *threads = pending;
-    }
-
-    fn has_active_trt_warmup(&self, id: &str) -> bool {
-        match self.trt_warmup_threads.lock() {
-            Ok(threads) => threads.contains_key(id),
-            Err(poisoned) => {
-                tracing::warn!(
-                    "TensorRT warm-up thread registry lock poisoned while checking active workers"
-                );
-                poisoned.into_inner().contains_key(id)
-            }
-        }
+        let finished = self.trt_registry().take_finished();
+        join_trt_jobs(finished);
     }
 
     pub fn join_trt_warmups(&self) {
-        let mut threads = match self.trt_warmup_threads.lock() {
-            Ok(threads) => threads,
-            Err(poisoned) => {
-                tracing::warn!("TensorRT warm-up thread registry lock poisoned during shutdown");
-                poisoned.into_inner()
-            }
-        };
-
-        for (model_id, thread) in threads.drain() {
-            if let Err(payload) = thread.join() {
-                tracing::warn!(
-                    model_id = %model_id,
-                    panic = %panic_payload_to_string(payload),
-                    "TensorRT warm-up thread panicked during shutdown"
-                );
-            }
-        }
+        let jobs = self.trt_registry().close();
+        join_trt_jobs(jobs);
     }
 
     pub fn trt_warmup_blocking(&self, id: &str) -> Result<TrtStateView> {
-        let _manifest = self.trt_warmup_gate(id)?;
-        let handle = self.get_or_load_model(id)?;
-        self.trt_warmup_gate_for_manifest(id, &handle.inner.manifest)?;
-        match handle.inner.warm.begin_warm() {
-            BeginWarm::AlreadyReady => Ok(handle.inner.warm.view()),
-            BeginWarm::Coalesced => {
-                while handle.inner.warm.is_warming() {
-                    let view = handle.inner.warm.view();
-                    if !matches!(view.state, TrtState::TrtWarming) {
-                        return Ok(view);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Ok(handle.inner.warm.view())
-            }
-            BeginWarm::Owner => {
-                run_trt_warmup_build(
-                    Arc::clone(&self.inner),
-                    Arc::clone(&self.models),
-                    Arc::clone(&self.trt_build_gate),
-                    id.to_string(),
-                    Arc::clone(&handle.inner),
-                );
-                Ok(handle.inner.warm.view())
+        match self.start_or_join_trt_warmup(id)? {
+            BeginWarm::AlreadyReady => Ok(TrtStateView {
+                state: TrtState::TrtReady,
+                detail: None,
+            }),
+            BeginWarm::Owner(ticket)
+            | BeginWarm::Coalesced(ticket)
+            | BeginWarm::Rejected(ticket) => {
+                let result = ticket.wait();
+                self.join_finished_trt_warmups();
+                Ok(result)
             }
         }
     }
@@ -1787,6 +1886,23 @@ mod tests {
     use serial_test::serial;
     use sparrow_engine_types::manifest::{TrtConfig, TrtPrecision};
     use std::path::PathBuf;
+    use std::sync::{mpsc, Barrier};
+    use std::time::{Duration, Instant};
+
+    fn warm_owner(slot: &Arc<WarmSlot>) -> WarmTicket {
+        match slot.begin_or_join().expect("admission") {
+            BeginWarm::Owner(ticket) => ticket,
+            other => panic!("expected owner, got {other:?}"),
+        }
+    }
+
+    fn assert_trt_timeout(view: &TrtStateView) {
+        assert_eq!(view.state, TrtState::TrtError);
+        assert_eq!(
+            view.detail.as_deref(),
+            Some("TensorRT warm-up exceeded 300 seconds without completing")
+        );
+    }
 
     fn dummy_model_dir() -> PathBuf {
         PathBuf::from("/tmp/bongo_gpu_test_models_nonexistent")
@@ -1862,21 +1978,43 @@ mod tests {
         let _guard = recover_trt_build_gate(&gate);
     }
 
-    // queue-013: the active-build timeout clock must be armed only AFTER the
-    // build gate is acquired, so time spent queued behind the gate is excluded
-    // from the 300s active-build budget. Guards the `run_trt_warmup_build`
-    // wiring (a removed `mark_build_started` would silently disable the timeout
-    // for genuinely hung builds).
     #[test]
     fn acquire_build_gate_and_arm_arms_clock_after_gate() {
-        let gate = Mutex::new(());
-        let warm = WarmSlot::new();
-        assert_eq!(warm.begin_warm(), BeginWarm::Owner);
-        // Queued behind the gate: clock disarmed.
-        assert!(!warm.build_clock_armed_for_test());
-        let _held = acquire_build_gate_and_arm(&gate, &warm);
-        // Gate acquired → clock armed for the active build.
-        assert!(warm.build_clock_armed_for_test());
+        let gate = Arc::new(Mutex::new(()));
+        let held = gate.lock().unwrap();
+        let warm = Arc::new(WarmSlot::new());
+        let start = Instant::now();
+        warm.set_time_for_test(start, false);
+        let ticket = warm_owner(&warm);
+        let worker_ticket = ticket.clone();
+        let worker_warm = Arc::clone(&warm);
+        let worker_gate = Arc::clone(&gate);
+        let (queued_tx, queued_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            queued_tx.send(()).unwrap();
+            run_trt_warmup_task(
+                &worker_gate,
+                &worker_ticket,
+                || Ok(worker_ticket.arm()),
+                || {
+                    assert_eq!(
+                        worker_warm.deadline_for_test(),
+                        Some(start + Duration::from_secs(3_300))
+                    );
+                    assert!(worker_gate.try_lock().is_err());
+                    assert!(worker_ticket.commit_ready(|| {}));
+                    Ok(())
+                },
+                DeadlineWatcher::spawn,
+            );
+        });
+        queued_rx.recv().unwrap();
+        warm.set_time_for_test(start + Duration::from_secs(3_000), true);
+        assert!(warm.deadline_for_test().is_none());
+        drop(held);
+        thread.join().unwrap();
+        ticket.retire();
+        assert_eq!(ticket.wait().state, TrtState::TrtReady);
     }
 
     fn mel_classifier_fixture_dir() -> PathBuf {
@@ -1918,6 +2056,8 @@ mod tests {
             return;
         };
         let original = Arc::clone(&handle.inner);
+        let ticket = warm_owner(&original.warm);
+        assert!(ticket.arm());
         let manifest_dir = original.path.parent().expect("loaded manifest has parent");
         let replacement =
             build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
@@ -1927,11 +2067,13 @@ mod tests {
         commit_validated_trt_loaded_model(
             &engine.inner,
             &engine.models,
-            handle.model_id().to_string(),
+            handle.model_id(),
             &original,
+            &ticket,
             replacement,
         );
         TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+        ticket.retire();
 
         let state = engine.trt_state(handle.model_id());
         assert_eq!(state.state, TrtState::TrtError);
@@ -1956,6 +2098,8 @@ mod tests {
             return;
         };
         let original = Arc::clone(&handle.inner);
+        let ticket = warm_owner(&original.warm);
+        assert!(ticket.arm());
         let manifest_dir = original.path.parent().expect("loaded manifest has parent");
         let replacement =
             build_loaded_model_inner(&engine.inner.ctx, &original.manifest, manifest_dir)
@@ -1965,11 +2109,13 @@ mod tests {
         commit_validated_trt_loaded_model(
             &engine.inner,
             &engine.models,
-            handle.model_id().to_string(),
+            handle.model_id(),
             &original,
+            &ticket,
             replacement,
         );
         TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+        ticket.retire();
 
         let state = engine.trt_state(handle.model_id());
         assert_eq!(state.state, TrtState::TrtError);
@@ -1985,6 +2131,575 @@ mod tests {
             .check_valid()
             .expect("original CUDA handle remains valid");
         drop(engine);
+    }
+
+    #[test]
+    fn trt_native_error_and_panic_enforce_deadline_without_watcher_notification() {
+        for panic in [false, true] {
+            for late in [false, true] {
+                let warm = Arc::new(WarmSlot::new());
+                let start = Instant::now();
+                warm.set_time_for_test(start, false);
+                let ticket = warm_owner(&warm);
+                let gate = Mutex::new(());
+                run_trt_warmup_task(
+                    &gate,
+                    &ticket,
+                    || Ok(ticket.arm()),
+                    || {
+                        if late {
+                            warm.set_time_for_test(start + Duration::from_secs(300), false);
+                        }
+                        if panic {
+                            panic!("injected native panic");
+                        }
+                        Err(SparrowEngineError::Ort("injected native error".to_string()))
+                    },
+                    DeadlineWatcher::spawn,
+                );
+                assert!(!warm.has_live_worker());
+                assert!(gate.try_lock().is_ok());
+                let view = ticket.wait();
+                if late {
+                    assert_trt_timeout(&view);
+                } else {
+                    assert!(view.detail.unwrap().contains("injected native"));
+                }
+                ticket.retire();
+            }
+        }
+    }
+
+    #[test]
+    fn trt_watcher_spawn_failure_skips_native_build_and_cleans_up() {
+        let warm = Arc::new(WarmSlot::new());
+        let ticket = warm_owner(&warm);
+        let gate = Mutex::new(());
+        run_trt_warmup_task(
+            &gate,
+            &ticket,
+            || Ok(ticket.arm()),
+            || panic!("must not build without a deadline watcher"),
+            |_| Err(std::io::Error::other("injected spawn failure")),
+        );
+        assert!(ticket.wait().detail.unwrap().contains("deadline watcher"));
+        assert!(!warm.has_live_worker());
+        assert!(gate.try_lock().is_ok());
+        ticket.retire();
+        assert!(matches!(warm.begin_or_join().unwrap(), BeginWarm::Owner(_)));
+    }
+
+    #[test]
+    fn trt_native_spawn_failure_is_terminal_and_retryable() {
+        let mut registry = TrtWarmupRegistry::default();
+        let warm = Arc::new(WarmSlot::new());
+        let active = Arc::new(AtomicBool::new(true));
+        let admission = registry
+            .admit_with("same-id", &active, &warm, |_| {
+                Err(std::io::Error::other("native spawn failure"))
+            })
+            .unwrap();
+        let error = trt_admission_outcome(&admission).unwrap_err();
+        assert!(error.to_string().contains("native spawn failure"));
+        let BeginWarm::Rejected(ticket) = admission else {
+            panic!("spawn failure lost the attempt ticket");
+        };
+        assert_eq!(ticket.wait().state, TrtState::TrtError);
+        assert!(registry.jobs.is_empty());
+        assert!(!warm.has_live_worker());
+        let retry = warm_owner(&warm);
+        assert_eq!(retry.generation(), 2);
+        retry.retire();
+    }
+
+    #[test]
+    fn trt_async_and_blocking_share_owner_reject_timeout_and_retain_results() {
+        let registry = Arc::new(Mutex::new(TrtWarmupRegistry::default()));
+        let warm = Arc::new(WarmSlot::new());
+        let active = Arc::new(AtomicBool::new(true));
+        let now = Instant::now();
+        warm.set_time_for_test(now, false);
+        let admission_barrier = Arc::new(Barrier::new(9));
+        let native_release = Arc::new(Barrier::new(2));
+        let (started_tx, started_rx) = mpsc::channel();
+        let calls: Vec<_> = (0..8)
+            .map(|_| {
+                let registry = Arc::clone(&registry);
+                let warm = Arc::clone(&warm);
+                let active = Arc::clone(&active);
+                let barrier = Arc::clone(&admission_barrier);
+                let release = Arc::clone(&native_release);
+                let started_tx = started_tx.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    registry
+                        .lock()
+                        .unwrap()
+                        .admit_with("m", &active, &warm, |ticket| {
+                            std::thread::Builder::new().spawn(move || {
+                                run_trt_warmup_task(
+                                    &Mutex::new(()),
+                                    &ticket,
+                                    || Ok(ticket.arm()),
+                                    || {
+                                        started_tx.send(()).unwrap();
+                                        release.wait();
+                                        assert!(!ticket.commit_ready(|| panic!("late install")));
+                                        Ok(())
+                                    },
+                                    DeadlineWatcher::spawn,
+                                );
+                            })
+                        })
+                        .unwrap()
+                })
+            })
+            .collect();
+        admission_barrier.wait();
+        let mut owners = 0;
+        let mut tickets = Vec::new();
+        for call in calls {
+            let admission = call.join().unwrap();
+            assert_eq!(
+                trt_admission_outcome(&admission).unwrap(),
+                WarmupOutcome::Started
+            );
+            match admission {
+                BeginWarm::Owner(ticket) => {
+                    owners += 1;
+                    tickets.push(ticket);
+                }
+                BeginWarm::Coalesced(ticket) => tickets.push(ticket),
+                other => panic!("unexpected admission {other:?}"),
+            }
+        }
+        assert_eq!(owners, 1);
+        assert_eq!(registry.lock().unwrap().jobs.len(), 1);
+        started_rx.recv().unwrap();
+        warm.set_time_for_test(now + Duration::from_secs(300), true);
+        assert_trt_timeout(&tickets[0].wait_terminal_for_test());
+        let rejected = registry
+            .lock()
+            .unwrap()
+            .admit_with("m", &active, &warm, |_| {
+                panic!("active timed-out duplicate spawned")
+            })
+            .unwrap();
+        let error = trt_admission_outcome(&rejected).unwrap_err();
+        assert!(matches!(error, SparrowEngineError::Ort(_)));
+        assert!(error.to_string().contains("exceeded 300 seconds"));
+        assert!(warm.has_live_worker());
+        native_release.wait();
+        // Take the exact job, then join without the registry mutex. Retirement
+        // opens admission; old owner/coalesced tickets deliberately resume later.
+        let jobs = std::mem::take(&mut registry.lock().unwrap().jobs);
+        join_trt_jobs(jobs);
+        let retry = registry
+            .lock()
+            .unwrap()
+            .admit_with("m", &active, &warm, |ticket| {
+                std::thread::Builder::new().spawn(move || {
+                    let _cleanup = WarmWorkerGuard::new(ticket.clone());
+                    assert!(ticket.arm());
+                    assert!(ticket.commit_ready(|| {}));
+                })
+            })
+            .unwrap();
+        let BeginWarm::Owner(retry) = retry else {
+            panic!("no retry owner")
+        };
+        assert_eq!(retry.generation(), 2);
+        assert_eq!(retry.wait().state, TrtState::TrtReady);
+        for ticket in tickets {
+            assert_trt_timeout(&ticket.wait());
+        }
+        let ready = registry
+            .lock()
+            .unwrap()
+            .admit_with("m", &active, &warm, |_| panic!("already-ready spawned"))
+            .unwrap();
+        assert_eq!(
+            trt_admission_outcome(&ready).unwrap(),
+            WarmupOutcome::AlreadyReady
+        );
+        let jobs = registry.lock().unwrap().close();
+        join_trt_jobs(jobs);
+    }
+
+    #[test]
+    fn trt_registry_retains_same_id_incarnations_and_joins_outside_lock() {
+        let registry = Arc::new(Mutex::new(TrtWarmupRegistry::default()));
+        let release = Arc::new(Barrier::new(3));
+        let mut tickets = Vec::new();
+        for _ in 0..2 {
+            let warm = Arc::new(WarmSlot::new());
+            let active = Arc::new(AtomicBool::new(true));
+            let worker_registry = Arc::clone(&registry);
+            let worker_release = Arc::clone(&release);
+            let admission = registry
+                .lock()
+                .unwrap()
+                .admit_with("same-id", &active, &warm, |ticket| {
+                    std::thread::Builder::new().spawn(move || {
+                        let _cleanup = WarmWorkerGuard::new(ticket.clone());
+                        worker_release.wait();
+                        // Shutdown/reaping must not join while holding this lock.
+                        assert!(worker_registry.lock().unwrap().shutting_down);
+                        assert!(!ticket.arm());
+                    })
+                })
+                .unwrap();
+            let BeginWarm::Owner(ticket) = admission else {
+                panic!("missing owner")
+            };
+            tickets.push(ticket);
+        }
+        {
+            let registry = registry.lock().unwrap();
+            assert_eq!(registry.jobs.len(), 2);
+            assert!(!Arc::ptr_eq(
+                &registry.jobs[0].incarnation,
+                &registry.jobs[1].incarnation
+            ));
+            assert_eq!(registry.jobs[0].ticket.generation(), 1);
+            assert_eq!(registry.jobs[1].ticket.generation(), 1);
+        }
+        let jobs = registry.lock().unwrap().close();
+        release.wait();
+        join_trt_jobs(jobs);
+        assert!(registry.lock().unwrap().jobs.is_empty());
+        for ticket in tickets {
+            assert!(ticket.wait().detail.unwrap().contains("shutdown"));
+        }
+        let error = registry
+            .lock()
+            .unwrap()
+            .admit_with(
+                "new",
+                &Arc::new(AtomicBool::new(true)),
+                &Arc::new(WarmSlot::new()),
+                |_| panic!("shutdown admitted a new worker"),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("shutdown"));
+    }
+
+    fn prepared_test_replacement(engine: &Engine, original: &LoadedModel) -> Arc<LoadedModel> {
+        let inner = build_loaded_model_inner(
+            &engine.inner.ctx,
+            &original.manifest,
+            original.path.parent().unwrap(),
+        )
+        .expect("replacement CUDA fixture");
+        Arc::new(LoadedModel {
+            manifest: Arc::clone(&original.manifest),
+            labels: Arc::clone(&original.labels),
+            path: original.path.clone(),
+            active: Arc::clone(&original.active),
+            inner,
+            last_used: Arc::clone(&original.last_used),
+            warm: Arc::clone(&original.warm),
+        })
+    }
+
+    #[test]
+    #[serial]
+    fn trt_validation_crossing_deadline_always_preserves_cuda() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        original.warm.set_time_for_test(Instant::now(), false);
+        for mode in 3..=5 {
+            let ticket = warm_owner(&original.warm);
+            assert!(ticket.arm());
+            let replacement = build_loaded_model_inner(
+                &engine.inner.ctx,
+                &original.manifest,
+                original.path.parent().unwrap(),
+            )
+            .unwrap();
+            TRT_VALIDATION_TEST_INJECTION.store(mode, Ordering::Release);
+            commit_validated_trt_loaded_model(
+                &engine.inner,
+                &engine.models,
+                handle.model_id(),
+                &original,
+                &ticket,
+                replacement,
+            );
+            TRT_VALIDATION_TEST_INJECTION.store(0, Ordering::Release);
+            ticket.retire();
+            assert_trt_timeout(&ticket.wait());
+            assert!(Arc::ptr_eq(
+                &engine.get_model_handle(handle.model_id()).unwrap().inner,
+                &original
+            ));
+            assert_eq!(original.path, handle.inner.path);
+            handle.check_valid().unwrap();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn trt_model_lock_delay_crossing_deadline_cannot_install() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let now = Instant::now();
+        original.warm.set_time_for_test(now, false);
+        let ticket = warm_owner(&original.warm);
+        assert!(ticket.arm());
+        let replacement = prepared_test_replacement(&engine, &original);
+        let map_guard = engine.models.write().unwrap();
+        let models = Arc::clone(&engine.models);
+        let expected = Arc::clone(&original);
+        let worker_ticket = ticket.clone();
+        let id = handle.model_id().to_string();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _cleanup = WarmWorkerGuard::new(worker_ticket.clone());
+            tx.send(()).unwrap();
+            commit_prepared_trt_loaded_model(&models, &id, &expected, &worker_ticket, replacement);
+        });
+        rx.recv().unwrap();
+        original
+            .warm
+            .set_time_for_test(now + Duration::from_secs(300), false);
+        drop(map_guard);
+        worker.join().unwrap();
+        ticket.retire();
+        assert_trt_timeout(&ticket.wait());
+        assert!(Arc::ptr_eq(
+            &engine.get_model_handle(handle.model_id()).unwrap().inner,
+            &original
+        ));
+    }
+
+    #[test]
+    #[serial]
+    fn trt_unload_reload_at_commit_barrier_never_installs_stale_result() {
+        let Some((engine, initial)) = load_validation_fixture() else {
+            return;
+        };
+        let path = initial.inner.path.clone();
+        drop(initial);
+        for by_id in [false, true] {
+            for reload in [false, true] {
+                let handle = engine.load_model(&path).unwrap();
+                let original = Arc::clone(&handle.inner);
+                let ticket = warm_owner(&original.warm);
+                assert!(ticket.arm());
+                let replacement = prepared_test_replacement(&engine, &original);
+                let barrier = Arc::new(Barrier::new(2));
+                let worker_barrier = Arc::clone(&barrier);
+                let models = Arc::clone(&engine.models);
+                let expected = Arc::clone(&original);
+                let worker_ticket = ticket.clone();
+                let id = handle.model_id().to_string();
+                let worker = std::thread::spawn(move || {
+                    let _cleanup = WarmWorkerGuard::new(worker_ticket.clone());
+                    worker_barrier.wait();
+                    commit_prepared_trt_loaded_model(
+                        &models,
+                        &id,
+                        &expected,
+                        &worker_ticket,
+                        replacement,
+                    );
+                });
+                if by_id {
+                    assert!(engine.unload_model_by_id(handle.model_id()).unwrap());
+                } else {
+                    engine.unload_model(&handle).unwrap();
+                }
+                let new_handle = reload.then(|| engine.load_model(&path).unwrap());
+                barrier.wait();
+                worker.join().unwrap();
+                ticket.retire();
+                assert_eq!(ticket.wait().state, TrtState::TrtError);
+                assert!(handle.check_valid().is_err());
+                if let Some(new_handle) = new_handle {
+                    assert!(!Arc::ptr_eq(&new_handle.active, &handle.active));
+                    assert!(Arc::ptr_eq(
+                        &engine.get_model_handle(handle.model_id()).unwrap().inner,
+                        &new_handle.inner
+                    ));
+                    assert_eq!(
+                        engine.trt_state(handle.model_id()).state,
+                        TrtState::CudaReady
+                    );
+                } else {
+                    assert_eq!(
+                        engine.trt_state(handle.model_id()).state,
+                        TrtState::NotLoaded
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn trt_invalid_queued_incarnation_skips_native_build() {
+        let Some((engine, initial)) = load_validation_fixture() else {
+            return;
+        };
+        let path = initial.inner.path.clone();
+        drop(initial);
+        for reload in [false, true] {
+            let handle = engine.load_model(&path).unwrap();
+            let ticket = warm_owner(&handle.inner.warm);
+            let held = engine.trt_build_gate.lock().unwrap();
+            let gate = Arc::clone(&engine.trt_build_gate);
+            let models = Arc::clone(&engine.models);
+            let expected = Arc::clone(&handle.inner);
+            let worker_ticket = ticket.clone();
+            let id = handle.model_id().to_string();
+            let (tx, rx) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                tx.send(()).unwrap();
+                run_trt_warmup_task(
+                    &gate,
+                    &worker_ticket,
+                    || arm_current_trt_attempt(&models, &id, &expected, &worker_ticket),
+                    || panic!("unloaded queued work performed native build"),
+                    |_| panic!("unloaded queued work spawned a watcher"),
+                );
+            });
+            rx.recv().unwrap();
+            if reload {
+                let newer = engine.load_model(&path).unwrap();
+                assert!(!Arc::ptr_eq(&newer.active, &handle.active));
+            } else {
+                engine.unload_model(&handle).unwrap();
+            }
+            drop(held);
+            worker.join().unwrap();
+            ticket.retire();
+            assert!(handle.inner.warm.deadline_for_test().is_none());
+            assert_eq!(ticket.wait().state, TrtState::TrtError);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn trt_reaper_preserves_cuda_while_timed_out_native_worker_lives() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let now = Instant::now();
+        handle.inner.warm.set_time_for_test(now, false);
+        let ticket = warm_owner(&handle.inner.warm);
+        let cleanup = WarmWorkerGuard::new(ticket.clone());
+        assert!(ticket.arm());
+        handle
+            .inner
+            .warm
+            .set_time_for_test(now + Duration::from_secs(300), false);
+        ticket.fail("late error");
+        assert_trt_timeout(&engine.trt_state(handle.model_id()));
+        assert!(engine.reap_idle_models(0, 0).is_empty());
+        let stamp = handle.inner.last_used.load(Ordering::Relaxed);
+        assert!(!engine
+            .unload_idle_snapshot(handle.model_id(), stamp, &handle.active, stamp + 1, 0)
+            .unwrap());
+        assert!(Arc::ptr_eq(
+            &engine.get_model_handle(handle.model_id()).unwrap().inner,
+            &handle.inner
+        ));
+        drop(cleanup);
+        ticket.retire();
+        let stamp = handle.inner.last_used.load(Ordering::Relaxed);
+        assert!(engine
+            .unload_idle_snapshot(handle.model_id(), stamp, &handle.active, stamp + 1, 0)
+            .unwrap());
+    }
+
+    #[test]
+    #[serial]
+    fn trt_success_publishes_ready_with_replacement_in_one_transaction() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let original = Arc::clone(&handle.inner);
+        let ticket = warm_owner(&original.warm);
+        assert!(ticket.arm());
+        let replacement = prepared_test_replacement(&engine, &original);
+        let models = Arc::clone(&engine.models);
+        let before = Arc::clone(&original);
+        let id = handle.model_id().to_string();
+        let observer = std::thread::spawn(move || loop {
+            let map = models.read().unwrap();
+            let current = map.get(&id).unwrap();
+            let state = current.warm.view().state;
+            assert_eq!(Arc::ptr_eq(current, &before), state != TrtState::TrtReady);
+            if state == TrtState::TrtReady {
+                break;
+            }
+            drop(map);
+            std::thread::yield_now();
+        });
+        commit_prepared_trt_loaded_model(
+            &engine.models,
+            handle.model_id(),
+            &original,
+            &ticket,
+            replacement,
+        );
+        ticket.retire();
+        observer.join().unwrap();
+        let after = engine.get_model_handle(handle.model_id()).unwrap();
+        assert!(!Arc::ptr_eq(&after.inner, &original));
+        assert!(Arc::ptr_eq(&after.active, &original.active));
+        assert_eq!(after.inner.path, original.path);
+        assert_eq!(ticket.wait().state, TrtState::TrtReady);
+        handle.check_valid().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn trt_poisoned_model_map_cannot_overwrite_deadline_error() {
+        let Some((engine, handle)) = load_validation_fixture() else {
+            return;
+        };
+        let now = Instant::now();
+        handle.inner.warm.set_time_for_test(now, false);
+        let ticket = warm_owner(&handle.inner.warm);
+        assert!(ticket.arm());
+        let replacement = prepared_test_replacement(&engine, &handle.inner);
+        let map = Arc::clone(&engine.models);
+        assert!(std::thread::spawn(move || {
+            let _guard = map.write().unwrap();
+            panic!("poison model map");
+        })
+        .join()
+        .is_err());
+        handle
+            .inner
+            .warm
+            .set_time_for_test(now + Duration::from_secs(300), false);
+        commit_prepared_trt_loaded_model(
+            &engine.models,
+            handle.model_id(),
+            &handle.inner,
+            &ticket,
+            replacement,
+        );
+        ticket.retire();
+        assert_trt_timeout(&ticket.wait());
+        assert!(Arc::ptr_eq(
+            engine
+                .models
+                .read()
+                .err()
+                .expect("poisoned map")
+                .into_inner()
+                .get(handle.model_id())
+                .unwrap(),
+            &handle.inner,
+        ));
     }
 
     #[test]
