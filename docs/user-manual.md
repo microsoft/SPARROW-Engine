@@ -1611,6 +1611,7 @@ strategy  = "single"                               # "single" or "tiled" (HerdNe
 [inference.trt]
 mode        = "on_demand"                          # "off", "on_demand", or "always"
 cuda_tf32   = true                                 # false forces full-mantissa CUDA FP32 math
+builder_optimization_level = 3                     # 1..=5; default 3, per-model builder effort
 
 [preprocessing]                                                                                          
 input_size      = [1280, 1280]                                                                           
@@ -1642,6 +1643,20 @@ empty    = 0.48
 ```
 
 **Cite**: `sparrow-engine/sparrow-engine-types/src/manifest.rs`; canonical examples at `sparrow-engine/models/audiobirds.toml`, `sparrow-engine/models/herdnet.toml`, `sparrow-engine/models/owlt.toml`.
+
+**Why**: TensorRT builder effort trades first-build time against the optimization
+of the resulting engine. Less search can shorten a cold build but increase
+inference latency; the effect depends on the model, hardware and runtime.
+
+**What**: `[inference.trt].builder_optimization_level` accepts integers **1 through
+5**, with engine-wide default **3**. A package may select **2** when its own
+measurements justify that tradeoff. It is not a universal performance setting
+and does not change the model weights.
+
+**How**: set the field in that model's `manifest.toml`. Changing it selects a
+different TensorRT cache key. Measure first-build time with an empty cache and
+cached inference separately; keep real validation and the **300-second active-build
+deadline** intact.
 
 ---
 
