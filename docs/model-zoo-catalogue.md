@@ -1,21 +1,12 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-> **Unpublished v0.30.0 release candidate.** The 80 entries below include five
-> locally admitted candidates that are not present in Zenodo record `22018132`.
-> That record remains the 75-entry v0.29.0 base. Candidate entries stay
-> unavailable through `download_models.sh` until the new record is published
-> and their catalog status is changed to `active`.
->
+**80 catalog entries total; 80 active catalog entries.**
 
-**80 catalog entries total; 75 active catalog entries.**
+**52 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**47 active published/hosted entries** · **5 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**Active catalog routing (published/hosted vs non-mirrored):** 42 hosted · 10 hosted-restricted · 28 link-only · 0 pending-rights.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 38 hosted · 9 hosted-restricted · 28 link-only · 0 pending-rights.
-
-**Candidate planned routing (not published):** 4 hosted · 1 hosted-restricted · 0 link-only · 0 pending-rights.
-
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **80 catalog entries**. Published-release reference: Zenodo record [`22018132`](https://zenodo.org/records/22018132) (v0.29.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)). Catalogue target: model zoo v0.30.0.
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **80 catalog entries**. Published-release reference: Zenodo record [`22711452`](https://zenodo.org/records/22711452) (v0.30.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license catalogue**: each model has its own recorded weight terms. Published hosted packages include runtime artifacts; link-only and pending-rights packages contain compliance metadata and original-source links, not runnable weights.
 
@@ -25,9 +16,7 @@ This is a **multi-license catalogue**: each model has its own recorded weight te
 
 Format and task totals cover all catalog entries, including unpublished candidates and metadata-only entries; they are not download counts.
 
-**Current published availability:** 38 hosted · 9 hosted-restricted · 28
-link-only · 5 release candidates. Candidate hosting labels describe the
-planned v0.30.0 package, not availability from record `22018132`.
+**Current published availability:** 42 hosted · 10 hosted-restricted · 28 link-only.
 
 | Area | Detectors | Classifiers | Encoders | Cascades | Total |
 |---|---:|---:|---:|---:|---:|
@@ -116,7 +105,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | tasmanian-vertebrates-MEWC | `tasmanian-vertebrates` | AddaxAI, MEWC | onnx | Classifier | Australia — Tasmania | Barry Brook / MEWC / University of Tasmania | Third-party | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 | peruvian-amazon-SDZWA | `peruvian-amazon-sdzwa` | AddaxAI | onnx | Classifier | South America — Peruvian Amazon | Mathias Tobler / San Diego Zoo Wildlife Alliance | Third-party | UNVERIFIED | Active (link-only) | Link-only | unverified |
 
-## Acoustics — Detector — 1 unpublished candidate(s); 4 active published/hosted; 0 active link-only; 0 active pending-rights
+## Acoustics — Detector
 
 | Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -124,9 +113,9 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | orca-detector-dclde2026-v5 | `orca-detector-dclde2026-v5` | DCLDE-orca | onnx · v5 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | Active / published | Hosted | allowed |
 | orca-detector-v5-fp16-tflite | `orca-detector-v5-fp16-tflite` | DCLDE-orca | tflite-fp16 · v5 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | Active / published | Hosted | allowed |
 | orca-detector-v5-int8-tflite | `orca-detector-v5-int8-tflite` | DCLDE-orca | tflite-int8 · v5 | Detector · gates on Orca | North Pacific — Pacific Northwest and Salish Sea | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | MIT | Active / published | Hosted | allowed |
-| BatDetect2 v2 UK Bat Call Detector | `batdetect2-uk-v2` | BatDetect2 | onnx · 2.0.0b3 | Detector · direct species output | United Kingdom — United Kingdom | BatDetect2 contributors | Third-party | CC-BY-NC-4.0 | Candidate — not published | Planned hosted-restricted (candidate; no zoo download) | non-commercial |
+| BatDetect2 v2 UK Bat Call Detector | `batdetect2-uk-v2` | BatDetect2 | onnx · 2.0.0b3 | Detector · direct species output | United Kingdom — United Kingdom | BatDetect2 contributors | Third-party | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 
-## Acoustics — Classifier — 1 unpublished candidate(s); 6 active published/hosted; 0 active link-only; 0 active pending-rights
+## Acoustics — Classifier
 
 | Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -136,7 +125,7 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | perch-v2 | `perch-v2` | — | onnx | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | Active / published | Hosted | allowed |
 | BuzzDetect Acoustic Event Classifier | `buzzdetect` | BuzzDetect, YAMNet | onnx | Classifier | Global | OSU Bee Lab; YAMNet backbone by Google | Third-party | MIT AND Apache-2.0 | Active / published | Hosted | allowed |
 | perch-v2-fp16 | `perch-v2-fp16` | — | onnx-fp16 | Classifier | Global | Google Research (Hamer et al.) | Third-party | Apache-2.0 | Active / published | Hosted | allowed |
-| HawkEars 2.2 Bird Audio Ensemble | `hawkears-v2` | HawkEars | ensemble · 2.2.0 | Classifier · recording-level ensemble | North America — Canada and the northern United States | Jan Huus and HawkEars contributors | Third-party | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| HawkEars 2.2 Bird Audio Ensemble | `hawkears-v2` | HawkEars | ensemble · 2.2.0 | Classifier · recording-level ensemble | North America — Canada and the northern United States | Jan Huus and HawkEars contributors | Third-party | MIT | Active / published | Hosted | allowed |
 
 ## Acoustics — Cascade
 
@@ -175,23 +164,23 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | BioCLIP 2.5 Huge | `bioclip-25` | BioCLIP | onnx-fp16 · 1.0.0 | Encoder · embeddings | Foundational (global) | Imageomics Institute and Ohio State University | Third-party | MIT | Active / published | Hosted | allowed |
 | dinov3-vitl16 | `dinov3-vitl16` | DINOv3 | onnx · vitl16-lvd1689m | Encoder · embeddings | Foundational (global) | Meta AI | Third-party | DINOv3 License | Active (link-only) | Link-only | unverified |
 
-## General — Classifier — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
+## General — Classifier
 
 | Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| PlantCLEF 2024 DINOv2 Plant Classifier | `plantclef-dinov2` | PlantCLEF, DINOv2 | onnx · plantclef2024-full-finetune-ema | Classifier | Global | PlantNet / CIRAD / Inria / LifeCLEF | Third-party | CC-BY-4.0 | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| PlantCLEF 2024 DINOv2 Plant Classifier | `plantclef-dinov2` | PlantCLEF, DINOv2 | onnx · plantclef2024-full-finetune-ema | Classifier | Global | PlantNet / CIRAD / Inria / LifeCLEF | Third-party | CC-BY-4.0 | Active / published | Hosted | allowed |
 
-## Overhead — Classifier — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
-
-| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| DeepForest NEON Tree-Species Classifier | `deepforest-neon-species` | DeepForest | onnx · cropmodel-tree-species-3efe2a25 | Classifier | North America — 29 NEON sites | Weecology / GatorSense | Third-party | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
-
-## Overhead — Cascade — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
+## Overhead — Classifier
 
 | Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| DeepForest Tree-Species Pipeline | `deepforest-tree-species` | DeepForest | cascade | Cascade · pipeline descriptor | North America — 29 NEON sites | Sparrow Engine / Weecology / GatorSense | Third-party | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| DeepForest NEON Tree-Species Classifier | `deepforest-neon-species` | DeepForest | onnx · cropmodel-tree-species-3efe2a25 | Classifier | North America — 29 NEON sites | Weecology / GatorSense | Third-party | MIT | Active / published | Hosted | allowed |
+
+## Overhead — Cascade
+
+| Display name | ID | Family | Format / version | Behavior | Geography / locality | Developer / owner | AI4G relationship | License | Status | Hosting | Commercial use |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| DeepForest Tree-Species Pipeline | `deepforest-tree-species` | DeepForest | cascade | Cascade · pipeline descriptor | North America — 29 NEON sites | Sparrow Engine / Weecology / GatorSense | Third-party | MIT | Active / published | Hosted | allowed |
 
 ## References & citations
 

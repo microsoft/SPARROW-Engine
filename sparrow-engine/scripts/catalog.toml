@@ -35,9 +35,9 @@
 schema_version = "1.2"
 
 [zenodo]
-record = "22018132"
+record = "22711452"
 concept_doi = "10.5281/zenodo.20348978"
-version = "0.29.0"
+version = "0.30.0"
 
 # ============================ Camera Trap — Detector ============================
 
@@ -2226,7 +2226,7 @@ restrictions = ["custom_agreement", "attribution", "prohibited_uses", "trade_con
 framework_licenses = []
 reference = "Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., Khalidov, V., Szafraniec, M., et al. DINOv3. Meta AI, 2025. https://arxiv.org/abs/2508.10104. Model: facebook/dinov3-vitl16-pretrain-lvd1689m (LVD-1689M pretrain, ViT-L/16, 1024-d), Hugging Face, https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m. License: DINOv3 License (custom Meta license)."
 
-# ===================== Admitted release candidates =====================
+# ============================ v0.30.0 additions ============================
 
 [[model]]
 id = "plantclef-dinov2"
@@ -2235,7 +2235,7 @@ task = "classifier"
 format = "onnx"
 family = ["PlantCLEF", "DINOv2"]
 version = "plantclef2024-full-finetune-ema"
-status = "candidate"
+status = "active"
 license = "CC-BY-4.0"
 zip = "general__classifier__plantclef-dinov2.zip"
 geo_scope = "global"
@@ -2263,7 +2263,7 @@ task = "classifier"
 format = "onnx"
 family = ["DeepForest"]
 version = "cropmodel-tree-species-3efe2a25"
-status = "candidate"
+status = "active"
 license = "MIT"
 zip = "overhead__classifier__deepforest-neon-species.zip"
 geo_scope = "regional"
@@ -2290,7 +2290,7 @@ domain = "overhead"
 task = "cascade"
 format = "cascade"
 family = ["DeepForest"]
-status = "candidate"
+status = "active"
 license = "MIT"
 zip = "overhead__cascade__deepforest-tree-species.zip"
 geo_scope = "regional"
@@ -2318,7 +2318,7 @@ task = "classifier"
 format = "ensemble"
 family = ["HawkEars"]
 version = "2.2.0"
-status = "candidate"
+status = "active"
 license = "MIT"
 zip = "acoustics__classifier__hawkears-v2.zip"
 geo_scope = "regional"
@@ -2346,7 +2346,7 @@ task = "detector"
 format = "onnx"
 family = ["BatDetect2"]
 version = "2.0.0b3"
-status = "candidate"
+status = "active"
 license = "CC-BY-NC-4.0"
 zip = "acoustics__detector__batdetect2-uk-v2.zip"
 species_direct = true

@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/22018132/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/22711452/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo remains v0.29.0 with 75 archives. This branch stages an **unpublished 80-entry v0.30.0 candidate**: 47 currently downloadable runtime packages, 28 link-only metadata entries, and 5 admitted packages that remain marked as release candidates until the new Zenodo version exists. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full candidate catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.30.0 with 80 archives: 52 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -228,15 +228,15 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.22018132](https://doi.org/10.5281/zenodo.22018132) (v0.29.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.22711452](https://doi.org/10.5281/zenodo.22711452) (v0.30.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 38 default hosted desktop ONNX models into
+Download the 41 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
-without arguments. The current published hosted set also holds 5 mobile TFLite models, 1 cascade descriptor, 0 recording-level ensemble packages, and 3 opt-in ONNX models. Together with
-28 link-only entries and 5 release-candidate entries, they form this branch's
-complete **80-entry** catalog. The recording-level ensemble and second
-cascade are among the five candidates and cannot be downloaded from v0.29.0.
+without arguments. The current published hosted set also holds 5 mobile TFLite
+models, 2 cascade descriptors, 1 recording-level ensemble package, and 3 opt-in ONNX models.
+Together with 28 link-only entries and 0 release-candidate entries, they form
+the complete **80-entry** catalog.
 Non-default published entries are fetched when named explicitly or with
 `--all`. Link-only entries remain discoverable and report the original source
 or rights-holder contact route:
@@ -270,7 +270,7 @@ descriptors (`manifest.toml`, `pipeline.toml`, or `ensemble.toml`) plus their
 declared assets. Link-only entries fail with the original source URL; aliases,
 `--force`, `--no-verify`, and record overrides cannot bypass that routing.
 
-### Unpublished 80-entry release-candidate catalogue
+### Published 80-entry model-zoo catalogue
 
 The index below is generated from
 [`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
@@ -278,31 +278,19 @@ the source of truth used by `download_models.sh`. The
 [full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
 developer/owner details, and source citations.
 
-The five rows whose catalog status is `candidate` are admitted locally but are
-not present in the linked v0.29.0 Zenodo record. The downloader rejects them
-before network access until a verified v0.30.0 record is published and the
-rows are activated.
+All 80 rows are active in v0.30.0. Hosted and hosted-restricted rows download
+from Zenodo record `22711452`; link-only rows remain discoverable without
+redistributed runtime payloads.
 
 <!-- BEGIN GENERATED MODEL ZOO INDEX -->
 
-> **Unpublished v0.30.0 release candidate.** The 80 entries below include five
-> locally admitted candidates that are not present in Zenodo record `22018132`.
-> That record remains the 75-entry v0.29.0 base. Candidate entries stay
-> unavailable through `download_models.sh` until the new record is published
-> and their catalog status is changed to `active`.
->
+**80 catalog entries total; 80 active catalog entries.**
 
-**80 catalog entries total; 75 active catalog entries.**
+**52 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**47 active published/hosted entries** · **5 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**Active catalog routing (published/hosted vs non-mirrored):** 42 hosted · 10 hosted-restricted · 28 link-only · 0 pending-rights.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 38 hosted · 9 hosted-restricted · 28 link-only · 0 pending-rights.
-
-**Candidate planned routing (not published):** 4 hosted · 1 hosted-restricted · 0 link-only · 0 pending-rights.
-
-**Current published availability:** 38 hosted · 9 hosted-restricted · 28
-link-only · 5 release candidates. Candidate hosting labels describe the
-planned v0.30.0 package, not availability from record `22018132`.
+**Current published availability:** 42 hosted · 10 hosted-restricted · 28 link-only.
 
 | Area | Catalog entries (all statuses) |
 |---|---:|
@@ -375,7 +363,7 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
 
-#### Acoustics — Detectors (5) — 1 unpublished candidate(s); 4 active published/hosted; 0 active link-only; 0 active pending-rights
+#### Acoustics — Detectors (5)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
@@ -383,9 +371,9 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `orca-detector-dclde2026-v5` | orca-detector-dclde2026-v5 | DCLDE-orca | onnx · v5 | MIT | Active / published | Hosted | allowed |
 | `orca-detector-v5-fp16-tflite` | orca-detector-v5-fp16-tflite | DCLDE-orca | tflite-fp16 · v5 | MIT | Active / published | Hosted | allowed |
 | `orca-detector-v5-int8-tflite` | orca-detector-v5-int8-tflite | DCLDE-orca | tflite-int8 · v5 | MIT | Active / published | Hosted | allowed |
-| `batdetect2-uk-v2` | BatDetect2 v2 UK Bat Call Detector | BatDetect2 | onnx · 2.0.0b3 | CC-BY-NC-4.0 | Candidate — not published | Planned hosted-restricted (candidate; no zoo download) | non-commercial |
+| `batdetect2-uk-v2` | BatDetect2 v2 UK Bat Call Detector | BatDetect2 | onnx · 2.0.0b3 | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 
-#### Acoustics — Classifiers (7) — 1 unpublished candidate(s); 6 active published/hosted; 0 active link-only; 0 active pending-rights
+#### Acoustics — Classifiers (7)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
@@ -395,7 +383,7 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `perch-v2` | perch-v2 | — | onnx | Apache-2.0 | Active / published | Hosted | allowed |
 | `buzzdetect` | BuzzDetect Acoustic Event Classifier | BuzzDetect, YAMNet | onnx | MIT AND Apache-2.0 | Active / published | Hosted | allowed |
 | `perch-v2-fp16` | perch-v2-fp16 | — | onnx-fp16 | Apache-2.0 | Active / published | Hosted | allowed |
-| `hawkears-v2` | HawkEars 2.2 Bird Audio Ensemble | HawkEars | ensemble · 2.2.0 | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| `hawkears-v2` | HawkEars 2.2 Bird Audio Ensemble | HawkEars | ensemble · 2.2.0 | MIT | Active / published | Hosted | allowed |
 
 #### Acoustics — Cascade (1)
 
@@ -434,23 +422,23 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `bioclip-25` | BioCLIP 2.5 Huge | BioCLIP | onnx-fp16 · 1.0.0 | MIT | Active / published | Hosted | allowed |
 | `dinov3-vitl16` | dinov3-vitl16 | DINOv3 | onnx · vitl16-lvd1689m | DINOv3 License | Active (link-only) | Link-only | unverified |
 
-#### General — Classifiers (1) — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
+#### General — Classifiers (1)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
-| `plantclef-dinov2` | PlantCLEF 2024 DINOv2 Plant Classifier | PlantCLEF, DINOv2 | onnx · plantclef2024-full-finetune-ema | CC-BY-4.0 | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| `plantclef-dinov2` | PlantCLEF 2024 DINOv2 Plant Classifier | PlantCLEF, DINOv2 | onnx · plantclef2024-full-finetune-ema | CC-BY-4.0 | Active / published | Hosted | allowed |
 
-#### Overhead — Classifiers (1) — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
-
-| Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
-|---|---|---|---|---|---|---|---|
-| `deepforest-neon-species` | DeepForest NEON Tree-Species Classifier | DeepForest | onnx · cropmodel-tree-species-3efe2a25 | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
-
-#### Overhead — Cascade (1) — 1 unpublished candidate(s); 0 active published/hosted; 0 active link-only; 0 active pending-rights
+#### Overhead — Classifiers (1)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
-| `deepforest-tree-species` | DeepForest Tree-Species Pipeline | DeepForest | cascade | MIT | Candidate — not published | Planned hosted (candidate; no zoo download) | allowed |
+| `deepforest-neon-species` | DeepForest NEON Tree-Species Classifier | DeepForest | onnx · cropmodel-tree-species-3efe2a25 | MIT | Active / published | Hosted | allowed |
+
+#### Overhead — Cascade (1)
+
+| Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
+|---|---|---|---|---|---|---|---|
+| `deepforest-tree-species` | DeepForest Tree-Species Pipeline | DeepForest | cascade | MIT | Active / published | Hosted | allowed |
 
 <!-- END GENERATED MODEL ZOO INDEX -->
 

@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Published Sparrow Model Zoo v0.30.0 at
+  [10.5281/zenodo.22711452](https://doi.org/10.5281/zenodo.22711452) with 80
+  packages: 52 runtime packages and 28 link-only metadata packages. The five
+  newly active entries are PlantCLEF DINOv2, the DeepForest NEON classifier
+  and tree-species pipeline, HawkEars v2, and BatDetect2 v2.
 - Added schema-1.2 model-zoo rights metadata and fail-closed downloader
   routing. Active hosted packages remain downloadable; link-only entries
   report the original source or rights-holder contact route, and unpublished
