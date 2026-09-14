@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TensorRT warm-up attempts now retain one immutable terminal result per
+  generation. Polling, blocking waits, retries, unload/reload, and the reaper
+  cannot overwrite a timeout or commit a retired worker's model.
+- `MDV6-yolov10-c` uses TensorRT builder optimization level 2, keeping cold
+  builds below the 300-second release deadline while retaining the validated
+  CUDA agreement gate.
 - Multi-label CLI range merging now uses half a frame as the adjacency
   threshold, so a below-threshold frame remains a real gap instead of being
   merged across by the previous `frame_duration + 1 ms` rule.
