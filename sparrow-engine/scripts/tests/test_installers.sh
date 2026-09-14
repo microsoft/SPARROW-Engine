@@ -424,4 +424,37 @@ for rb in "$INSTALLER_DIR/homebrew/sparrow-engine.rb" "$INSTALLER_DIR/homebrew/s
     fi
 done
 
-echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), reinstall/reprobe idempotency, help-path (docs/user-manual.md), exit-code table match, shell/PowerShell exit-code parity, and Homebrew-template gates"
+echo "[17] canonical uv --target cuDNN install reports its package version"
+h17="$TEST_ROOT/h17"
+mkdir -p \
+    "$h17/.local/cudnn/nvidia/cudnn/lib" \
+    "$h17/.local/cudnn/nvidia_cudnn_cu12-9.26.0.51.dist-info" \
+    "$h17/runtime-libs"
+: >"$h17/.local/cudnn/nvidia/cudnn/lib/libcudnn.so.9"
+for lib in \
+    libcudart.so.12 libcublas.so.12 libcublasLt.so.12 \
+    libcurand.so.10 libcufft.so.11 libnvjpeg.so.12; do
+    : >"$h17/runtime-libs/$lib"
+done
+probe_result="$(
+    env HOME="$h17" LD_LIBRARY_PATH="$h17/runtime-libs" bash -c '
+        . "$1"
+        probe_gpu_quality >/dev/null
+        printf "%s\n%s\n" \
+            "$SPARROW_ENGINE_GPU_QUALITY" \
+            "$SPARROW_ENGINE_GPU_QUALITY_REASON"
+    ' _ "$INSTALLER_DIR/probe_gpu_quality.sh"
+)"
+probe_quality="$(printf '%s\n' "$probe_result" | sed -n '1p')"
+probe_reason="$(printf '%s\n' "$probe_result" | sed -n '2,$p')"
+case "$probe_quality" in
+    ok|sm_warn) ;;
+    *) fail "canonical uv target produced $probe_quality instead of a versioned pass/warn: $probe_reason" ;;
+esac
+grep -Fq 'cuDNN 9.26.0.51 found' <<<"$probe_reason" ||
+    fail "canonical uv target did not report the installed cuDNN version: $probe_reason"
+if grep -Fqi 'version metadata missing' <<<"$probe_reason"; then
+    fail "canonical uv target still reports missing cuDNN version metadata"
+fi
+
+echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), reinstall/reprobe idempotency, help-path (docs/user-manual.md), exit-code table match, shell/PowerShell exit-code parity, Homebrew-template gates, and canonical cuDNN target detection"

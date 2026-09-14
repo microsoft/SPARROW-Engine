@@ -222,9 +222,10 @@ Install via ONE of (see docs/user-manual.md §2.5):
         fi
         # (b) Bare `libcudnn.so.9` + dist-info sidecar (pip/uv wheel install).
         if [ -e "$_dir/libcudnn.so.9" ]; then
-            # The wheel root is the parent's parent ($_dir → cudnn/lib → cudnn → wheel-root).
+            # The wheel root is three parents up
+            # ($_dir → cudnn/lib → cudnn → nvidia → wheel-root).
             # nvidia_cudnn_cu12-X.Y.Z.W.dist-info usually lives at the wheel root.
-            for _root in "$_dir/../.." "$_dir/.." "$_dir"; do
+            for _root in "$_dir/../../.." "$_dir/../.." "$_dir/.." "$_dir"; do
                 # Pick highest version in case of side-by-side wheel installs.
                 _di=$(find "$_root" -maxdepth 2 -name 'nvidia_cudnn_cu12-*.dist-info' -type d 2>/dev/null | sort -V | tail -n 1)
                 if [ -n "$_di" ]; then

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed the Linux installer GPU-quality probe so a documented
+  `uv pip install --target ~/.local/cudnn ...` layout reads the adjacent
+  `nvidia_cudnn_cu12-*.dist-info` version instead of reporting an unnecessary
+  "version metadata missing" warning.
+
 ## v0.1.29
 
 ### Added
