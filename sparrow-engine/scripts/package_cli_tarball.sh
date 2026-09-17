@@ -207,9 +207,14 @@ Self-contained tarball release per RP-4. The binary loads its bundled
 
 ## Quickstart
 
+Models are not bundled. Download them with \`scripts/download_models.sh\` from
+the SPARROW-Engine repository (default directory \`~/.sparrow-engine/models\`),
+or point \`SPARROW_ENGINE_MODEL_DIR\` at an existing model directory.
+
 \`\`\`
 ./bin/${bin_filename} --version
-./bin/${bin_filename} detect --image <path-to-image>
+./bin/${bin_filename} models list
+./bin/${bin_filename} detect <path-to-image> --model MDV6-yolov10-e
 \`\`\`
 
 ## Layout

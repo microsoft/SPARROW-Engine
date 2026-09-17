@@ -392,6 +392,14 @@ run_downloader valid_both --dest "$multi_success" test-model test-model-two \
 assert_contains "$FILE_URL_FRAGMENT" "$FAKE_CURL_LOG"
 assert_contains "$FILE_URL_FRAGMENT_TWO" "$FAKE_CURL_LOG"
 assert_contains "Downloaded 2 model(s)" "$TEST_ROOT/multi-success.out"
+# The post-download hint must only use commands the released spe accepts
+# (OQ-2026-09-15-3): `spe models list` and a positional image path.
+assert_contains "export SPARROW_ENGINE_MODEL_DIR=" "$TEST_ROOT/multi-success.out"
+assert_contains "  spe models list" "$TEST_ROOT/multi-success.out"
+assert_contains "  spe detect /path/to/image.jpg --model MDV6-yolov10-e" "$TEST_ROOT/multi-success.out"
+assert_absent "list-models" "$TEST_ROOT/multi-success.out"
+assert_absent " --image " "$TEST_ROOT/multi-success.out"
+assert_absent "SPARROW_ENGINE_MODELS_DIR" "$TEST_ROOT/multi-success.out"
 
 echo "[17] --list distinguishes hosted and metadata-only entries"
 run_downloader valid_both --list > "$TEST_ROOT/list.out" 2>&1

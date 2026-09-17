@@ -26,8 +26,8 @@
 #
 # After the script completes, point sparrow-engine at the directory:
 #   export SPARROW_ENGINE_MODEL_DIR=$(realpath ~/.sparrow-engine/models)
-#   spe list-models
-#   spe detect --model MDV6-yolov10-e --image /path/to/image.jpg
+#   spe models list
+#   spe detect /path/to/image.jpg --model MDV6-yolov10-e
 #
 # (No explicit env var is needed if the default ~/.sparrow-engine/models is
 # used — the CLI / server / Python wheels all default to that path.)
@@ -418,8 +418,8 @@ echo "Downloaded ${#IDS[@]} model(s) to: $(realpath "$DEST")"
 echo ""
 echo "Load with sparrow-engine:"
 echo "  export SPARROW_ENGINE_MODEL_DIR=$(realpath "$DEST")"
-echo "  spe list-models"
-echo "  spe detect --model MDV6-yolov10-e --image /path/to/image.jpg"
+echo "  spe models list"
+echo "  spe detect /path/to/image.jpg --model MDV6-yolov10-e"
 echo ""
 echo "If you use these models, please cite:"
 echo "  Zenodo DOI: ${ZENODO_DOI}"
