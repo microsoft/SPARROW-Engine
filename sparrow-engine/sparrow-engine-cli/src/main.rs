@@ -879,10 +879,11 @@ fn dirs_default_model_dir() -> PathBuf {
 
 /// First-user hint shown when the resolved model directory is missing or empty.
 /// Hardcoded URL + DOI (no env var workaround) so the message stays self-contained
-/// and copy-pasteable on a fresh box. Bootstrap script lives in the sparrow-engine-dev
-/// branch of microsoft/Pytorch-Wildlife.
+/// and copy-pasteable on a fresh box. Bootstrap script lives at
+/// `sparrow-engine/scripts/download_models.sh` on `main` of microsoft/SPARROW-Engine
+/// (the retired Pytorch-Wildlife branch copy is frozen at an old catalog).
 const BOOTSTRAP_HINT: &str = "First run? Populate the model directory:\n  \
-    bash -c \"$(curl -fsSL https://raw.githubusercontent.com/microsoft/Pytorch-Wildlife/sparrow-engine-dev/sparrow-engine/scripts/download_models.sh)\"\n\n\
+    bash -c \"$(curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/main/sparrow-engine/scripts/download_models.sh)\"\n\n\
     Or set SPARROW_ENGINE_MODEL_DIR to an existing model directory.\n\
     (Latest Zenodo model bundle: https://doi.org/10.5281/zenodo.20348978)";
 
@@ -3413,6 +3414,12 @@ mod tests {
         assert!(BOOTSTRAP_HINT.contains("10.5281/zenodo.20348978"));
         assert!(!BOOTSTRAP_HINT.contains("10.5281/zenodo.20360316"));
         assert!(!BOOTSTRAP_HINT.contains("Zenodo v"));
+        // The first-run bootstrap must fetch the maintained downloader, not the
+        // frozen copy on the retired Pytorch-Wildlife branch.
+        assert!(BOOTSTRAP_HINT.contains(
+            "raw.githubusercontent.com/microsoft/SPARROW-Engine/main/sparrow-engine/scripts/download_models.sh"
+        ));
+        assert!(!BOOTSTRAP_HINT.contains("Pytorch-Wildlife/sparrow-engine-dev"));
     }
 
     #[test]
