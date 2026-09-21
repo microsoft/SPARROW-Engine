@@ -12,6 +12,7 @@
 #   ./scripts/test.sh -p sparrow-engine-cpu --lib  # pass extra cargo test args
 #   ./scripts/test.sh --release -p sparrow-engine-cpu --lib  # combine
 #   ORT_DIR=/custom/path ./scripts/test.sh  # override ORT location
+#   PYO3_PYTHON=/path/to/python3.11 ./scripts/test.sh  # pin the interpreter for the sparrow-engine-python tests
 
 set -euo pipefail
 
@@ -41,9 +42,28 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SPARROW_CATALOG='' "$SCRIPT_DIR/smoke_test_models.sh" --model-dir /dev/null
 source "$SCRIPT_DIR/ort-env.sh"
 
-# sparrow-engine-python tests (--no-default-features) link to libpython.
-# Add python lib dir if available.
-PYLIB_DIR=$(python3-config --ldflags 2>/dev/null | grep -oP '(?<=-L)\S+' | head -1 || true)
+# sparrow-engine-python tests (--no-default-features) link to libpython, and
+# pyo3 compiles that test binary against the interpreter it discovers. Both
+# must be the SAME interpreter, and its libpython must be loadable on this
+# host: a PATH-first Homebrew Python built against a newer glibc (GLIBC_2.38
+# on a glibc 2.35 host) makes the test binary fail to start before running a
+# single test (v0.1.30 manual run, finding S00-F02, 2026-09-21).
+# Selection order: PYO3_PYTHON (explicit pin) > uv-managed Python 3.11 (the
+# documented prerequisite floor) > any uv-found >= 3.11 > python3 on PATH.
+if [[ -z "${PYO3_PYTHON:-}" ]]; then
+    PYO3_PYTHON="$(uv python find 3.11 2>/dev/null || uv python find '>=3.11' 2>/dev/null || command -v python3 || true)"
+fi
+PYLIB_DIR=""
+if [[ -n "${PYO3_PYTHON:-}" ]]; then
+    export PYO3_PYTHON
+    # The embedded interpreter locates its stdlib from the `python3` found on
+    # PATH at run time; make that the selected one, or a PATH-first foreign
+    # Python yields `init_fs_encoding ... No module named 'encodings'`.
+    PYO3_BIN_DIR="$(dirname "$PYO3_PYTHON")"
+    export PATH="$PYO3_BIN_DIR:$PATH"
+    echo "sparrow-engine-python test interpreter: $PYO3_PYTHON ($("$PYO3_PYTHON" --version 2>&1))"
+    PYLIB_DIR="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")' 2>/dev/null || true)"
+fi
 if [[ -n "$PYLIB_DIR" ]]; then
     export LD_LIBRARY_PATH="${ORT_CAPI}:${PYLIB_DIR}:${LD_LIBRARY_PATH:-}"
 fi
