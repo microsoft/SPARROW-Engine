@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v0.1.30
+
+Quickstart and first-run corrections plus the installer cuDNN probe fix; no
+engine inference behavior changes.
+
+### Fixed
+
+- The post-download hints printed by `scripts/download_models.sh` and the
+  CLI tarball `README.md` quickstart now use the released interface
+  (`SPARROW_ENGINE_MODEL_DIR`, `spe models list`, positional image paths
+  with `--model <id>`); the previously shipped forms were rejected by `spe`.
+- The CLI first-run hint fetches `download_models.sh` from
+  `microsoft/SPARROW-Engine` `main` instead of the retired Pytorch-Wildlife
+  branch, whose frozen copy serves a stale model catalog.
 - Fixed the Linux installer GPU-quality probe so a documented
   `uv pip install --target ~/.local/cudnn ...` layout reads the adjacent
   `nvidia_cudnn_cu12-*.dist-info` version instead of reporting an unnecessary

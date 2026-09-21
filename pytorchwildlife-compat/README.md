@@ -62,7 +62,7 @@ documentation.
 
 ## Version co-bump rule (maintainers)
 
-The shim's runtime dependency on `sparrow-engine==0.1.29` (declared in
+The shim's runtime dependency on `sparrow-engine==0.1.30` (declared in
 `pytorchwildlife-compat/pyproject.toml`) MUST be bumped in lockstep when
 sparrow-engine's version moves. The clean-room smoke test in
 `sparrow-engine/scripts/clean_room_test.sh` installs the shim with `pip install
