@@ -1418,7 +1418,7 @@ jobs:
       # Default runner has 14GB free disk; GPU image build needs ~6-8GB
       # working space (2GB base + layers + buildkit cache mounts).
       - name: Free runner disk space (cuDNN base is ~2GB)
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           tool-cache: false  # keep nodejs/python — buildx needs them
           android: true
