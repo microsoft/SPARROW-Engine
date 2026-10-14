@@ -418,7 +418,7 @@ jobs:
               || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-cpu-linux
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -492,7 +492,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-cpu-macos-arm64
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -534,7 +534,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-cpu-windows
           path: sparrow-engine/target/wheels/sparrow_engine-*.whl
@@ -636,7 +636,7 @@ jobs:
               || { echo "FAIL: wheel $w is not manylinux_2_28_x86_64 compatible"; exit 1; }
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-gpu-linux
           path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
@@ -692,7 +692,7 @@ jobs:
             esac
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-gpu-windows
           path: sparrow-engine/target/wheels/sparrow_engine_gpu-*.whl
@@ -967,7 +967,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-cpu-linux
           path: |
@@ -1156,7 +1156,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-gpu-linux
           path: |
@@ -1220,7 +1220,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-cpu-macos-arm64
           path: |
@@ -1296,7 +1296,7 @@ jobs:
           fi
           VERSION="$VERSION" ./scripts/package_cli_tarball.sh
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-cpu-windows
           path: |
