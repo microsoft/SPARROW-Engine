@@ -344,6 +344,9 @@ struct TileParams {
     peak_threshold: f32,
     adaptive: bool,
     point_to_box_half_size: u32,
+    /// `heatmap_lmds` gates `(adapt_threshold, negative_threshold)`; `None`
+    /// selects the per-tile `heatmap_peaks` path.
+    lmds: Option<(f32, f32)>,
     /// Kept on the params snapshot for diagnostics + potential future
     /// callers; the inner loop reads the pre-derived `stats` field instead.
     #[allow(dead_code)]
@@ -460,17 +463,29 @@ impl TiledModel {
             )));
         }
 
-        let (peak_threshold, adaptive, point_to_box_half_size) = match &manifest.postprocess_method
+        let (peak_threshold, adaptive, point_to_box_half_size, lmds) = match &manifest
+            .postprocess_method
         {
             PostprocessMethod::HeatmapPeaks {
                 peak_threshold,
                 adaptive,
                 point_to_box_half_size,
-            } => (*peak_threshold, *adaptive, *point_to_box_half_size),
+            } => (*peak_threshold, *adaptive, *point_to_box_half_size, None),
+            PostprocessMethod::HeatmapLmds {
+                peak_threshold,
+                adapt_threshold,
+                negative_threshold,
+                point_to_box_half_size,
+            } => (
+                *peak_threshold,
+                false,
+                *point_to_box_half_size,
+                Some((*adapt_threshold, *negative_threshold)),
+            ),
             other => {
                 return Err(SparrowEngineError::InvalidManifest(format!(
-                    "TiledModel requires postprocessing.method = \"heatmap_peaks\", got {other:?}",
-                )));
+                        "TiledModel requires postprocessing.method = \"heatmap_peaks\" or \"heatmap_lmds\", got {other:?}",
+                    )));
             }
         };
 
@@ -614,6 +629,7 @@ impl TiledModel {
                 peak_threshold,
                 adaptive,
                 point_to_box_half_size,
+                lmds,
                 normalization,
                 channel_order,
             },
@@ -701,6 +717,15 @@ impl TiledModel {
         let img_h = gpu_image.height;
 
         let p = self.params;
+        if let Some((adapt, neg)) = p.lmds {
+            let detections = self.detect_lmds(&stream, &gpu_image, opts, adapt, neg)?;
+            return Ok(DetectResult {
+                detections,
+                image_width: img_w,
+                image_height: img_h,
+                processing_time_ms: start.elapsed().as_secs_f32() * 1000.0,
+            });
+        }
         let stride_x = p.tile_w.saturating_sub(p.tile_overlap).max(1);
         let stride_y = p.tile_h.saturating_sub(p.tile_overlap).max(1);
 
@@ -855,6 +880,109 @@ impl TiledModel {
             image_height: img_h,
             processing_time_ms: elapsed.as_secs_f32() * 1000.0,
         })
+    }
+
+    /// `heatmap_lmds` path: same GPU crop/normalize kernel, padding re-zeroed in
+    /// normalized space, tiles mean-stitched into one map, LMDS run once
+    /// (shared with sparrow-engine-cpu via `sparrow_engine_core::heatmap_lmds`).
+    fn detect_lmds(
+        &self,
+        stream: &Arc<CudaStream>,
+        gpu_image: &GpuImage,
+        opts: &DetectOpts,
+        adapt: f32,
+        neg: f32,
+    ) -> Result<Vec<Detection>> {
+        use sparrow_engine_core::heatmap_lmds::{
+            lmds_detections, lmds_tiles, zero_nchw_outside_crop, LmdsStitcher,
+        };
+        let p = self.params;
+        let (img_w, img_h) = (gpu_image.width, gpu_image.height);
+        let threshold = resolve_confidence_threshold(opts.confidence_threshold, p.peak_threshold)?;
+        let mut host_buf = vec![0.0f32; checked_tensor_len_3hw(p.tile_h, p.tile_w)?];
+        let mut stitcher = LmdsStitcher::new(img_w, img_h, p.tile_w, p.tile_h, p.tile_overlap);
+
+        for tile in lmds_tiles(img_w, img_h, p.tile_w, p.tile_h, p.tile_overlap) {
+            let dst_gpu = tiled_preprocess_gpu(
+                stream,
+                &self.preprocess,
+                gpu_image,
+                tile.x,
+                tile.y,
+                tile.crop_w,
+                tile.crop_h,
+                p.tile_w,
+                p.tile_h,
+                self.stats,
+                p.channel_order,
+            )?;
+            stream
+                .memcpy_dtoh(&dst_gpu, host_buf.as_mut_slice())
+                .map_err(|e| SparrowEngineError::Ort(format!("cudarc memcpy_dtoh (tile): {e}")))?;
+            stream.synchronize().map_err(|e| {
+                SparrowEngineError::Ort(format!("cudarc synchronize (after dtoh): {e}"))
+            })?;
+            zero_nchw_outside_crop(&mut host_buf, p.tile_w, p.tile_h, tile.crop_w, tile.crop_h);
+
+            let arr = ndarray::ArrayView4::<f32>::from_shape(
+                (1, 3, p.tile_h as usize, p.tile_w as usize),
+                host_buf.as_slice(),
+            )
+            .map_err(|e| SparrowEngineError::Ort(format!("tile tensor reshape: {e}")))?;
+            let input_value = TensorRef::from_array_view(arr)
+                .map_err(|e| SparrowEngineError::Ort(format!("ort TensorRef: {e}")))?;
+            let mut guard = self
+                .session
+                .lock()
+                .map_err(|_| SparrowEngineError::Ort("TiledModel session lock poisoned".into()))?;
+            let outputs = guard
+                .run(ort::inputs![input_value])
+                .map_err(|e| SparrowEngineError::Ort(format!("ort session.run: {e}")))?;
+            if outputs.len() == 0 {
+                return Err(SparrowEngineError::Ort(
+                    "session.run returned no outputs (tiled inference)".into(),
+                ));
+            }
+            let view: ArrayViewD<'_, f32> = outputs[0]
+                .try_extract_array::<f32>()
+                .map_err(|e| SparrowEngineError::Ort(format!("ort extract heatmap: {e}")))?;
+            let shape = view.shape().to_vec();
+            if shape.len() < 2 {
+                return Err(SparrowEngineError::Ort(format!(
+                    "heatmap_lmds: heatmap output rank {} < 2",
+                    shape.len()
+                )));
+            }
+            let (hm_h, hm_w) = (shape[shape.len() - 2], shape[shape.len() - 1]);
+            if view.len() != hm_h * hm_w {
+                return Err(SparrowEngineError::Ort(format!(
+                    "heatmap_lmds: expected a single-channel heatmap, got shape {shape:?}"
+                )));
+            }
+            let heatmap: Vec<f32> = view.iter().copied().collect();
+            drop(outputs);
+            drop(guard);
+            stitcher.add_tile(&tile, &heatmap, hm_w, hm_h)?;
+        }
+
+        let (map, map_w, map_h, rx, ry) = stitcher.finish();
+        let label = sparrow_engine_core::postprocess::label_for_id(&self.labels, 0);
+        let mut detections = lmds_detections(
+            &map,
+            map_w,
+            map_h,
+            rx,
+            ry,
+            img_w,
+            img_h,
+            threshold,
+            adapt,
+            neg,
+            p.point_to_box_half_size,
+            &label,
+        );
+        apply_max_detections(&mut detections, opts.max_detections);
+        Ok(detections)
     }
 
     /// Model ID from the manifest (e.g. `"herdnet-general-2022"`).

@@ -455,6 +455,21 @@ pub enum PostprocessMethod {
         adaptive: bool,
         point_to_box_half_size: u32,
     },
+    /// HerdNet/animaloc LMDS on a mean-stitched single-channel heatmap
+    /// (MegaDetector-Overhead OWL-D). Tiled-only. Tiles follow the upstream
+    /// `ImageToPatches` grid (single pass when the image fits one tile,
+    /// otherwise unfold + one residual tile), padding is zero in normalized
+    /// space, overlapping heatmaps are mean-fused, and local maxima (3x3
+    /// max-pool equality, ties kept) are selected once on the global map.
+    HeatmapLmds {
+        /// Final per-point score threshold (`score_threshold` upstream).
+        peak_threshold: f32,
+        /// Keep maxima `>= adapt_threshold * global_max` (`adapt_ts`).
+        adapt_threshold: f32,
+        /// Emit nothing when `global_max < negative_threshold` (`neg_ts`).
+        negative_threshold: f32,
+        point_to_box_half_size: u32,
+    },
     /// RT-DETR packed TopK detector output: [cx, cy, w, h, score, class_id].
     RtDetrTopk {
         /// Optional manifest cap for fixed-query outputs after score sorting.
@@ -531,6 +546,7 @@ impl PostprocessMethod {
             PostprocessMethod::YoloE2e => "yolo_e2e",
             PostprocessMethod::MegadetV5a { .. } => "megadet_v5a",
             PostprocessMethod::HeatmapPeaks { .. } => "heatmap_peaks",
+            PostprocessMethod::HeatmapLmds { .. } => "heatmap_lmds",
             PostprocessMethod::RtDetrTopk { .. } => "rtdetr_topk",
             PostprocessMethod::RetinaNetSoftNms { .. } => "retinanet_soft_nms",
             PostprocessMethod::Softmax => "softmax",
@@ -1089,6 +1105,8 @@ struct RawPostprocessing {
     peak_threshold: Option<f32>,
     adaptive: Option<bool>,
     point_to_box_half_size: Option<u32>,
+    adapt_threshold: Option<f32>,
+    negative_threshold: Option<f32>,
     topk: Option<usize>,
     nms_kernel_time: Option<usize>,
     nms_kernel_freq: Option<usize>,
@@ -1834,6 +1852,38 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
                 point_to_box_half_size,
             }
         }
+        "heatmap_lmds" => {
+            let unit_field = |name: &str, value: Option<f32>| -> Result<f32> {
+                let v = value.ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(format!(
+                        "heatmap_lmds requires '{name}' field"
+                    ))
+                })?;
+                if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "heatmap_lmds {name} must be finite and in [0.0, 1.0], got {v}"
+                    )));
+                }
+                Ok(v)
+            };
+            let peak_threshold = unit_field("peak_threshold", raw.postprocessing.peak_threshold)?;
+            let adapt_threshold =
+                unit_field("adapt_threshold", raw.postprocessing.adapt_threshold)?;
+            let negative_threshold =
+                unit_field("negative_threshold", raw.postprocessing.negative_threshold)?;
+            let point_to_box_half_size =
+                raw.postprocessing.point_to_box_half_size.ok_or_else(|| {
+                    SparrowEngineError::InvalidManifest(
+                        "heatmap_lmds requires 'point_to_box_half_size' field".to_string(),
+                    )
+                })?;
+            PostprocessMethod::HeatmapLmds {
+                peak_threshold,
+                adapt_threshold,
+                negative_threshold,
+                point_to_box_half_size,
+            }
+        }
         "rtdetr_topk" => {
             if matches!(raw.postprocessing.topk, Some(0)) {
                 return Err(SparrowEngineError::InvalidManifest(
@@ -2230,13 +2280,40 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
 
     // -- H1: tiled + heatmap_peaks requires tile_size == input_size --
     if let InferenceStrategy::Tiled { tile_size, .. } = inference_strategy {
-        if matches!(postprocess_method, PostprocessMethod::HeatmapPeaks { .. })
-            && Some(tile_size) != input_size
+        if matches!(
+            postprocess_method,
+            PostprocessMethod::HeatmapPeaks { .. } | PostprocessMethod::HeatmapLmds { .. }
+        ) && Some(tile_size) != input_size
         {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "tiled + heatmap_peaks requires tile_size == input_size, got tile_size={:?} input_size={:?}",
-                tile_size, input_size
+                "tiled + {} requires tile_size == input_size, got tile_size={:?} input_size={:?}",
+                postprocess_method.as_str(),
+                tile_size,
+                input_size
             )));
+        }
+    }
+
+    // -- heatmap_lmds is a whole-image stitching method: tiled only, and the
+    //    tile grid must map onto the heatmap grid without fractional offsets.
+    if matches!(postprocess_method, PostprocessMethod::HeatmapLmds { .. }) {
+        match inference_strategy {
+            InferenceStrategy::Tiled {
+                tile_size,
+                tile_overlap,
+            } => {
+                if tile_size[0] % 2 != 0 || tile_size[1] % 2 != 0 || tile_overlap % 2 != 0 {
+                    return Err(SparrowEngineError::InvalidManifest(format!(
+                        "heatmap_lmds requires even tile_size and tile_overlap, got \
+                         tile_size={tile_size:?} tile_overlap={tile_overlap}"
+                    )));
+                }
+            }
+            _ => {
+                return Err(SparrowEngineError::InvalidManifest(
+                    "heatmap_lmds requires inference.strategy = \"tiled\"".to_string(),
+                ));
+            }
         }
     }
 
@@ -3662,6 +3739,103 @@ format = "one_per_line"
                 ..
             }
         ));
+    }
+
+    fn heatmap_lmds_manifest(strategy: &str, post_extra: &str) -> String {
+        format!(
+            r#"
+[model]
+id = "owl-d"
+format = "onnx"
+file = "owl-d.onnx"
+
+[preprocessing]
+method = "resize"
+input_size = [512, 512]
+layout = "nchw"
+normalization = "imagenet"
+
+[inference]
+{strategy}
+
+[postprocessing]
+method = "heatmap_lmds"
+peak_threshold = 0.2
+point_to_box_half_size = 10
+{post_extra}
+
+[labels]
+file = "labels.txt"
+format = "one_per_line"
+"#
+        )
+    }
+
+    const LMDS_TILED: &str = "strategy = \"tiled\"\ntile_size = [512, 512]\ntile_overlap = 160";
+    const LMDS_THRESHOLDS: &str = "adapt_threshold = 0.3\nnegative_threshold = 0.1";
+
+    #[test]
+    fn test_load_heatmap_lmds_manifest() {
+        let dir = write_temp_file(
+            "manifest.toml",
+            &heatmap_lmds_manifest(LMDS_TILED, LMDS_THRESHOLDS),
+        );
+        let manifest = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(manifest.postprocess_method.as_str(), "heatmap_lmds");
+        match manifest.postprocess_method {
+            PostprocessMethod::HeatmapLmds {
+                peak_threshold,
+                adapt_threshold,
+                negative_threshold,
+                point_to_box_half_size,
+            } => {
+                assert_eq!(peak_threshold, 0.2);
+                assert_eq!(adapt_threshold, 0.3);
+                assert_eq!(negative_threshold, 0.1);
+                assert_eq!(point_to_box_half_size, 10);
+            }
+            other => panic!("unexpected method {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_heatmap_lmds_requires_lmds_thresholds() {
+        for extra in ["adapt_threshold = 0.3", "negative_threshold = 0.1", ""] {
+            let dir = write_temp_file("manifest.toml", &heatmap_lmds_manifest(LMDS_TILED, extra));
+            assert!(
+                load_manifest(&dir.path().join("manifest.toml")).is_err(),
+                "missing threshold accepted with extra={extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_heatmap_lmds_rejects_out_of_range_threshold() {
+        let dir = write_temp_file(
+            "manifest.toml",
+            &heatmap_lmds_manifest(
+                LMDS_TILED,
+                "adapt_threshold = 1.5\nnegative_threshold = 0.1",
+            ),
+        );
+        assert!(load_manifest(&dir.path().join("manifest.toml")).is_err());
+    }
+
+    #[test]
+    fn test_heatmap_lmds_requires_tiled_even_geometry() {
+        for strategy in [
+            "strategy = \"single\"",
+            "strategy = \"tiled\"\ntile_size = [512, 512]\ntile_overlap = 161",
+        ] {
+            let dir = write_temp_file(
+                "manifest.toml",
+                &heatmap_lmds_manifest(strategy, LMDS_THRESHOLDS),
+            );
+            assert!(
+                load_manifest(&dir.path().join("manifest.toml")).is_err(),
+                "invalid geometry accepted: {strategy:?}"
+            );
+        }
     }
 
     #[test]
