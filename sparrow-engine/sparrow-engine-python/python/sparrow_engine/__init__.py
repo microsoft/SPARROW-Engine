@@ -242,6 +242,13 @@ from sparrow_engine._sparrow_engine_core import summarize as _summarize_core
 from sparrow_engine._sparrow_engine_core import verify_model as _verify_model_core
 from sparrow_engine._sparrow_engine_core import visualize as _visualize_core
 from sparrow_engine._sparrow_engine_core import visualize_audio as _visualize_audio_core
+from sparrow_engine.zoo import (
+    ZooError,
+    ZooModel,
+    download_model,
+    download_models,
+    zoo_models,
+)
 from sparrow_engine.video import (
     FrameResult,
     detect_video,
@@ -277,6 +284,12 @@ __all__ = [
     "visualize",
     "visualize_audio",
     "export",
+    # Model zoo download (pure Python, stdlib only)
+    "zoo_models",
+    "download_models",
+    "download_model",
+    "ZooModel",
+    "ZooError",
     # Video and camera inference (needs the [video] extra)
     "FrameResult",
     "detect_video",

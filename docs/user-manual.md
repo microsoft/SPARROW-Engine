@@ -968,6 +968,9 @@ TFLite classifier is onboarded (RP-42-FU-1).
 | `visualize(items, output_dir=None, show_labels=False)` | `list[bytes]` (encoded image bytes; also writes to `output_dir` if set) |
 | `visualize_audio(items, output_dir=None, smooth=False, show_windows=False, show_ranges=True)` | `list[list[bytes]]` (per input → per-layer PNG bytes; also writes if `output_dir` set) |
 | `export(items, format, output=None, model_id=None)` | `str` (formatted content; also writes to `output` if set; `model_id` required for `megadet`) |
+| `zoo_models(*, catalog=None, record=None)` | `list[ZooModel]` — the Sparrow Model Zoo catalog (§6.7). Needs network unless `catalog` is a local file. |
+| `download_models(models=None, *, dest=None, all_models=False, force=False, verify=True, catalog=None, record=None, quiet=False)` | `list[Path]` — installed model directories (§6.7). |
+| `download_model(model, **kwargs)` | `Path` — one installed model directory (§6.7). |
 
 Plus one public attribute: `sparrow_engine.__version__` (`str`) — the installed wheel's version, single-sourced from PyPI metadata via `importlib.metadata.version(...)`. Resolves the GPU distribution name first, then the CPU name, then falls back to `"unknown"` on a broken install. Lets a tester confirm the wheel they just installed without grepping `pip show`.
 
@@ -1092,9 +1095,42 @@ for path, r in items[:3]:
 
 **First-run note**
 
-If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/models/MDV6-yolov10-e/` next to its TOML manifest. The Python wheel does not auto-download models; manifests are bundled but ONNX weights must be staged manually (see §2.3 "What lands on disk" and `sparrow-engine/tools/examples/megadetector-v6.toml`).
+If you have not run MDv6 before, download it once with `sparrow_engine.download_model("MDV6-yolov10-e")` (§6.7). Inference calls never download implicitly.
 
 **Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py` (`detect`, `visualize`, `export`); `_core.pyi` (`DetectResult`); `sparrow-engine/sparrow-engine-python/src/lib.rs` (export format whitelist); `sparrow-engine/tools/examples/megadetector-v6.toml` (model + threshold defaults).
+
+---
+
+### 6.7 Model zoo downloads
+
+```python
+import sparrow_engine as spe
+
+for m in spe.zoo_models():                     # the published catalog
+    print(m.id, m.domain, m.task, m.license, m.downloadable, m.default)
+
+spe.download_model("MDV6-yolov10-e")           # one model (old aliases also resolve)
+spe.download_models(["MDV6-yolov10-c", "AI4G-Amazon-V2"])
+spe.download_models()                          # default set: hosted desktop ONNX models
+spe.download_models(all_models=True)           # every hosted runtime package
+spe.list_models()                              # what is installed now
+```
+
+**Why**: notebooks and scripts need the model zoo without the bash downloader (`scripts/download_models.sh` needs bash ≥ 4, curl, unzip and md5sum, so it does not run on stock macOS or Windows).
+**What**: a pure-Python port of `download_models.sh` (standard library only) with the same selection rules, on-disk layout and install stamp. Models land in `SPARROW_ENGINE_MODEL_DIR` or `~/.sparrow-engine/models`, the directory the engine reads by default; pass `dest=` to install elsewhere (and the same path to `init(model_dir=...)`).
+**How**:
+
+| Step | Behavior |
+|---|---|
+| Catalog | `catalog=` path, else `SPARROW_CATALOG`, else `catalog.toml` from the pinned Zenodo record (`sparrow_engine.zoo.ZENODO_RECORD`, overridable with `record=` or `ZENODO_RECORD`). The remote catalog is MD5-checked. |
+| Selection | No ids: active, hosted, `format == "onnx"`, no precision `flavor`. `all_models=True`: every active hosted package. Explicit ids and old aliases are accepted. Unknown ids, candidates, and `link_only` / `pending_rights` entries raise `ZooError` (the message names the original source). |
+| Integrity | Each ZIP is checked against the MD5 published by the Zenodo record API. A ZIP without a published MD5 is refused unless `verify=False`. |
+| Re-runs | An installed model whose `.sparrow_zip_md5` stamp matches is skipped; a stale stamp triggers a re-download; an unstamped install is kept unless `force=True`. |
+| Atomicity | Each ZIP is unpacked in a `.stage.*` directory and moved into place only on success, so a failure leaves no partial model directory. |
+
+Progress goes to stderr; `quiet=True` silences it.
+
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/zoo.py`; `sparrow-engine/scripts/download_models.sh`; `sparrow-engine/scripts/catalog.toml`; tests `sparrow-engine/sparrow-engine-python/tests/test_zoo.py`.
 
 ---
 
