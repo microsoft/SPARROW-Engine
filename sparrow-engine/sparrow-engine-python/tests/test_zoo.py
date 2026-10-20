@@ -163,6 +163,15 @@ def test_default_selection_installs_and_stamps(fake: FakeZenodo, tmp_path: Path)
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".stage.")]
 
 
+def test_progress_states_each_license(
+    fake: FakeZenodo, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sparrow_engine.download_models(dest=tmp_path)
+    err = capsys.readouterr().err
+    assert "check each license before use" in err
+    assert "==> det-a  (license: " in err
+
+
 def test_all_models_selects_every_hosted_package(fake: FakeZenodo, tmp_path: Path) -> None:
     out = sparrow_engine.download_models(dest=tmp_path, all_models=True, quiet=True)
     assert sorted(_ids(out)) == ["cls-b", "det-a", "det-a-fp16"]
