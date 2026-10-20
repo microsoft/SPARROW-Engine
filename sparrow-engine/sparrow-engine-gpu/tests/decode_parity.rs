@@ -17,15 +17,16 @@
 
 use std::path::Path;
 
-use sparrow_engine::decode::{decode_jpeg_with_branch, DecodeBranch};
 use cudarc::driver::CudaContext;
+use sparrow_engine::decode::{decode_jpeg_with_branch, DecodeBranch};
 
 const CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/test_cameratrap";
 
 // nvjpeg uses GPU IDCT, image-crate (`zune-jpeg`) uses software IDCT. The
 // rounding modes differ at the LSB; 1.0 in u8 space is the industry-standard
-// tolerance for cross-implementation JPEG decoder parity. Mean-abs typically
-// lands around 0.3–0.5 on the camera-trap corpus.
+// tolerance for cross-implementation JPEG decoder parity. Since 4:2:0 / 4:2:2
+// decode through `kernels::chroma_upsample` (libjpeg fancy upsampling),
+// mean-abs lands around 0.04 on the camera-trap corpus.
 //
 // In normalized [0,1] space this corresponds to ~4e-3, looser than the
 // design's ε=1e-3. The 1e-3 in `final_design §8 Gate 1` applies to KERNEL
@@ -35,8 +36,20 @@ const CORPUS: &str = "/home/miao/repos/SparrowOPS/backups/test_files/test_camera
 // implementations.
 const EPSILON_MEAN_ABS_U8: f32 = 1.0;
 
+// `forced_cpu_decode_branch_is_observable` flips a process-wide env var;
+// every test that inspects the decode branch holds this lock so the parallel
+// test harness cannot observe the forced branch by accident.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn gpu_tests_enabled() -> bool {
-    !matches!(std::env::var("SPARROW_ENGINE_GPU_TESTS").as_deref(), Ok("0"))
+    !matches!(
+        std::env::var("SPARROW_ENGINE_GPU_TESTS").as_deref(),
+        Ok("0")
+    )
 }
 
 struct EnvVarGuard {
@@ -83,6 +96,7 @@ fn corpus_jpegs() -> Vec<std::path::PathBuf> {
 
 #[test]
 fn nvjpeg_vs_image_crate_pixel_parity_within_epsilon() {
+    let _env_lock = env_lock();
     if !gpu_tests_enabled() {
         eprintln!("SPARROW_ENGINE_GPU_TESTS=0 → skipping nvjpeg parity test");
         return;
@@ -179,6 +193,7 @@ fn nvjpeg_vs_image_crate_pixel_parity_within_epsilon() {
 
 #[test]
 fn forced_cpu_decode_branch_is_observable() {
+    let _env_lock = env_lock();
     if !gpu_tests_enabled() {
         eprintln!("SPARROW_ENGINE_GPU_TESTS=0 → skipping forced CPU decode branch test");
         return;
@@ -194,4 +209,62 @@ fn forced_cpu_decode_branch_is_observable() {
     let decoded = decode_jpeg_with_branch(&stream, &bytes).expect("forced CPU decode");
     assert_eq!(decoded.branch, DecodeBranch::ForcedCpuFallback);
     assert!(decoded.image.width > 0 && decoded.image.height > 0);
+}
+
+/// Synthetic colour-edge JPEG encoded by the `image` crate (4:2:0 chroma).
+/// Odd dimensions exercise the edge-replication rows/columns of libjpeg's
+/// fancy upsampler. Before the YUV + chroma_upsample path, nvjpeg's RGBI
+/// output replicated chroma and drifted from every CPU decoder on exactly
+/// this kind of content (small 4:2:0 images with sharp colour edges).
+#[test]
+fn nvjpeg_420_chroma_upsampling_matches_cpu_decoder() {
+    let _env_lock = env_lock();
+    if !gpu_tests_enabled() {
+        eprintln!("SPARROW_ENGINE_GPU_TESTS=0 -> skipping 4:2:0 chroma test");
+        return;
+    }
+    let ctx = CudaContext::new(0).expect("CudaContext::new(0)");
+    let stream = ctx.default_stream();
+
+    for &(w, h) in &[(97u32, 61u32), (64, 48), (3, 5), (2, 2)] {
+        let img = image::RgbImage::from_fn(w, h, |x, y| {
+            let c = ((x / 3) + (y / 2)) % 4;
+            match c {
+                0 => image::Rgb([230, 20, 30]),
+                1 => image::Rgb([20, 200, 40]),
+                2 => image::Rgb([30, 40, 220]),
+                _ => image::Rgb([(x * 7 % 256) as u8, (y * 11 % 256) as u8, 128]),
+            }
+        });
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95)
+            .encode_image(&img)
+            .expect("encode jpeg");
+
+        let decoded = decode_jpeg_with_branch(&stream, &bytes).expect("gpu decode");
+        assert_eq!(
+            decoded.branch,
+            DecodeBranch::Nvjpeg,
+            "{w}x{h} must take the nvjpeg path"
+        );
+        let gpu_buf: Vec<u8> = stream.clone_dtoh(&decoded.image.data).expect("dtoh");
+        stream.synchronize().expect("sync");
+        let cpu = image::load_from_memory(&bytes)
+            .expect("cpu decode")
+            .to_rgb8()
+            .into_raw();
+        assert_eq!(gpu_buf.len(), cpu.len());
+
+        let (mut sum, mut max) = (0u64, 0u8);
+        for (a, b) in gpu_buf.iter().zip(cpu.iter()) {
+            let d = a.abs_diff(*b);
+            sum += d as u64;
+            max = max.max(d);
+        }
+        let mean = sum as f64 / gpu_buf.len() as f64;
+        eprintln!("4:2:0 {w}x{h}: mean-abs={mean:.4} max={max}");
+        // Only IDCT LSB rounding should remain once chroma upsampling matches.
+        assert!(mean < 0.5, "{w}x{h}: mean-abs {mean} (max {max})");
+        assert!(max <= 4, "{w}x{h}: max-abs {max} (mean {mean})");
+    }
 }
