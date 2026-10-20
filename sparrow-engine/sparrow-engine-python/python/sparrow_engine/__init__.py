@@ -242,6 +242,13 @@ from sparrow_engine._sparrow_engine_core import summarize as _summarize_core
 from sparrow_engine._sparrow_engine_core import verify_model as _verify_model_core
 from sparrow_engine._sparrow_engine_core import visualize as _visualize_core
 from sparrow_engine._sparrow_engine_core import visualize_audio as _visualize_audio_core
+from sparrow_engine.video import (
+    FrameResult,
+    detect_video,
+    detect_webcam,
+    draw_detections,
+    iter_video,
+)
 
 __all__ = [
     # Version (single-sourced from wheel METADATA via importlib.metadata)
@@ -270,6 +277,12 @@ __all__ = [
     "visualize",
     "visualize_audio",
     "export",
+    # Video and camera inference (needs the [video] extra)
+    "FrameResult",
+    "detect_video",
+    "iter_video",
+    "detect_webcam",
+    "draw_detections",
     # Types (re-exported for isinstance checks and type annotations)
     "BBox",
     "Detection",
