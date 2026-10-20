@@ -1404,7 +1404,7 @@ fn validate_output_dims(
                 }
             }
         }
-        PostprocessMethod::HeatmapPeaks { .. } => {
+        PostprocessMethod::HeatmapPeaks { .. } | PostprocessMethod::HeatmapLmds { .. } => {
             // Expected: spatial output with rank >= 3 (batch, channels, H, W) or
             // (batch, H, W, channels). We check rank >= 3.
             if shape.len() < 3 {

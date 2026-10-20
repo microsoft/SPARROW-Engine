@@ -62,7 +62,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
+use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr};
 use ndarray::{s, ArrayView2, ArrayViewD};
 use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::builder::GraphOptimizationLevel;
@@ -211,80 +211,15 @@ impl JpegDecoder {
     }
 
     fn decode_via_nvjpeg(&mut self, stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage> {
-        use nvjpeg_sys as nvj;
-        use std::os::raw::{c_int, c_uchar};
-
         if has_nontrivial_exif_orientation(bytes) {
             return Err(SparrowEngineError::ImageDecode(
                 "EXIF orientation requires CPU fallback".into(),
             ));
         }
 
-        // SAFETY: FFI calls, return values checked.
-        unsafe {
-            let mut n_components: c_int = 0;
-            let mut subsampling: nvj::nvjpegChromaSubsampling_t = 0;
-            let mut widths = [0i32; nvj::NVJPEG_MAX_COMPONENT as usize];
-            let mut heights = [0i32; nvj::NVJPEG_MAX_COMPONENT as usize];
-            let s = nvj::nvjpegGetImageInfo(
-                self.handle,
-                bytes.as_ptr() as *const c_uchar,
-                bytes.len(),
-                &mut n_components,
-                &mut subsampling,
-                widths.as_mut_ptr(),
-                heights.as_mut_ptr(),
-            );
-            if s != nvj::nvjpegStatus_t_NVJPEG_STATUS_SUCCESS as nvj::nvjpegStatus_t {
-                return Err(SparrowEngineError::ImageDecode(format!(
-                    "nvjpegGetImageInfo failed: status={s}"
-                )));
-            }
-            let w = widths[0] as u32;
-            let h = heights[0] as u32;
-            if w == 0 || h == 0 {
-                return Err(SparrowEngineError::ImageDecode(
-                    "nvjpeg reported zero width or height".into(),
-                ));
-            }
-
-            let total = w as usize * h as usize * 3;
-            let mut out: CudaSlice<u8> = stream
-                .alloc_zeros::<u8>(total)
-                .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros: {e}")))?;
-
-            let cu_stream = stream.cu_stream() as nvj::cudaStream_t;
-            let s = {
-                let (dev_handle, _sync) = out.device_ptr_mut(stream);
-                let dev_ptr = dev_handle as *mut c_uchar;
-                let mut ni: nvj::nvjpegImage_t = std::mem::zeroed();
-                ni.channel[0] = dev_ptr;
-                ni.pitch[0] = (w as usize) * 3;
-
-                nvj::nvjpegDecode(
-                    self.handle,
-                    self.state,
-                    bytes.as_ptr() as *const c_uchar,
-                    bytes.len(),
-                    nvj::nvjpegOutputFormat_t_NVJPEG_OUTPUT_RGBI as nvj::nvjpegOutputFormat_t,
-                    &mut ni,
-                    cu_stream,
-                )
-            };
-            if s != nvj::nvjpegStatus_t_NVJPEG_STATUS_SUCCESS as nvj::nvjpegStatus_t {
-                return Err(SparrowEngineError::ImageDecode(format!(
-                    "nvjpegDecode failed: status={s} (likely non-baseline / progressive)"
-                )));
-            }
-            stream
-                .synchronize()
-                .map_err(|e| SparrowEngineError::Ort(format!("cudarc stream.synchronize: {e}")))?;
-            Ok(GpuImage {
-                data: out,
-                width: w,
-                height: h,
-            })
-        }
+        // SAFETY: handle/state were created in `new()` on the context that
+        // owns `stream` (see the Send/Sync note on `JpegDecoder`).
+        unsafe { crate::decode::nvjpeg_decode_rgb(self.handle, self.state, stream, bytes) }
     }
 }
 

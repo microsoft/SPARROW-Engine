@@ -20,9 +20,9 @@
 
 use std::sync::Arc;
 
-use sparrow_engine_types::error::{SparrowEngineError, Result};
-use sparrow_engine_types::PixelFormat;
 use cudarc::driver::{CudaSlice, CudaStream, DevicePtrMut};
+use sparrow_engine_types::error::{Result, SparrowEngineError};
+use sparrow_engine_types::PixelFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeBranch {
@@ -81,7 +81,6 @@ pub fn decode_jpeg_with_branch(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result
 /// progressive JPEG, EXIF requiring rotation, etc.). Caller MUST fall back.
 fn decode_via_nvjpeg(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage> {
     use nvjpeg_sys as nvj;
-    use std::os::raw::{c_int, c_uchar};
     use std::ptr;
 
     // nvjpeg API surface (from nvjpeg.h, header version 12.x):
@@ -125,6 +124,38 @@ fn decode_via_nvjpeg(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage>
         }
         let _sg = NvjStateGuard { state };
 
+        nvjpeg_decode_rgb(handle, state, stream, bytes)
+    }
+}
+
+/// Decode `bytes` with an existing nvjpeg handle/state into HWC RGB u8.
+///
+/// 4:2:0 and 4:2:2 colour JPEGs decode to planar YUV and go through
+/// [`crate::kernels::chroma_upsample`], which reproduces libjpeg-turbo's
+/// fancy chroma upsampling and colour conversion. nvjpeg's own RGBI output
+/// replicates chroma instead, which diverges from the PIL / OpenCV / `image`
+/// crate decoders every reference pipeline uses. Other layouts (4:4:4,
+/// greyscale, 4:4:0, 4:1:1) use nvjpeg's RGBI output directly.
+///
+/// Shared by the stateless [`decode_jpeg`] path and the per-model
+/// `JpegDecoder`s. The caller handles EXIF orientation and CPU fallback.
+///
+/// # Safety
+/// `handle` and `state` must be live nvjpeg objects created on the CUDA
+/// context that owns `stream`.
+pub(crate) unsafe fn nvjpeg_decode_rgb(
+    handle: nvjpeg_sys::nvjpegHandle_t,
+    state: nvjpeg_sys::nvjpegJpegState_t,
+    stream: &Arc<CudaStream>,
+    bytes: &[u8],
+) -> Result<GpuImage> {
+    use crate::kernels::chroma_upsample::{chroma_upsample_gpu, ChromaLayout};
+    use nvjpeg_sys as nvj;
+    use std::os::raw::{c_int, c_uchar};
+
+    // SAFETY: caller guarantees handle/state validity; every status code is
+    // checked and raw pointers are initialised before nvjpeg reads them.
+    unsafe {
         // Probe size + components.
         let mut n_components: c_int = 0;
         let mut subsampling: nvj::nvjpegChromaSubsampling_t = 0;
@@ -150,6 +181,73 @@ fn decode_via_nvjpeg(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage>
             return Err(SparrowEngineError::ImageDecode(
                 "nvjpeg reported zero width or height".into(),
             ));
+        }
+
+        let layout = match subsampling {
+            s if n_components == 3 && s == nvj::nvjpegChromaSubsampling_t_NVJPEG_CSS_420 => {
+                Some((ChromaLayout::H2V2, w.div_ceil(2), h.div_ceil(2)))
+            }
+            s if n_components == 3 && s == nvj::nvjpegChromaSubsampling_t_NVJPEG_CSS_422 => {
+                Some((ChromaLayout::H2V1, w.div_ceil(2), h))
+            }
+            _ => None,
+        };
+        if let Some((layout, cw, ch)) = layout {
+            // Only take the planar path when nvjpeg reports the chroma plane
+            // geometry libjpeg would use; anything unexpected keeps RGBI.
+            if widths[1] as u32 == cw
+                && heights[1] as u32 == ch
+                && widths[2] as u32 == cw
+                && heights[2] as u32 == ch
+            {
+                let alloc = |n: usize| {
+                    stream
+                        .alloc_zeros::<u8>(n)
+                        .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros: {e}")))
+                };
+                let (cw_us, ch_us) = (cw as usize, ch as usize);
+                let mut y_buf = alloc(w as usize * h as usize)?;
+                let mut cb_buf = alloc(cw_us * ch_us)?;
+                let mut cr_buf = alloc(cw_us * ch_us)?;
+                let cu_stream = stream.cu_stream() as nvj::cudaStream_t;
+                let s = {
+                    let (y_ptr, _sy) = y_buf.device_ptr_mut(stream);
+                    let (cb_ptr, _sb) = cb_buf.device_ptr_mut(stream);
+                    let (cr_ptr, _sr) = cr_buf.device_ptr_mut(stream);
+                    let mut ni: nvj::nvjpegImage_t = std::mem::zeroed();
+                    ni.channel[0] = y_ptr as *mut c_uchar;
+                    ni.pitch[0] = w as usize;
+                    ni.channel[1] = cb_ptr as *mut c_uchar;
+                    ni.pitch[1] = cw_us;
+                    ni.channel[2] = cr_ptr as *mut c_uchar;
+                    ni.pitch[2] = cw_us;
+                    nvj::nvjpegDecode(
+                        handle,
+                        state,
+                        bytes.as_ptr() as *const c_uchar,
+                        bytes.len(),
+                        nvj::nvjpegOutputFormat_t_NVJPEG_OUTPUT_YUV as nvj::nvjpegOutputFormat_t,
+                        &mut ni,
+                        cu_stream,
+                    )
+                };
+                if s != nvj::nvjpegStatus_t_NVJPEG_STATUS_SUCCESS as nvj::nvjpegStatus_t {
+                    return Err(SparrowEngineError::ImageDecode(format!(
+                        "nvjpegDecode (YUV) failed: status={s} (likely non-baseline / progressive)"
+                    )));
+                }
+                let out = chroma_upsample_gpu(
+                    stream, &y_buf, w as usize, &cb_buf, &cr_buf, cw_us, cw, ch, w, h, layout,
+                )?;
+                stream.synchronize().map_err(|e| {
+                    SparrowEngineError::Ort(format!("cudarc stream.synchronize: {e}"))
+                })?;
+                return Ok(GpuImage {
+                    data: out,
+                    width: w,
+                    height: h,
+                });
+            }
         }
 
         // Allocate GPU output buffer (HWC interleaved RGB, u8).
