@@ -175,6 +175,7 @@ fn resize_gpu_with_rounding(
         Interpolation::Bicubic => 1,
         Interpolation::Lanczos => 2,
         Interpolation::Cv2Bilinear => 3,
+        Interpolation::TorchBilinear => 4,
     };
     let round_u8_flag: i32 = match rounding {
         ResizeRounding::PreserveFloat => 0,
@@ -527,5 +528,40 @@ mod tests {
             maxd <= 1.0 / 255.0,
             "cv2_bilinear max abs diff {maxd} exceeds 1/255"
         );
+    }
+
+    #[test]
+    fn resize_gpu_torch_bilinear_preserves_fractions() {
+        let ctx = match cuda_or_skip("torch_bilinear") {
+            Some(c) => c,
+            None => return,
+        };
+        let stream = ctx.default_stream();
+        let kernel = ResizeKernel::new(&ctx).expect("compile resize kernel");
+        // 2x1 -> 4x1 upsample: torchvision antialias=False gives [0, .25, .75, 1].
+        let host_rgb: Vec<u8> = vec![0, 0, 0, 1, 1, 1];
+        let data = stream.clone_htod(&host_rgb).expect("htod");
+        let gpu_img = GpuImage {
+            data,
+            width: 2,
+            height: 1,
+        };
+        let dev = resize_gpu(
+            &stream,
+            &kernel,
+            &gpu_img,
+            4,
+            1,
+            ChannelOrder::Rgb,
+            NormalizeStats::UNIT,
+            Interpolation::TorchBilinear,
+        )
+        .expect("resize_gpu");
+        let got: Vec<f32> = stream.clone_dtoh(&dev).expect("dtoh");
+        stream.synchronize().expect("sync");
+        let want = [0.0, 0.25, 0.75, 1.0].map(|v: f32| v / 255.0);
+        for (a, b) in got[..4].iter().zip(want.iter()) {
+            assert!((a - b).abs() < 1e-7, "red plane {:?} != {want:?}", &got[..4]);
+        }
     }
 }

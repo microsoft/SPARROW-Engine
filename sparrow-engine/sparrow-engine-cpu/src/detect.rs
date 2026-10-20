@@ -339,6 +339,118 @@ fn detect_single(
 // Tiled detection
 // ---------------------------------------------------------------------------
 
+struct LmdsParams {
+    peak_threshold: f32,
+    adapt_threshold: f32,
+    negative_threshold: f32,
+    half_size: u32,
+}
+
+/// `heatmap_lmds`: normalize-then-zero-pad tiles, mean-stitch one heatmap
+/// over the whole image, then run LMDS once (see `sparrow_engine_core::heatmap_lmds`).
+#[allow(clippy::too_many_arguments)]
+fn detect_tiled_lmds(
+    session: &Arc<Mutex<Session>>,
+    manifest: &crate::manifest::ModelManifest,
+    labels: &[String],
+    image: &ImageInput,
+    opts: &DetectOpts,
+    tile_size: [u32; 2],
+    tile_overlap: u32,
+    params: LmdsParams,
+) -> Result<(Vec<crate::types::Detection>, u32, u32)> {
+    use crate::heatmap_lmds::{lmds_detections, lmds_tiles, zero_nchw_outside_crop, LmdsStitcher};
+
+    let decoded = decode_image(image)?;
+    let (img_w, img_h) = (decoded.width(), decoded.height());
+    let [tw, th] = tile_size;
+    let config = preprocess_config_from_manifest(manifest)?;
+    let threshold = postprocess::resolve_confidence_threshold(
+        opts.confidence_threshold,
+        params.peak_threshold,
+    )?;
+
+    let mut stitcher = LmdsStitcher::new(img_w, img_h, tw, th, tile_overlap);
+    for tile in lmds_tiles(img_w, img_h, tw, th, tile_overlap) {
+        let tile_img = decoded
+            .crop_imm(tile.x, tile.y, tile.crop_w, tile.crop_h)
+            .to_rgb8();
+        let tile_rgb = if tile.crop_w < tw || tile.crop_h < th {
+            use image::GenericImage;
+            let mut padded = image::RgbImage::new(tw, th);
+            padded
+                .copy_from(&tile_img, 0, 0)
+                .expect("crop fits within padded tile");
+            padded
+        } else {
+            tile_img
+        };
+        let tile_input = ImageInput::Raw {
+            stride: tw * 3,
+            width: tw,
+            height: th,
+            data: tile_rgb.into_raw(),
+            format: crate::types::PixelFormat::Rgb,
+        };
+        let mut prep = preprocess::preprocess(&tile_input, &config)?;
+        let buf = prep.tensor.as_slice_mut().ok_or_else(|| {
+            SparrowEngineError::Ort("heatmap_lmds: preprocessed tile is not contiguous".into())
+        })?;
+        zero_nchw_outside_crop(buf, tw, th, tile.crop_w, tile.crop_h);
+
+        let input_value =
+            TensorRef::from_array_view(&prep.tensor).map_err(crate::engine::ort_err)?;
+        let mut guard = session
+            .lock()
+            .map_err(|_| SparrowEngineError::Ort("detector session lock poisoned".into()))?;
+        let outputs = guard
+            .run(ort::inputs![input_value])
+            .map_err(crate::engine::ort_err)?;
+        if outputs.len() == 0 {
+            return Err(SparrowEngineError::Ort(
+                "tiled detector session returned no outputs".to_string(),
+            ));
+        }
+        let view: ArrayViewD<'_, f32> = outputs[0]
+            .try_extract_array::<f32>()
+            .map_err(crate::engine::ort_err)?;
+        let shape = view.shape();
+        if shape.len() < 2 {
+            return Err(SparrowEngineError::Ort(format!(
+                "heatmap_lmds: heatmap output rank {} < 2",
+                shape.len()
+            )));
+        }
+        let (hm_h, hm_w) = (shape[shape.len() - 2], shape[shape.len() - 1]);
+        if view.len() != hm_h * hm_w {
+            return Err(SparrowEngineError::Ort(format!(
+                "heatmap_lmds: expected a single-channel heatmap, got shape {shape:?}"
+            )));
+        }
+        let heatmap: Vec<f32> = view.iter().copied().collect();
+        stitcher.add_tile(&tile, &heatmap, hm_w, hm_h)?;
+    }
+
+    let (map, map_w, map_h, rx, ry) = stitcher.finish();
+    let label = postprocess::label_for_id(labels, 0);
+    let mut detections = lmds_detections(
+        &map,
+        map_w,
+        map_h,
+        rx,
+        ry,
+        img_w,
+        img_h,
+        threshold,
+        params.adapt_threshold,
+        params.negative_threshold,
+        params.half_size,
+        &label,
+    );
+    postprocess::apply_max_detections(&mut detections, opts.max_detections);
+    Ok((detections, img_w, img_h))
+}
+
 /// Run tiled detection: split image -> run each tile -> find peaks per tile -> map to full image.
 ///
 /// Currently only supports heatmap-based models (HerdNet). Tiled detection
@@ -359,6 +471,31 @@ fn detect_tiled(
     tile_overlap: u32,
 ) -> Result<(Vec<crate::types::Detection>, u32, u32)> {
     use crate::types::{BBox, Detection};
+
+    if let PostprocessMethod::HeatmapLmds {
+        peak_threshold,
+        adapt_threshold,
+        negative_threshold,
+        point_to_box_half_size,
+    } = &manifest.postprocess_method
+    {
+        let params = LmdsParams {
+            peak_threshold: *peak_threshold,
+            adapt_threshold: *adapt_threshold,
+            negative_threshold: *negative_threshold,
+            half_size: *point_to_box_half_size,
+        };
+        return detect_tiled_lmds(
+            session,
+            manifest,
+            labels,
+            image,
+            opts,
+            tile_size,
+            tile_overlap,
+            params,
+        );
+    }
 
     // Validate tiled inference is only used with heatmap models.
     let heatmap_config = match &manifest.postprocess_method {
@@ -780,6 +917,9 @@ fn dispatch_postprocess(
                 *iou_threshold,
             )
         }
+        PostprocessMethod::HeatmapLmds { .. } => Err(SparrowEngineError::InvalidManifest(
+            "heatmap_lmds requires tiled inference ([inference] strategy = \"tiled\")".to_string(),
+        )),
         PostprocessMethod::HeatmapPeaks {
             peak_threshold,
             adaptive,

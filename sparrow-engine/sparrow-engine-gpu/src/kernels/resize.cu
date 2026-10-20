@@ -69,7 +69,8 @@
 //   interp = 0 → Triangle   (bilinear, support 1)  — PIL BILINEAR
 //   interp = 1 → CatmullRom (bicubic,  support 2)  — PIL BICUBIC (b=0, c=0.5)
 //   interp = 2 → Lanczos3   (support 3)            — PIL LANCZOS
-//   interp = 3 → cv2 INTER_LINEAR non-antialiased fixed 2x2 bilinear
+//   interp = 3 → cv2 INTER_LINEAR non-antialiased fixed 2x2 bilinear, u8-rounded
+//   interp = 4 → torchvision antialias=False float 2x2 bilinear (no rounding)
 //
 // image crate resize is a two-pass separable filter with a full-precision f32
 // intermediate (`vertical_sample -> Rgba32FImage -> horizontal_sample`), so a
@@ -166,7 +167,7 @@ extern "C" __global__ void resize_kernel(
     float r_acc = 0.0f, g_acc = 0.0f, b_acc = 0.0f;
     int row_stride = src_w * 3;
 
-    if (interp == 3) {
+    if (interp == 3 || interp == 4) {
         float src_x = ((float)ox + 0.5f) * scale_x - 0.5f;
         float src_y = ((float)oy + 0.5f) * scale_y - 0.5f;
         float x0f = floorf(src_x);
@@ -202,9 +203,11 @@ extern "C" __global__ void resize_kernel(
         g_acc = g_top * (1.0f - fy) + g_bottom * fy;
         b_acc = b_top * (1.0f - fy) + b_bottom * fy;
 
-        r_acc = floorf(fminf(255.0f, fmaxf(0.0f, r_acc)) + 0.5f);
-        g_acc = floorf(fminf(255.0f, fmaxf(0.0f, g_acc)) + 0.5f);
-        b_acc = floorf(fminf(255.0f, fmaxf(0.0f, b_acc)) + 0.5f);
+        if (interp == 3) {
+            r_acc = floorf(fminf(255.0f, fmaxf(0.0f, r_acc)) + 0.5f);
+            g_acc = floorf(fminf(255.0f, fmaxf(0.0f, g_acc)) + 0.5f);
+            b_acc = floorf(fminf(255.0f, fmaxf(0.0f, b_acc)) + 0.5f);
+        }
     } else {
     float fscale_x = fmaxf(1.0f, scale_x);
     float fscale_y = fmaxf(1.0f, scale_y);
