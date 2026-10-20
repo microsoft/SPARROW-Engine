@@ -3,13 +3,27 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pytorchwildlife"
-version = "0.1.0"
-description = "Compatibility shim: pytorchwildlife has been renamed to sparrow-engine. This alias will be removed in 0.2.0."
+name = "PytorchWildlife"
+version = "2.0.0"
+description = "Transition package: the PytorchWildlife 1.x inference API running on sparrow-engine. New code should use sparrow-engine directly."
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+# The sparrow-engine pin is co-bumped with every engine release; .github/workflows/release.yml
+# fails the release when it drifts from the engine version.
 dependencies = [
     "sparrow-engine==0.1.30",
+    "numpy",
+    "pillow",
 ]
 
+[project.optional-dependencies]
+supervision = ["supervision"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/SPARROW-Playground"
+Source = "https://github.com/microsoft/SPARROW-Engine/tree/main/pytorchwildlife-compat"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/pytorchwildlife"]
+packages = ["src/PytorchWildlife"]

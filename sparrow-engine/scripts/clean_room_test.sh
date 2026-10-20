@@ -3,7 +3,7 @@
 # Phase 3.5 Wave 5 — clean-room install test orchestrator.
 #
 # Runs the 2×3 CPU install matrix (Ubuntu 22.04 + 24.04 × CLI + Python wheel
-# + pytorchwildlife shim wheel) inside throwaway Docker containers that have
+# + PytorchWildlife 2.0 shim wheel) inside throwaway Docker containers that have
 # NOTHING sparrow-engine-adjacent pre-installed. Exits non-zero on any cell failure.
 #
 # What it is NOT:
@@ -328,8 +328,10 @@ python3 -m venv /opt/venv
 /opt/venv/bin/pip install "onnxruntime>=1.25.1,<1.26" "/clean_room/$SPARROW_ENGINE_WHEEL_NAME"
 # Keep --no-deps: this local smoke intentionally bypasses the shim package
 # co-bump pin so the just-built sparrow-engine wheel is the runtime dependency.
+# The 2.0 shim also needs pillow (numpy comes with sparrow-engine).
+/opt/venv/bin/pip install pillow
 /opt/venv/bin/pip install --no-deps "/clean_room/$WHEEL_NAME"
-/opt/venv/bin/python -c "import pytorchwildlife; print(\"pytorchwildlife shim OK\")"
+/opt/venv/bin/python -c "import warnings; warnings.simplefilter(\"ignore\"); import PytorchWildlife; print(\"PytorchWildlife \" + PytorchWildlife.__version__ + \" shim OK\")"
 '
 }
 

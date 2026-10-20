@@ -1,85 +1,96 @@
-# pytorchwildlife (compatibility shim)
+# PytorchWildlife 2.0 (transition package)
 
-This is a compatibility shim for users migrating from
-[PytorchWildlife](https://github.com/microsoft/CameraTraps) to
-[sparrow-engine](https://github.com/microsoft/CameraTraps) (the Rust-core
-replacement).
+PytorchWildlife has moved to the Sparrow ecosystem:
 
-Installing this wheel gives you a `pytorchwildlife` module that re-exports
-sparrow-engine's public API and emits a `DeprecationWarning` on import. The
-`pytorchwildlife` alias is scheduled for removal in **0.2.0**.
+- Inference runs on **[sparrow-engine](https://github.com/microsoft/SPARROW-Engine)**
+  (ONNX Runtime, no PyTorch), with models from the Sparrow model zoo.
+- Notebooks and examples live in **[SPARROW-Playground](https://github.com/microsoft/SPARROW-Playground)**.
+- Fine-tuning moved to **[MegaDetector-Classifier](https://github.com/microsoft/MegaDetector-Classifier)**.
+
+`PytorchWildlife` 2.0 keeps the most-used 1.x inference calls working on top of
+sparrow-engine so existing scripts keep running while you migrate. It emits a
+`DeprecationWarning` on import. New code should call `sparrow_engine` directly.
 
 ## Install
 
-The wheel is distributed as a GitHub Releases artifact. There is no public
-PyPI package for `pytorchwildlife` (see "PyPI availability" below).
-
 ```bash
-pip install https://github.com/microsoft/CameraTraps/releases/download/<tag>/pytorchwildlife-0.1.0-py3-none-any.whl
+pip install --upgrade PytorchWildlife   # pulls in sparrow-engine; no PyTorch
 ```
 
-`sparrow-engine` (the dependency) must be installable in the same environment. It
-is distributed via the same GitHub Releases channel for the 3.x + 4.x
-cycle.
+Models download from the Sparrow model zoo on first use into
+`~/.sparrow-engine/models` (override with `SPARROW_ENGINE_MODEL_DIR`).
 
-## Usage
+## What still works
 
 ```python
-import pytorchwildlife  # DeprecationWarning emitted
-from pytorchwildlife import detect, classify, pipeline  # routed to sparrow_engine.*
+from PytorchWildlife.models import detection as pw_detection
+from PytorchWildlife.models import classification as pw_classification
+from PytorchWildlife import utils as pw_utils
+
+detector = pw_detection.MegaDetectorV6(version="MDV6-yolov10-c")
+result = detector.single_image_detection("image.jpg")
+results = detector.batch_image_detection("images/", det_conf_thres=0.2)
+
+classifier = pw_classification.AI4GAmazonRainforest()
+crops = classifier.batch_image_classification(det_results=results)
+
+pw_utils.save_detection_json(results, "detections.json",
+                             categories=detector.CLASS_NAMES)
+pw_utils.save_detection_classification_json(results, crops, "pipeline.json",
+                                            det_categories=detector.CLASS_NAMES,
+                                            clf_categories=classifier.CLASS_NAMES)
 ```
 
-Because the module is a wildcard re-export of `sparrow_engine`, everything listed
-in `sparrow_engine.__all__` is available under `pytorchwildlife.` — inference
-functions (`detect`, `classify`, `detect_audio`, `pipeline`), standalone
-helpers (`hash_file`, `day_night`, `verify_model`, `summarize`,
-`visualize`, `export`), and result types (`DetectResult`,
-`ClassifyResult`, `PipelineResult`, `AudioResult`, `BBox`, `Detection`,
-`ModelInfo`, `SparrowEngineError`, etc.).
+Results keep the 1.x shape: `img_id`, `detections` (`.xyxy` in pixels, `.confidence`,
+`.class_id`), `labels` and `normalized_coords` for detection; `prediction`, `class_id`,
+`confidence` and `all_confidences` for classification. `detections` is a
+`supervision.Detections` when supervision is installed (`pip install
+PytorchWildlife[supervision]`), otherwise a small object with the same fields.
 
-For the authoritative API surface and usage examples, see the sparrow-engine
-documentation.
+| 1.x class | Sparrow zoo model |
+|---|---|
+| `MegaDetectorV6(version=...)` | `MDV6-yolov9-c`, `MDV6-yolov9-e`, `MDV6-yolov10-c`, `MDV6-yolov10-e`, `MDV6-rtdetr-c` |
+| `MegaDetectorV6MIT(version=...)` | `MDV6-mit-yolov9-c`, `MDV6-mit-yolov9-e` |
+| `MegaDetectorV6Apache(version=...)` | `MDV6-apa-rtdetr-c`, `MDV6-apa-rtdetr-e` |
+| `MegaDetectorV5(version="a"/"b")` | `MDV5a`, `MDV5b` (install manually if the zoo download fails) |
+| `DeepfauneDetector()` | `deepfaune-yolo8s` |
+| `AI4GAmazonRainforest(version="v2")` | `AI4G-Amazon-V2` |
+| `AI4GSnapshotSerengeti()` | `AI4G-Serengeti` |
+| `DeepfauneClassifier()` | `Deepfaune-Europe` |
+| `DFNE()` | `Deepfaune-New-England` |
 
-## Migration
+Utilities: `save_detection_json`, `save_detection_classification_json`,
+`save_detection_images` and `save_crop_images`.
 
-1. Install `sparrow-engine` directly and update imports:
-   ```python
-   # Before
-   import pytorchwildlife
-   from pytorchwildlife import detect
+## What changed
 
-   # After
-   import sparrow_engine
-   from sparrow_engine import detect
-   ```
-2. Silence the warning during transition if needed:
-   ```python
-   import warnings
-   warnings.filterwarnings("ignore", category=DeprecationWarning, module="pytorchwildlife")
-   ```
-3. The `pytorchwildlife` package will be removed in `0.2.0`. Migrate
-   before upgrading to that release.
+- `weights=` (PyTorch `.pth` files) raises `NotImplementedError`; use zoo models or export
+  to ONNX and call sparrow-engine.
+- `device=`, `batch_size=` and `num_workers=` are accepted and ignored; sparrow-engine picks
+  the execution provider and batching.
+- Removed: `HerdNet`, `OWL` (call `sparrow_engine.detect` with `HerdNet_General_Dataset_2022`
+  or `OWL`), `AI4GOpossum`, `AI4GAmazonRainforest(version="v1")`, `CustomWeights`, the
+  Timelapse/dots JSON writers, `detection_folder_separation`, video helpers, data
+  loaders and all training code.
+- Image writers draw with Pillow, so box styling differs from 1.x.
+- Scores come from the ONNX exports and can differ slightly from the 1.x PyTorch models.
 
-## Version co-bump rule (maintainers)
+## Moving to sparrow-engine
 
-The shim's runtime dependency on `sparrow-engine==0.1.30` (declared in
-`pytorchwildlife-compat/pyproject.toml`) MUST be bumped in lockstep when
-sparrow-engine's version moves. The clean-room smoke test in
-`sparrow-engine/scripts/clean_room_test.sh` installs the shim with `pip install
---no-deps`, which papers over the version pin to keep the test green
-during dev. Real installs (without `--no-deps`) will refuse to install if
-sparrow-engine's actual version doesn't match the pin, and `import pytorchwildlife`
-may fail at any time the shim's wildcard re-export touches a sparrow-engine public
-API that drifted past the pinned version. Treat this as part of every sparrow-engine
-version-bump checklist: bump sparrow-engine → bump the shim's `sparrow-engine==X.Y.Z` pin in
-the same commit / PR.
+| PytorchWildlife 2.0 | sparrow-engine |
+|---|---|
+| `MegaDetectorV6(...).batch_image_detection(folder)` | `sparrow_engine.detect(folder, model="MDV6-yolov9-c", recursive=True)` |
+| `classifier.batch_image_classification(data_path=folder)` | `sparrow_engine.classify(folder, model="AI4G-Amazon-V2")` |
+| detect, then `batch_image_classification(det_results=...)` | `sparrow_engine.pipeline(folder, detector=..., classifier=...)` |
+| `save_detection_json(...)` | `sparrow_engine.export(results, format="json", output=...)` |
 
-## PyPI availability
+## Maintainers
 
-This package is not on public PyPI. Public PyPI release pipeline (for
-both `sparrow-engine` and `pytorchwildlife`) is planned for Phase 4.5 or later,
-after Phase 4 (Docker data management) ships and the platform stabilizes.
-See `docs/design/phase3.5/final_design.md` §7.1 for the rationale and the
-three tracked sub-items (name availability for `sparrow-engine`, name availability
-and upstream-maintainer coordination for `pytorchwildlife`, GPU-wheel
-packaging story).
+- The `sparrow-engine==X.Y.Z` pin is co-bumped with every sparrow-engine release;
+  `.github/workflows/release.yml` fails the release when it drifts.
+- Tests: `pip install -e .[test] && pytest tests` (live tests skip unless
+  `PW_SHIM_LIVE_IMAGES` points at a folder of camera-trap images and the models are
+  installed).
+- Publishing to PyPI needs the owner of the existing `PytorchWildlife` project
+  (1.x releases up to 1.3.0); 2.0.0 must be uploaded under that project so
+  `pip install --upgrade PytorchWildlife` picks it up.

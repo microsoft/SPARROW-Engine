@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `pytorchwildlife-compat` is now the `PytorchWildlife` 2.0.0 transition
+  package. It no longer only points users elsewhere: it keeps the common 1.x
+  inference calls (`MegaDetectorV6`/`V5`, `DeepfauneDetector`,
+  `AI4GAmazonRainforest`, `AI4GSnapshotSerengeti`, `DeepfauneClassifier`,
+  `DFNE`, and the `utils` save helpers) running on `sparrow_engine`, with no
+  PyTorch dependency. It emits a `DeprecationWarning` that points to
+  sparrow-engine and SPARROW-Playground. Fine-tuning, HerdNet, OWL and custom
+  weights raise with a pointer to the replacement. The import name changes
+  from `pytorchwildlife` to `PytorchWildlife`, matching 1.x.
+
 ## v0.1.30
 
 Quickstart and first-run corrections plus the installer cuDNN probe fix; no
