@@ -47,8 +47,13 @@ pub fn decode_to_rgb(input: &ImageInput) -> Result<RgbImage> {
             if !path.exists() {
                 return Err(SparrowEngineError::ImageFileNotFound(path.clone()));
             }
-            let dyn_img =
-                image::open(path).map_err(|e| SparrowEngineError::ImageDecode(e.to_string()))?;
+            // Sniff the format from the file content, not the extension: camera-trap
+            // exports often carry PNG data under a `.JPG` name.
+            let dyn_img = ImageReader::open(path)
+                .and_then(|r| r.with_guessed_format())
+                .map_err(|e| SparrowEngineError::ImageDecode(e.to_string()))?
+                .decode()
+                .map_err(|e| SparrowEngineError::ImageDecode(e.to_string()))?;
             Ok(dyn_img.to_rgb8())
         }
         ImageInput::Raw {
@@ -520,6 +525,18 @@ mod tests {
             matches!(&err, SparrowEngineError::ImageFileNotFound(p) if p == &path),
             "expected ImageFileNotFound({path:?}), got {err:?}"
         );
+    }
+
+    #[test]
+    fn decode_filepath_png_with_jpg_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mislabelled.JPG");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([10, 20, 30]))
+            .save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let img = decode_to_rgb(&ImageInput::FilePath(path)).unwrap();
+        assert_eq!(img.dimensions(), (3, 2));
+        assert_eq!(img.get_pixel(1, 1).0, [10, 20, 30]);
     }
 
     #[test]
