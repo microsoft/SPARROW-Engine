@@ -176,6 +176,12 @@ pub enum Interpolation {
     /// cv2 INTER_LINEAR: non-antialiased 2x2 bilinear; matches OpenCV/YOLO
     /// upstream preprocessing.
     Cv2Bilinear,
+    /// torchvision `F.resize(float_tensor, antialias=False)`: the same 2x2
+    /// half-pixel bilinear as `Cv2Bilinear`, but the f32 result is not rounded
+    /// back to u8. Allowed only with `method = "resize"`. Some detectors
+    /// (DroneMegaDetector, RF-DETR) shift scores by ~0.1 when the u8 rounding
+    /// pattern changes.
+    TorchBilinear,
 }
 
 /// Resize strategy for the `resize_crop` preprocessing method.
@@ -2483,12 +2489,21 @@ pub fn load_manifest(path: &Path) -> Result<ModelManifest> {
         Some("bicubic") => Some(Interpolation::Bicubic),
         Some("lanczos") => Some(Interpolation::Lanczos),
         Some("cv2_bilinear") => Some(Interpolation::Cv2Bilinear),
+        Some("torch_bilinear") => Some(Interpolation::TorchBilinear),
         Some(other) => {
             return Err(SparrowEngineError::InvalidManifest(format!(
-                "Unknown interpolation: '{other}' (expected 'nearest', 'bilinear', 'bicubic', 'lanczos', or 'cv2_bilinear')"
+                "Unknown interpolation: '{other}' (expected 'nearest', 'bilinear', 'bicubic', 'lanczos', 'cv2_bilinear', or 'torch_bilinear')"
             )))
         }
     };
+    if interpolation == Some(Interpolation::TorchBilinear)
+        && preprocess_method != PreprocessMethod::Resize
+    {
+        return Err(SparrowEngineError::InvalidManifest(
+            "interpolation = 'torch_bilinear' requires preprocessing method = 'resize'"
+                .to_string(),
+        ));
+    }
 
     let crop = raw
         .crop
@@ -4570,6 +4585,15 @@ format = "one_per_line"
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "cv2_bilinear""#));
         let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
         assert_eq!(m.interpolation, Some(Interpolation::Cv2Bilinear));
+
+        let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "torch_bilinear""#));
+        let m = load_manifest(&dir.path().join("manifest.toml")).unwrap();
+        assert_eq!(m.interpolation, Some(Interpolation::TorchBilinear));
+        let letterbox = make(r#"interpolation = "torch_bilinear""#)
+            .replace(r#"method = "resize""#, r#"method = "letterbox""#);
+        let dir = write_temp_file("manifest.toml", &letterbox);
+        let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();
+        assert!(err.to_string().contains("requires preprocessing method = 'resize'"));
         // Invalid -> InvalidManifest error.
         let dir = write_temp_file("manifest.toml", &make(r#"interpolation = "box""#));
         let err = load_manifest(&dir.path().join("manifest.toml")).unwrap_err();

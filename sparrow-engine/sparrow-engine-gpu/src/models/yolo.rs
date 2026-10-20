@@ -340,6 +340,9 @@ pub struct YoloModel {
     channel_order: ChannelOrder,
     /// Pad value in the closed range 0 to 1 (after `/255` normalization).
     pad_value: f32,
+    /// Normalization for the `resize` (rtdetr_topk) path: Unit for RT-DETR exports,
+    /// ImageNet for RF-DETR exports (e.g. DroneMegaDetector).
+    resize_stats: NormalizeStats,
     /// Default confidence threshold from manifest. Overrides default if
     /// `DetectOpts::confidence_threshold` is None.
     default_threshold: f32,
@@ -457,21 +460,7 @@ impl YoloModel {
                 "YoloModel requires NCHW layout, got {layout:?}"
             )));
         }
-        let normalization = manifest.normalization.unwrap_or(Normalization::Unit);
-        let expected_normalization = if matches!(
-            manifest.postprocess_method,
-            PostprocessMethod::RetinaNetSoftNms { .. }
-        ) {
-            Normalization::Imagenet
-        } else {
-            Normalization::Unit
-        };
-        if normalization != expected_normalization {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "YoloModel requires {expected_normalization:?} normalization for {}, got {normalization:?}",
-                manifest.postprocess_method.as_str()
-            )));
-        }
+        let resize_stats = resolve_normalization(manifest)?;
 
         let channel_order = manifest.channel_order.unwrap_or(ChannelOrder::Rgb);
         // `manifest.pad_value` is already in [0,1] post-`/255` units (per the
@@ -574,6 +563,7 @@ impl YoloModel {
             input_h: input_size[1],
             channel_order,
             pad_value,
+            resize_stats,
             default_threshold: manifest.confidence_threshold.unwrap_or(0.2),
             cuda_mem_info,
             device_id,
@@ -726,7 +716,7 @@ impl YoloModel {
                     self.input_w,
                     self.input_h,
                     self.channel_order,
-                    NormalizeStats::UNIT,
+                    self.resize_stats,
                     self.manifest
                         .interpolation
                         .unwrap_or(Interpolation::Bilinear),
@@ -1479,6 +1469,32 @@ fn build_session(
 /// Dynamic `-1` is allowed for `N`, the optional batch axis, and the last
 /// dimension. Any static batch axis other than `1` is rejected because the
 /// runtime extraction path only accepts `[N, C]` or `[1, N, C]`.
+/// Validate the manifest normalization for this postprocess family and return
+/// the stats used by the `resize` preprocessing path. RetinaNet requires
+/// ImageNet; RT-DETR/RF-DETR (`rtdetr_topk`) accept Unit or ImageNet; all
+/// other families require Unit.
+fn resolve_normalization(manifest: &ModelManifest) -> Result<NormalizeStats> {
+    let normalization = manifest.normalization.unwrap_or(Normalization::Unit);
+    let allowed = match manifest.postprocess_method {
+        PostprocessMethod::RetinaNetSoftNms { .. } => normalization == Normalization::Imagenet,
+        PostprocessMethod::RtDetrTopk { .. } => {
+            matches!(normalization, Normalization::Unit | Normalization::Imagenet)
+        }
+        _ => normalization == Normalization::Unit,
+    };
+    if !allowed {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "YoloModel does not support {normalization:?} normalization for {}",
+            manifest.postprocess_method.as_str()
+        )));
+    }
+    Ok(if normalization == Normalization::Imagenet {
+        NormalizeStats::IMAGENET
+    } else {
+        NormalizeStats::UNIT
+    })
+}
+
 fn validate_output_dims(
     dims: &[i64],
     model_id: &str,
@@ -1645,6 +1661,62 @@ fn preprocess_meta_from_letterbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn normalization_manifest(method: PostprocessMethod, norm: Normalization) -> ModelManifest {
+        ModelManifest {
+            id: "test".into(),
+            interpolation: None,
+            resize_crop: None,
+            crop: None,
+            format: "onnx".into(),
+            model_file: "test.onnx".into(),
+            preprocess_method: PreprocessMethod::Resize,
+            input_size: Some([640, 640]),
+            layout: Some(Layout::Nchw),
+            normalization: Some(norm),
+            pad_value: None,
+            channel_order: None,
+            precision: Precision::Fp32,
+            model_file_fp16: None,
+            inference_strategy: manifest::InferenceStrategy::Single,
+            trt: None,
+            postprocess_method: method,
+            confidence_threshold: None,
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
+            label_file: None,
+            label_format: None,
+            default: false,
+            subtype: sparrow_engine_types::ModelSubtype::Standard,
+            onnx_sha256: None,
+            onnx_size_bytes: None,
+            version: None,
+            description: None,
+            provenance: None,
+            drift_reference: None,
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn rtdetr_topk_accepts_unit_and_imagenet_normalization() {
+        let rt = PostprocessMethod::RtDetrTopk { topk: None };
+        let unit = resolve_normalization(&normalization_manifest(rt.clone(), Normalization::Unit));
+        assert_eq!(unit.unwrap(), NormalizeStats::UNIT);
+        let inet = resolve_normalization(&normalization_manifest(rt, Normalization::Imagenet));
+        assert_eq!(inet.unwrap(), NormalizeStats::IMAGENET);
+    }
+
+    #[test]
+    fn non_rtdetr_families_keep_strict_normalization() {
+        let yolo = PostprocessMethod::MegadetV5a {
+            iou_threshold: 0.45,
+        };
+        assert!(
+            resolve_normalization(&normalization_manifest(yolo, Normalization::Imagenet)).is_err()
+        );
+    }
 
     fn megadet_v5a_method() -> PostprocessMethod {
         PostprocessMethod::MegadetV5a {
