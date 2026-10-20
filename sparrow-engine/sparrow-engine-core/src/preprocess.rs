@@ -174,6 +174,11 @@ pub fn resize_crop_rgb(
             image::imageops::FilterType::Lanczos3,
         ),
         Interpolation::Cv2Bilinear => resize_cv2_bilinear(&base, resize_width, resize_height),
+        Interpolation::TorchBilinear => {
+            return Err(SparrowEngineError::InvalidManifest(
+                "resize_crop does not support interpolation 'torch_bilinear'".to_string(),
+            ))
+        }
     };
 
     let [target_width, target_height] = input_size;

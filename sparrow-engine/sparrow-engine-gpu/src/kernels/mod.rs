@@ -14,10 +14,14 @@
 //!   `channel_order`. No resize — assumes `tile_size == input_size` per the
 //!   tiled-detection manifests.
 //!
-//! All kernels emit FP32 output. FP16 conversion (Wave 2 MDv6 path) is a
+//! - [`chroma_upsample`] — libjpeg-turbo-exact fancy chroma upsampling +
+//!   YCbCr -> RGB for nvjpeg 4:2:0 / 4:2:2 YUV output (u8 HWC RGB out).
+//!
+//! The preprocessing kernels emit FP32 output. FP16 conversion (Wave 2 MDv6 path) is a
 //! cast at the ORT boundary, not in the kernel — see Wave 2's design.
 
 pub mod center_crop;
+pub mod chroma_upsample;
 pub mod letterbox;
 pub mod resize;
 pub mod resize_crop;

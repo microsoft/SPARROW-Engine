@@ -61,7 +61,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
+use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr};
 use ndarray::{Array2, ArrayView2};
 use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
@@ -188,75 +188,14 @@ impl JpegDecoder {
     }
 
     fn decode_via_nvjpeg(&mut self, stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage> {
-        use nvjpeg_sys as nvj;
-        use std::os::raw::{c_int, c_uchar};
         if has_nontrivial_exif_orientation(bytes) {
             return Err(SparrowEngineError::ImageDecode(
                 "EXIF orientation requires CPU fallback".into(),
             ));
         }
-        // SAFETY: FFI calls, return values checked.
-        unsafe {
-            let mut n_components: c_int = 0;
-            let mut subsampling: nvj::nvjpegChromaSubsampling_t = 0;
-            let mut widths = [0i32; nvj::NVJPEG_MAX_COMPONENT as usize];
-            let mut heights = [0i32; nvj::NVJPEG_MAX_COMPONENT as usize];
-            let s = nvj::nvjpegGetImageInfo(
-                self.handle,
-                bytes.as_ptr() as *const c_uchar,
-                bytes.len(),
-                &mut n_components,
-                &mut subsampling,
-                widths.as_mut_ptr(),
-                heights.as_mut_ptr(),
-            );
-            if s != nvj::nvjpegStatus_t_NVJPEG_STATUS_SUCCESS as nvj::nvjpegStatus_t {
-                return Err(SparrowEngineError::ImageDecode(format!(
-                    "nvjpegGetImageInfo failed: status={s}"
-                )));
-            }
-            let w = widths[0] as u32;
-            let h = heights[0] as u32;
-            if w == 0 || h == 0 {
-                return Err(SparrowEngineError::ImageDecode(
-                    "nvjpeg reported zero width or height".into(),
-                ));
-            }
-            let total = w as usize * h as usize * 3;
-            let mut out: CudaSlice<u8> = stream
-                .alloc_zeros::<u8>(total)
-                .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros: {e}")))?;
-            let cu_stream = stream.cu_stream() as nvj::cudaStream_t;
-            let s = {
-                let (dev_handle, _sync) = out.device_ptr_mut(stream);
-                let dev_ptr = dev_handle as *mut c_uchar;
-                let mut ni: nvj::nvjpegImage_t = std::mem::zeroed();
-                ni.channel[0] = dev_ptr;
-                ni.pitch[0] = (w as usize) * 3;
-                nvj::nvjpegDecode(
-                    self.handle,
-                    self.state,
-                    bytes.as_ptr() as *const c_uchar,
-                    bytes.len(),
-                    nvj::nvjpegOutputFormat_t_NVJPEG_OUTPUT_RGBI as nvj::nvjpegOutputFormat_t,
-                    &mut ni,
-                    cu_stream,
-                )
-            };
-            if s != nvj::nvjpegStatus_t_NVJPEG_STATUS_SUCCESS as nvj::nvjpegStatus_t {
-                return Err(SparrowEngineError::ImageDecode(format!(
-                    "nvjpegDecode failed: status={s} (likely non-baseline / progressive)"
-                )));
-            }
-            stream
-                .synchronize()
-                .map_err(|e| SparrowEngineError::Ort(format!("cudarc stream.synchronize: {e}")))?;
-            Ok(GpuImage {
-                data: out,
-                width: w,
-                height: h,
-            })
-        }
+        // SAFETY: handle/state were created in `new()` on the context that
+        // owns `stream` (see the Send/Sync note on `JpegDecoder`).
+        unsafe { crate::decode::nvjpeg_decode_rgb(self.handle, self.state, stream, bytes) }
     }
 }
 
@@ -401,6 +340,9 @@ pub struct YoloModel {
     channel_order: ChannelOrder,
     /// Pad value in the closed range 0 to 1 (after `/255` normalization).
     pad_value: f32,
+    /// Normalization for the `resize` (rtdetr_topk) path: Unit for RT-DETR exports,
+    /// ImageNet for RF-DETR exports (e.g. DroneMegaDetector).
+    resize_stats: NormalizeStats,
     /// Default confidence threshold from manifest. Overrides default if
     /// `DetectOpts::confidence_threshold` is None.
     default_threshold: f32,
@@ -518,21 +460,7 @@ impl YoloModel {
                 "YoloModel requires NCHW layout, got {layout:?}"
             )));
         }
-        let normalization = manifest.normalization.unwrap_or(Normalization::Unit);
-        let expected_normalization = if matches!(
-            manifest.postprocess_method,
-            PostprocessMethod::RetinaNetSoftNms { .. }
-        ) {
-            Normalization::Imagenet
-        } else {
-            Normalization::Unit
-        };
-        if normalization != expected_normalization {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "YoloModel requires {expected_normalization:?} normalization for {}, got {normalization:?}",
-                manifest.postprocess_method.as_str()
-            )));
-        }
+        let resize_stats = resolve_normalization(manifest)?;
 
         let channel_order = manifest.channel_order.unwrap_or(ChannelOrder::Rgb);
         // `manifest.pad_value` is already in [0,1] post-`/255` units (per the
@@ -635,6 +563,7 @@ impl YoloModel {
             input_h: input_size[1],
             channel_order,
             pad_value,
+            resize_stats,
             default_threshold: manifest.confidence_threshold.unwrap_or(0.2),
             cuda_mem_info,
             device_id,
@@ -787,7 +716,7 @@ impl YoloModel {
                     self.input_w,
                     self.input_h,
                     self.channel_order,
-                    NormalizeStats::UNIT,
+                    self.resize_stats,
                     self.manifest
                         .interpolation
                         .unwrap_or(Interpolation::Bilinear),
@@ -1540,6 +1469,32 @@ fn build_session(
 /// Dynamic `-1` is allowed for `N`, the optional batch axis, and the last
 /// dimension. Any static batch axis other than `1` is rejected because the
 /// runtime extraction path only accepts `[N, C]` or `[1, N, C]`.
+/// Validate the manifest normalization for this postprocess family and return
+/// the stats used by the `resize` preprocessing path. RetinaNet requires
+/// ImageNet; RT-DETR/RF-DETR (`rtdetr_topk`) accept Unit or ImageNet; all
+/// other families require Unit.
+fn resolve_normalization(manifest: &ModelManifest) -> Result<NormalizeStats> {
+    let normalization = manifest.normalization.unwrap_or(Normalization::Unit);
+    let allowed = match manifest.postprocess_method {
+        PostprocessMethod::RetinaNetSoftNms { .. } => normalization == Normalization::Imagenet,
+        PostprocessMethod::RtDetrTopk { .. } => {
+            matches!(normalization, Normalization::Unit | Normalization::Imagenet)
+        }
+        _ => normalization == Normalization::Unit,
+    };
+    if !allowed {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "YoloModel does not support {normalization:?} normalization for {}",
+            manifest.postprocess_method.as_str()
+        )));
+    }
+    Ok(if normalization == Normalization::Imagenet {
+        NormalizeStats::IMAGENET
+    } else {
+        NormalizeStats::UNIT
+    })
+}
+
 fn validate_output_dims(
     dims: &[i64],
     model_id: &str,
@@ -1706,6 +1661,62 @@ fn preprocess_meta_from_letterbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn normalization_manifest(method: PostprocessMethod, norm: Normalization) -> ModelManifest {
+        ModelManifest {
+            id: "test".into(),
+            interpolation: None,
+            resize_crop: None,
+            crop: None,
+            format: "onnx".into(),
+            model_file: "test.onnx".into(),
+            preprocess_method: PreprocessMethod::Resize,
+            input_size: Some([640, 640]),
+            layout: Some(Layout::Nchw),
+            normalization: Some(norm),
+            pad_value: None,
+            channel_order: None,
+            precision: Precision::Fp32,
+            model_file_fp16: None,
+            inference_strategy: manifest::InferenceStrategy::Single,
+            trt: None,
+            postprocess_method: method,
+            confidence_threshold: None,
+            embedding_version: None,
+            embedding_dim: None,
+            embedding_metric: None,
+            label_file: None,
+            label_format: None,
+            default: false,
+            subtype: sparrow_engine_types::ModelSubtype::Standard,
+            onnx_sha256: None,
+            onnx_size_bytes: None,
+            version: None,
+            description: None,
+            provenance: None,
+            drift_reference: None,
+            catalog_metadata: sparrow_engine_types::CatalogMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn rtdetr_topk_accepts_unit_and_imagenet_normalization() {
+        let rt = PostprocessMethod::RtDetrTopk { topk: None };
+        let unit = resolve_normalization(&normalization_manifest(rt.clone(), Normalization::Unit));
+        assert_eq!(unit.unwrap(), NormalizeStats::UNIT);
+        let inet = resolve_normalization(&normalization_manifest(rt, Normalization::Imagenet));
+        assert_eq!(inet.unwrap(), NormalizeStats::IMAGENET);
+    }
+
+    #[test]
+    fn non_rtdetr_families_keep_strict_normalization() {
+        let yolo = PostprocessMethod::MegadetV5a {
+            iou_threshold: 0.45,
+        };
+        assert!(
+            resolve_normalization(&normalization_manifest(yolo, Normalization::Imagenet)).is_err()
+        );
+    }
 
     fn megadet_v5a_method() -> PostprocessMethod {
         PostprocessMethod::MegadetV5a {
