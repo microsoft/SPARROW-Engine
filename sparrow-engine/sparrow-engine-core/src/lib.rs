@@ -12,6 +12,7 @@ pub mod daynight;
 pub mod export;
 pub mod frame_grid;
 pub mod hash;
+pub mod heatmap_lmds;
 pub mod pipeline_compat;
 pub mod postprocess;
 pub mod postprocess_events;

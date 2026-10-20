@@ -251,8 +251,8 @@ fn interp_filter(interp: Interpolation) -> image::imageops::FilterType {
         Interpolation::Bilinear => image::imageops::FilterType::Triangle,
         Interpolation::Bicubic => image::imageops::FilterType::CatmullRom,
         Interpolation::Lanczos => image::imageops::FilterType::Lanczos3,
-        Interpolation::Cv2Bilinear => {
-            panic!("cv2_bilinear uses resize_cv2_bilinear, not image crate filters")
+        Interpolation::Cv2Bilinear | Interpolation::TorchBilinear => {
+            panic!("2x2 bilinear modes use bilinear_2x2_f32, not image crate filters")
         }
     }
 }
@@ -263,6 +263,10 @@ fn resize_image(img: &RgbImage, new_w: u32, new_h: u32, interp: Interpolation) -
             sparrow_engine_core::preprocess::resize_torch_nearest(img, new_w, new_h)
         }
         Interpolation::Cv2Bilinear => Ok(resize_cv2_bilinear(img, new_w, new_h)),
+        Interpolation::TorchBilinear => Err(SparrowEngineError::InvalidManifest(
+            "torch_bilinear produces float pixels and is supported only by method = 'resize'"
+                .to_string(),
+        )),
         Interpolation::Bilinear | Interpolation::Bicubic | Interpolation::Lanczos => {
             resize_pil(img, new_w, new_h, interp_filter(interp))
         }
@@ -287,38 +291,48 @@ fn resize_pil(
     Ok(image::imageops::resize(img, new_w, new_h, filter))
 }
 
-fn resize_cv2_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> RgbImage {
+/// Non-antialiased 2x2 half-pixel bilinear (cv2 INTER_LINEAR / torchvision
+/// `antialias=False`). Returns HWC f32 samples in `[0, 255]`, unrounded.
+fn bilinear_2x2_f32(img: &RgbImage, new_w: u32, new_h: u32) -> Vec<f32> {
     let src_w = img.width();
     let src_h = img.height();
     let scale_x = src_w as f32 / new_w as f32;
     let scale_y = src_h as f32 / new_h as f32;
+    let mut out = Vec::with_capacity(new_w as usize * new_h as usize * 3);
 
-    RgbImage::from_fn(new_w, new_h, |ox, oy| {
-        let src_x = (ox as f32 + 0.5) * scale_x - 0.5;
+    for oy in 0..new_h {
         let src_y = (oy as f32 + 0.5) * scale_y - 0.5;
-        let x0f = src_x.floor();
         let y0f = src_y.floor();
-        let fx = src_x - x0f;
         let fy = src_y - y0f;
-
-        let x0 = (x0f as i32).clamp(0, src_w as i32 - 1) as u32;
         let y0 = (y0f as i32).clamp(0, src_h as i32 - 1) as u32;
-        let x1 = (x0f as i32 + 1).clamp(0, src_w as i32 - 1) as u32;
         let y1 = (y0f as i32 + 1).clamp(0, src_h as i32 - 1) as u32;
+        for ox in 0..new_w {
+            let src_x = (ox as f32 + 0.5) * scale_x - 0.5;
+            let x0f = src_x.floor();
+            let fx = src_x - x0f;
+            let x0 = (x0f as i32).clamp(0, src_w as i32 - 1) as u32;
+            let x1 = (x0f as i32 + 1).clamp(0, src_w as i32 - 1) as u32;
 
-        let p00 = img.get_pixel(x0, y0);
-        let p10 = img.get_pixel(x1, y0);
-        let p01 = img.get_pixel(x0, y1);
-        let p11 = img.get_pixel(x1, y1);
-
-        let mut out = [0u8; 3];
-        for c in 0..3 {
-            let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
-            let bottom = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
-            out[c] = (top * (1.0 - fy) + bottom * fy).round().clamp(0.0, 255.0) as u8;
+            let p00 = img.get_pixel(x0, y0);
+            let p10 = img.get_pixel(x1, y0);
+            let p01 = img.get_pixel(x0, y1);
+            let p11 = img.get_pixel(x1, y1);
+            for c in 0..3 {
+                let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+                let bottom = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+                out.push(top * (1.0 - fy) + bottom * fy);
+            }
         }
-        image::Rgb(out)
-    })
+    }
+    out
+}
+
+fn resize_cv2_bilinear(img: &RgbImage, new_w: u32, new_h: u32) -> RgbImage {
+    let raw = bilinear_2x2_f32(img, new_w, new_h)
+        .into_iter()
+        .map(|v| v.round().clamp(0.0, 255.0) as u8)
+        .collect();
+    RgbImage::from_raw(new_w, new_h, raw).expect("bilinear_2x2_f32 returns w*h*3 samples")
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +354,10 @@ fn resize_direct(
     target_h: u32,
     interp: Interpolation,
 ) -> Result<(Vec<f32>, f32, f32, f32)> {
+    if interp == Interpolation::TorchBilinear {
+        checked_tensor_len_3hw(target_h, target_w)?;
+        return Ok((bilinear_2x2_f32(img, target_w, target_h), 1.0, 0.0, 0.0));
+    }
     let resized = resize_image(img, target_w, target_h, interp)?;
 
     // Store as raw f32 (u8 cast) — normalization happens in build_tensor
@@ -722,6 +740,29 @@ mod tests {
         assert_eq!(resized.dimensions(), (2, 2));
         assert_eq!(resized.get_pixel(0, 0).0, [25, 10, 15]);
         assert_eq!(resized.get_pixel(1, 1).0, [125, 50, 75]);
+    }
+
+    #[test]
+    fn test_torch_bilinear_preserves_fraction_cv2_rounds() {
+        let mut img = RgbImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgb([0, 0, 0]));
+        img.put_pixel(1, 0, image::Rgb([1, 1, 1]));
+        // torchvision F.resize(antialias=False) 2->4: x = [0, 0.25, 0.75, 1].
+        let (canvas, _, _, _) = resize_direct(&img, 4, 1, Interpolation::TorchBilinear).unwrap();
+        let red: Vec<f32> = canvas.chunks(3).map(|p| p[0]).collect();
+        assert_eq!(red, vec![0.0, 0.25, 0.75, 1.0]);
+        let (canvas, _, _, _) = resize_direct(&img, 4, 1, Interpolation::Cv2Bilinear).unwrap();
+        let red: Vec<f32> = canvas.chunks(3).map(|p| p[0]).collect();
+        assert_eq!(red, vec![0.0, 0.0, 1.0, 1.0]);
+        assert!(letterbox(
+            &img,
+            4,
+            4,
+            0.0,
+            &Normalization::None,
+            Interpolation::TorchBilinear
+        )
+        .is_err());
     }
 
     #[test]

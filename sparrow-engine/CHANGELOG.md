@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Published Sparrow Model Zoo v0.31.0 at
+  [10.5281/zenodo.23492166](https://doi.org/10.5281/zenodo.23492166) with 82
+  packages: 54 runtime packages and 28 link-only metadata packages. It adds
+  two overhead detectors: OWL-D (Microsoft AI for Good Lab, DINOv3 ViT-H+/16,
+  CC-BY-NC-SA-4.0, hosted with usage restrictions) and DroneMegaDetector
+  (ConservationDrones, RF-DETR Medium, MIT).
+- Added the `heatmap_lmds` postprocess used by OWL-D: tiled inference over a
+  point-density heatmap, then local-maximum detection, with a fixed-size box
+  per peak.
+- Added the `torch_bilinear` resize mode and ImageNet-normalized
+  `rtdetr_topk` support on the GPU path, used by DroneMegaDetector.
+
 ### Changed
 
 - `pytorchwildlife-compat` is now the `PytorchWildlife` 2.0.0 transition
@@ -19,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sparrow-engine and SPARROW-Playground. Fine-tuning, HerdNet, OWL and custom
   weights raise with a pointer to the replacement. The import name changes
   from `pytorchwildlife` to `PytorchWildlife`, matching 1.x.
+
+### Fixed
+
+- GPU JPEG decode now matches PIL exactly for 4:2:0 and 4:2:2 JPEGs.
+  nvjpeg's interleaved output replicated chroma samples; decode now applies
+  libjpeg-turbo's fancy chroma upsampling.
 
 ## v0.1.30
 

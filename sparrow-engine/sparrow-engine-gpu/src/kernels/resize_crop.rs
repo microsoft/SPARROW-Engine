@@ -163,6 +163,11 @@ pub fn resize_crop_gpu(
         Interpolation::Bicubic => 1,
         Interpolation::Lanczos => 2,
         Interpolation::Cv2Bilinear => 3,
+        Interpolation::TorchBilinear => {
+            return Err(SparrowEngineError::InvalidManifest(
+                "resize_crop does not support interpolation 'torch_bilinear'".to_string(),
+            ));
+        }
     };
     let unit_flag: i32 = if stats == NormalizeStats::UNIT { 1 } else { 0 };
 
