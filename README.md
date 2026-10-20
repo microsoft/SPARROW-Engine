@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/22711452/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/23492166/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.30.0 with 80 archives: 52 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.31.0 with 82 archives: 54 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -228,15 +228,15 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.22711452](https://doi.org/10.5281/zenodo.22711452) (v0.30.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.23492166](https://doi.org/10.5281/zenodo.23492166) (v0.31.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 41 default hosted desktop ONNX models into
+Download the 43 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
 without arguments. The current published hosted set also holds 5 mobile TFLite
 models, 2 cascade descriptors, 1 recording-level ensemble package, and 3 opt-in ONNX models.
 Together with 28 link-only entries and 0 release-candidate entries, they form
-the complete **80-entry** catalog.
+the complete **82-entry** catalog.
 Non-default published entries are fetched when named explicitly or with
 `--all`. Link-only entries remain discoverable and report the original source
 or rights-holder contact route:
@@ -270,7 +270,7 @@ descriptors (`manifest.toml`, `pipeline.toml`, or `ensemble.toml`) plus their
 declared assets. Link-only entries fail with the original source URL; aliases,
 `--force`, `--no-verify`, and record overrides cannot bypass that routing.
 
-### Published 80-entry model-zoo catalogue
+### Published 82-entry model-zoo catalogue
 
 The index below is generated from
 [`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
@@ -278,30 +278,30 @@ the source of truth used by `download_models.sh`. The
 [full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
 developer/owner details, and source citations.
 
-All 80 rows are active in v0.30.0. Hosted and hosted-restricted rows download
-from Zenodo record `22711452`; link-only rows remain discoverable without
+All 82 rows are active in v0.31.0. Hosted and hosted-restricted rows download
+from Zenodo record `23492166`; link-only rows remain discoverable without
 redistributed runtime payloads.
 
 <!-- BEGIN GENERATED MODEL ZOO INDEX -->
 
-**80 catalog entries total; 80 active catalog entries.**
+**82 catalog entries total; 82 active catalog entries.**
 
-**52 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**54 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 42 hosted · 10 hosted-restricted · 28 link-only · 0 pending-rights.
+**Active catalog routing (published/hosted vs non-mirrored):** 43 hosted · 11 hosted-restricted · 28 link-only · 0 pending-rights.
 
-**Current published availability:** 42 hosted · 10 hosted-restricted · 28 link-only.
+**Current published availability:** 43 hosted · 11 hosted-restricted · 28 link-only.
 
 | Area | Catalog entries (all statuses) |
 |---|---:|
 | Camera Trap | 48 |
 | Acoustics | 13 |
-| Overhead | 8 |
+| Overhead | 10 |
 | Marine Imagery | 6 |
 | General | 5 |
-| **Total** | **80** |
+| **Total** | **82** |
 
-Catalog formats (including candidates): **72 ONNX**, **5 TFLite**, **2 cascade descriptor**, **1 recording-level ensemble**.
+Catalog formats (including candidates): **74 ONNX**, **5 TFLite**, **2 cascade descriptor**, **1 recording-level ensemble**.
 
 Area and format totals include unpublished candidates and metadata-only entries. Only active hosted/hosted-restricted rows indicate published runtime artifacts; link-only and pending-rights rows do not provide mirrored weights. Each model retains its recorded licence terms.
 
@@ -391,7 +391,7 @@ Area and format totals include unpublished candidates and metadata-only entries.
 |---|---|---|---|---|---|---|---|
 | `orca-cascade` | orca-cascade | DCLDE-orca | cascade | MIT | Active / published | Hosted | allowed |
 
-#### Overhead — Detectors (6)
+#### Overhead — Detectors (8)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
@@ -401,6 +401,8 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `deepforest-tree` | DeepForest Tree-Crown Detector | DeepForest, RetinaNet | onnx | MIT | Active / published | Hosted | allowed |
 | `deepforest-bird` | DeepForest Aerial Bird Detector | DeepForest, RetinaNet | onnx | MIT | Active / published | Hosted | allowed |
 | `ducknet` | DuckNet Waterfowl Detector | DuckNet, RetinaNet | onnx | UNVERIFIED | Active (link-only) | Link-only | non-commercial |
+| `OWL-D` | OWL-D Overhead Wildlife Locator (DINOv3 ViT-H+/16) | DINOv3 | onnx · vit-h-plus-16 | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `DroneMegaDetector` | DroneMegaDetector (RF-DETR Medium) | RF-DETR | onnx · v1.1-2026.10.04 | MIT | Active / published | Hosted | allowed |
 
 #### Marine Imagery — Detectors (6)
 

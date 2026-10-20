@@ -1,31 +1,31 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-**80 catalog entries total; 80 active catalog entries.**
+**82 catalog entries total; 82 active catalog entries.**
 
-**52 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**54 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 42 hosted · 10 hosted-restricted · 28 link-only · 0 pending-rights.
+**Active catalog routing (published/hosted vs non-mirrored):** 43 hosted · 11 hosted-restricted · 28 link-only · 0 pending-rights.
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **80 catalog entries**. Published-release reference: Zenodo record [`22711452`](https://zenodo.org/records/22711452) (v0.30.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **82 catalog entries**. Published-release reference: Zenodo record [`23492166`](https://zenodo.org/records/23492166) (v0.31.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license catalogue**: each model has its own recorded weight terms. Published hosted packages include runtime artifacts; link-only and pending-rights packages contain compliance metadata and original-source links, not runnable weights.
 
 ## Catalogue summary
 
-**80 catalog entries** · 72 ONNX · 5 TFLite · 2 cascade · 1 ensemble · 44 commercial-use allowed · 18 non-commercial · 18 commercial-use unverified.
+**82 catalog entries** · 74 ONNX · 5 TFLite · 2 cascade · 1 ensemble · 45 commercial-use allowed · 19 non-commercial · 18 commercial-use unverified.
 
 Format and task totals cover all catalog entries, including unpublished candidates and metadata-only entries; they are not download counts.
 
-**Current published availability:** 42 hosted · 10 hosted-restricted · 28 link-only.
+**Current published availability:** 43 hosted · 11 hosted-restricted · 28 link-only.
 
 | Area | Detectors | Classifiers | Encoders | Cascades | Total |
 |---|---:|---:|---:|---:|---:|
 | Camera Trap | 21 | 27 | 0 | 0 | 48 |
 | Acoustics | 5 | 7 | 0 | 1 | 13 |
-| Overhead | 6 | 1 | 0 | 1 | 8 |
+| Overhead | 8 | 1 | 0 | 1 | 10 |
 | Marine Imagery | 6 | 0 | 0 | 0 | 6 |
 | General | 0 | 1 | 4 | 0 | 5 |
-| **Total** | **38** | **36** | **4** | **2** | **80** |
+| **Total** | **40** | **36** | **4** | **2** | **82** |
 
 ## Reading this catalogue
 
@@ -143,6 +143,8 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | DeepForest Tree-Crown Detector | `deepforest-tree` | DeepForest, RetinaNet | onnx | Detector · gates on tree | Global | DeepForest project / Weecology | Third-party | MIT | Active / published | Hosted | allowed |
 | DeepForest Aerial Bird Detector | `deepforest-bird` | DeepForest, RetinaNet | onnx | Detector · gates on bird | Global | DeepForest project / Weecology | Third-party | MIT | Active / published | Hosted | allowed |
 | DuckNet Waterfowl Detector | `ducknet` | DuckNet, RetinaNet | onnx | Detector · gates on waterfowl | North America — Mississippi Alluvial Valley, USA | DuckNet authors: Loken, Ringelman, Mini, James, and Mitchell | Third-party | UNVERIFIED | Active (link-only) | Link-only | non-commercial |
+| OWL-D Overhead Wildlife Locator (DINOv3 ViT-H+/16) | `OWL-D` | DINOv3 | onnx · vit-h-plus-16 | Detector · gates on animal | Global | Microsoft AI for Good Lab (AI4G) | First-party (AI4G) | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| DroneMegaDetector (RF-DETR Medium) | `DroneMegaDetector` | RF-DETR | onnx · v1.1-2026.10.04 | Detector · gates on animal | Global | ConservationDrones | Third-party | MIT | Active / published | Hosted | allowed |
 
 ## Marine Imagery — Detector
 
@@ -266,3 +268,5 @@ Citations, original sources, and stable rights records from the catalog:
 - **`deepforest-tree-species`** — Manifest-driven composition of deepforest-tree and deepforest-neon-species; component packages carry their own source and licence records. Rights holder: Sparrow Engine descriptor; component rights remain with their owners; rights record: `sparrow-deepforest-tree-species-pipeline-v1`. [Original source](<https://github.com/microsoft/SPARROW-Engine>) [Licence source](<https://github.com/microsoft/SPARROW-Engine>)
 - **`hawkears-v2`** — HawkEars 2.2.0, revision bc558066bdafb6fbea842336de80bf3b82813f63; BriteKit 1.6.0, revision 58ddce6f885bcb94cbe221f42f476773a12137d5. Rights holder: Jan Huus and HawkEars / BriteKit contributors; rights record: `hawkears-2.2.0-britekit-1.6.0`. [Original source](<https://github.com/jhuus/HawkEars>) [Licence source](<https://github.com/jhuus/HawkEars/blob/bc558066bdafb6fbea842336de80bf3b82813f63/LICENSE>)
 - **`batdetect2-uk-v2`** — macaodha/batdetect2 v2.0.0b3; https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d Rights holder: BatDetect2 contributors; rights record: `batdetect2-v2.0.0b3-cc-by-nc-4.0`. [Original source](<https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d>) [Licence source](<https://github.com/macaodha/batdetect2/blob/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d/LICENSE.md>)
+- **`OWL-D`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Weights: Zenodo 20802844 (OWL-D.pth). Source (MIT): https://github.com/microsoft/MegaDetector-Overhead/tree/975cc76a9ae618088159efe1f1fe611124e13b3e. DINOv3 backbone under the DINOv3 License (copy shipped in LICENSE.md). Rights holder: Microsoft AI for Good Lab (AI4G); rights record: `model-zoo-rights-adjudication-v1#76`. [Original source](<https://zenodo.org/api/records/20802844>) [Licence source](<https://zenodo.org/api/records/20802844>)
+- **`DroneMegaDetector`** — Elchik, Longmore, Morris, Weinstein, Veitch-Michaelis, Knops, Richards, Wich. DroneMegaDetector. bioRxiv 2026.10.12.758430. https://doi.org/10.64898/2026.10.12.758430. Weights: release v1.1 DroneMegaDetector_RFDETRMedium_2026.10.04.pth; source https://github.com/ConservationDronesAI/DroneMegaDetector/tree/04f7acb0e0ce1df56882c0403228e170b72a50e5. Exported with rfdetr 1.11.2 (Apache-2.0). Rights holder: ConservationDrones; rights record: `model-zoo-rights-adjudication-v1#77`. [Original source](<https://github.com/ConservationDronesAI/DroneMegaDetector/tree/04f7acb0e0ce1df56882c0403228e170b72a50e5>) [Licence source](<https://github.com/ConservationDronesAI/DroneMegaDetector/blob/04f7acb0e0ce1df56882c0403228e170b72a50e5/LICENSE>)
