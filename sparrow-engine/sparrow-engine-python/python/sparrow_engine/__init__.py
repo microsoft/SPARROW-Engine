@@ -334,7 +334,7 @@ def _resolve_inputs(
     input: Union[str, Path, list[Union[str, Path]]],  # noqa: A002
     extensions: set[str],
     recursive: bool = False,
-    preserve_order: bool = False,
+    preserve_order: bool = True,
 ) -> list[str]:
     """Normalize input to a list of file paths.
 
@@ -342,12 +342,10 @@ def _resolve_inputs(
     files), or a list of paths. When ``recursive`` is True, directories
     are traversed recursively.
 
-    By default the full result is sorted — the historical behavior shared by
-    ``detect``/``classify``/``detect_audio``/``pipeline``. When
-    ``preserve_order`` is True the caller's list order is kept and only the
-    files discovered *within* each directory/glob expansion are sorted for
-    determinism; the embedding path uses this so results line up positionally
-    with the requested inputs.
+    By default the caller's list order is kept and only the files discovered
+    *within* each directory/glob expansion are sorted for determinism, so
+    results line up with the requested inputs. ``preserve_order=False`` sorts
+    the full list (the behavior before 0.1.31).
     """
     if isinstance(input, (str, Path)):
         input = [input]
@@ -851,12 +849,34 @@ def summarize(results: list[DetectResult]) -> dict:
 # -------------------------------------------------------------------------
 
 
+def _pairs(items: list) -> list[tuple[str, object]]:
+    """Accept ``(path, result)`` tuples or results that carry ``.path``."""
+    out = []
+    for item in items:
+        if isinstance(item, tuple):
+            p, r = item
+        else:
+            p, r = item.path, item
+        out.append((_path_to_str(p), r))
+    return out
+
+
 def visualize(
-    items: list[tuple[Union[str, Path], Union[DetectResult, ClassifyResult, PipelineResult]]],
+    items: list[
+        Union[
+            DetectResult,
+            ClassifyResult,
+            PipelineResult,
+            tuple[Union[str, Path], Union[DetectResult, ClassifyResult, PipelineResult]],
+        ]
+    ],
     output_dir: Optional[Union[str, Path]] = None,
     show_labels: bool = False,
 ) -> list[bytes]:
-    """Render bounding box visualizations for a batch of (path, result) pairs.
+    """Render bounding box visualizations for a batch of results.
+
+    Each item is a result (its ``.path`` names the image) or a
+    ``(path, result)`` pair.
 
     No engine initialization required. Returns ``list[bytes]`` with encoded
     image bytes — JPEG for ``.jpg``/``.jpeg`` inputs, PNG for all other
@@ -866,13 +886,13 @@ def visualize(
     ``show_labels=True`` renders ``"{label} {conf:.2}"`` text above each
     bbox using the bundled DejaVu Sans font. Default off (clean overlays).
     """
-    converted = [(_path_to_str(p), r) for p, r in items]
+    converted = _pairs(items)
     out = _path_to_str(output_dir) if output_dir is not None else None
     return _visualize_core(converted, out, show_labels)
 
 
 def visualize_audio(
-    items: list[tuple[Union[str, Path], AudioResult]],
+    items: list[Union[AudioResult, tuple[Union[str, Path], AudioResult]]],
     output_dir: Optional[Union[str, Path]] = None,
     smooth: bool = False,
     show_windows: bool = False,
@@ -902,24 +922,33 @@ def visualize_audio(
     """
     if not items:
         return []
-    converted = [(_path_to_str(p), r) for p, r in items]
+    converted = _pairs(items)
     out = _path_to_str(output_dir) if output_dir is not None else None
     engine = _get_engine()
     return _visualize_audio_core(engine, converted, out, smooth, show_windows, show_ranges)
 
 
 def export(
-    items: list[tuple[Union[str, Path], Union[DetectResult, PipelineResult]]],
+    items: list[
+        Union[
+            DetectResult,
+            PipelineResult,
+            tuple[Union[str, Path], Union[DetectResult, PipelineResult]],
+        ]
+    ],
     format: str,  # noqa: A002
     output: Optional[Union[str, Path]] = None,
     model_id: Optional[str] = None,
 ) -> str:
     """Export detection/pipeline results to megadet, coco, or csv format.
 
+    Each item is a result (its ``.path`` names the image) or a
+    ``(path, result)`` pair.
+
     No engine initialization required. Always returns ``str`` (formatted
     content). If ``output`` is set, also writes to file. ``model_id`` is
     required for megadet format.
     """
-    converted = [(str(p), r) for p, r in items]
+    converted = _pairs(items)
     out = str(output) if output is not None else None
     return _export_core(converted, format, out, model_id)

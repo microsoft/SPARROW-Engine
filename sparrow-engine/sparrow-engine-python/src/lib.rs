@@ -250,6 +250,9 @@ impl Detection {
 /// Full detection output for a single image.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct DetectResult {
+    /// Source file this result belongs to (as passed to the engine).
+    #[pyo3(get)]
+    pub path: String,
     model_type: ModelType,
     #[pyo3(get)]
     pub model_id: String,
@@ -265,7 +268,8 @@ pub struct DetectResult {
 impl DetectResult {
     fn __repr__(&self) -> String {
         format!(
-            "DetectResult(model_id='{}', image_size={:?}, detections={})",
+            "DetectResult(path='{}', model_id='{}', image_size={:?}, detections={})",
+            self.path,
             self.model_id,
             self.image_size,
             self.detections.len()
@@ -302,6 +306,9 @@ impl Classification {
 /// Full classification output for a single image.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct ClassifyResult {
+    /// Source file this result belongs to (as passed to the engine).
+    #[pyo3(get)]
+    pub path: String,
     #[pyo3(get)]
     pub model_id: String,
     #[pyo3(get)]
@@ -316,7 +323,8 @@ pub struct ClassifyResult {
 impl ClassifyResult {
     fn __repr__(&self) -> String {
         format!(
-            "ClassifyResult(model_id='{}', image_size={:?}, classifications={})",
+            "ClassifyResult(path='{}', model_id='{}', image_size={:?}, classifications={})",
+            self.path,
             self.model_id,
             self.image_size,
             self.classifications.len()
@@ -457,6 +465,9 @@ impl PipelineDetection {
 /// Full pipeline output for a single image.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct PipelineResult {
+    /// Source file this result belongs to (as passed to the engine).
+    #[pyo3(get)]
+    pub path: String,
     #[pyo3(get)]
     pub pipeline_id: String,
     #[pyo3(get)]
@@ -474,7 +485,8 @@ pub struct PipelineResult {
 impl PipelineResult {
     fn __repr__(&self) -> String {
         format!(
-            "PipelineResult(pipeline_id='{}', image_size={:?}, detections={})",
+            "PipelineResult(path='{}', pipeline_id='{}', image_size={:?}, detections={})",
+            self.path,
             self.pipeline_id,
             self.image_size,
             self.detections.len()
@@ -541,6 +553,9 @@ impl AudioSegment {
 /// Full audio detection output for a single audio file.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct AudioResult {
+    /// Source file this result belongs to (as passed to the engine).
+    #[pyo3(get)]
+    pub path: String,
     #[pyo3(get)]
     pub model_id: String,
     #[pyo3(get)]
@@ -611,6 +626,9 @@ impl AudioEvent {
 
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
 pub struct AudioEventResult {
+    /// Source file this result belongs to (as passed to the engine).
+    #[pyo3(get)]
+    pub path: String,
     #[pyo3(get)]
     pub model_id: String,
     #[pyo3(get)]
@@ -1263,6 +1281,7 @@ impl PyEngine {
                 match sparrow_engine::detect::detect(&handle, &input, &opts) {
                     Ok(r) => {
                         results.push(DetectResult {
+                            path: path.clone(),
                             model_type,
                             model_id: model_id.clone(),
                             image_size: (r.image_width, r.image_height),
@@ -1311,6 +1330,7 @@ impl PyEngine {
                 match sparrow_engine::classify::classify(&handle, &input, &opts) {
                     Ok(r) => {
                         results.push(ClassifyResult {
+                            path: path.clone(),
                             model_id: model_id.clone(),
                             image_size: (r.image_width, r.image_height),
                             processing_time_ms: r.processing_time_ms,
@@ -1458,6 +1478,7 @@ impl PyEngine {
                 match sparrow_engine::audio_ensemble::detect_audio_model(&handle, &input, &opts) {
                     Ok(r) => {
                         results.push(AudioResult {
+                            path: path.clone(),
                             model_id: model_id.clone(),
                             duration_s: r.duration_s,
                             sample_rate: r.sample_rate,
@@ -1527,6 +1548,7 @@ impl PyEngine {
                     &handle, &input, &opts,
                 ) {
                     Ok(result) => results.push(AudioEventResult {
+                        path: path.clone(),
                         model_id: model_id.clone(),
                         duration_s: result.duration_s,
                         analyzed_duration_s: result.analyzed_duration_s,
@@ -1656,6 +1678,7 @@ impl PyEngine {
                 match pipeline_result {
                     Ok(r) => {
                         results.push(PipelineResult {
+                            path: path.clone(),
                             pipeline_id: r.pipeline_id.clone(),
                             image_size: (r.image_width, r.image_height),
                             processing_time_ms: r.processing_time_ms,
@@ -2914,6 +2937,7 @@ mod tests {
     #[test]
     fn pyaudio_to_native_preserves_audio_result_fields() {
         let src = AudioResult {
+            path: String::new(),
             model_id: "md-audiobirds-v1".to_owned(),
             duration_s: 3.2,
             sample_rate: 48_000,
@@ -2967,6 +2991,7 @@ mod tests {
     #[test]
     fn audio_visualization_uses_result_timing_metadata() {
         let result = AudioResult {
+            path: String::new(),
             model_id: "md-audiobirds-v1".to_owned(),
             duration_s: 2.0,
             sample_rate: 48_000,
@@ -3278,6 +3303,7 @@ mod tests {
     #[test]
     fn visualize_detect_result_uses_detect_model_type() {
         let result = DetectResult {
+            path: String::new(),
             model_type: ModelType::OverheadDetector,
             model_id: "owl-t".to_owned(),
             image_size: (32, 32),
@@ -3292,6 +3318,7 @@ mod tests {
     #[test]
     fn visualize_pipeline_result_uses_detector_model_type() {
         let result = PipelineResult {
+            path: String::new(),
             pipeline_id: "overhead-pipeline".to_owned(),
             image_size: (32, 32),
             processing_time_ms: 0.0,
