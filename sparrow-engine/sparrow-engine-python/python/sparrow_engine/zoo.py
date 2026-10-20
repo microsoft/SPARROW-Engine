@@ -282,7 +282,7 @@ def _install_one(
     quiet: bool,
 ) -> Path:
     target = dest / m.id
-    _log(f"==> {m.id}", quiet)
+    _log(f"==> {m.id}  (license: {m.license or 'not stated'})", quiet)
 
     if not force and _installed(target):
         if verify and expected_md5:
@@ -410,7 +410,8 @@ def download_models(
     out_dir.mkdir(parents=True, exist_ok=True)
     _log(
         f"Sparrow Model Zoo v{cat.version} — Zenodo record {rec}; "
-        f"{len(selected)} model(s) -> {out_dir}",
+        f"{len(selected)} model(s) -> {out_dir}. "
+        "Model licenses vary; check each license before use.",
         quiet,
     )
     return [
