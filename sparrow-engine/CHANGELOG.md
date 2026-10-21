@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nvjpeg's interleaved output replicated chroma samples; decode now applies
   libjpeg-turbo's fancy chroma upsampling.
 
+### Removed
+
+- Removed the `pytorchwildlife` alias package (`pytorchwildlife-compat/`) and
+  the release-time check that its `sparrow-engine==` pin matches the engine
+  version. PytorchWildlife users move to `sparrow-engine` directly; a final
+  PytorchWildlife release points them there. `clean_room_test.sh` now runs a
+  CLI × Python matrix (`--only shim` is gone).
+
 ## v0.1.30
 
 Quickstart and first-run corrections plus the installer cuDNN probe fix; no
