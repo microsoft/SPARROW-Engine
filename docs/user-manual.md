@@ -933,14 +933,14 @@ TFLite classifier is onboarded (RP-42-FU-1).
 ```
 
 **Why**: scientists work in notebooks. A Python wheel removes the install friction of the CLI.
-**What**: a single `import sparrow_engine` exposing 20 functions, plus IDE-ready type stubs (`_core.pyi`).
+**What**: a single `import sparrow_engine` exposing the functions in §6.1, plus IDE-ready type stubs (`_core.pyi`).
 **How**: PyO3 0.29 builds the Rust → Python bridge; the GIL is released during inference (`py.allow_threads`).
 
 **Plain words**: "GIL" (Global Interpreter Lock) is the Python rule that only one thread can run Python bytecode at a time. Releasing it during inference means other threads keep working.
 
 ---
 
-### 6.1 The 20 public functions
+### 6.1 Public functions
 
 | Function | Returns |
 |----------|---------|
@@ -949,6 +949,10 @@ TFLite classifier is onboarded (RP-42-FU-1).
 | `classify(input, model, top_k=5, recursive=False, progress_callback=None)` | `list[ClassifyResult]`. `model` **required**. |
 | `detect_audio(input, model=None, threshold=None, recursive=False, stride_s=None, segment_duration_s=None, progress_callback=None)` | `list[AudioResult]`. `model` optional (CLI-aligned default `md-audiobirds-v1`). |
 | `pipeline(input, detector=None, classifier=None, threshold=None, top_k=5, recursive=False, progress_callback=None, *, pipeline_id=None)` | `list[PipelineResult]`. Supply `pipeline_id` or both `detector` + `classifier`. |
+| `detect_video(path, model=None, *, classifier=None, pipeline_id=None, threshold=None, max_detections=None, top_k=5, every_n=None, fps=None, max_frames=None, batch_size=16, keep_frames=False)` | `list[FrameResult]` — one per sampled frame (§6.8). Needs the `[video]` extra. |
+| `iter_video(path, model=None, **same_kwargs)` | `Iterator[FrameResult]` — streaming form of `detect_video` (§6.8). |
+| `detect_webcam(source=0, model=None, *, classifier=None, pipeline_id=None, threshold=None, max_detections=None, top_k=5, every_n=1, max_frames=None, keep_frames=True)` | `Iterator[FrameResult]` from a camera index or stream URL (§6.8). |
+| `draw_detections(frame, result, *, show_labels=True, color=(0, 255, 0), thickness=2)` | `np.ndarray` — copy of a BGR frame with boxes drawn (§6.8). |
 | `embed(input, model, *, recursive=False, progress_callback=None)` | `np.ndarray` (`[dim]` single / `[N, dim]` many, float32; fails closed). `model` **required**. |
 | `embed_with_meta(input, model, *, recursive=False, progress_callback=None)` | `EmbedResult` or `list[EmbedResult]` (keeps identity metadata). |
 | `embed_aligned(input, model, *, recursive=False, progress_callback=None)` | `list[Optional[np.ndarray]]` — one slot per input, `None` per failed file. |
@@ -964,6 +968,9 @@ TFLite classifier is onboarded (RP-42-FU-1).
 | `visualize(items, output_dir=None, show_labels=False)` | `list[bytes]` (encoded image bytes; also writes to `output_dir` if set). Items are results or `(path, result)` pairs |
 | `visualize_audio(items, output_dir=None, smooth=False, show_windows=False, show_ranges=True)` | `list[list[bytes]]` (per input → per-layer PNG bytes; also writes if `output_dir` set) |
 | `export(items, format, output=None, model_id=None)` | `str` (formatted content; also writes to `output` if set; `model_id` required for `megadet`). Items are results or `(path, result)` pairs |
+| `zoo_models(*, catalog=None, record=None)` | `list[ZooModel]` — the Sparrow Model Zoo catalog (§6.7). Needs network unless `catalog` is a local file. |
+| `download_models(models=None, *, dest=None, all_models=False, force=False, verify=True, catalog=None, record=None, quiet=False)` | `list[Path]` — installed model directories (§6.7). |
+| `download_model(model, **kwargs)` | `Path` — one installed model directory (§6.7). |
 
 Plus one public attribute: `sparrow_engine.__version__` (`str`) — the installed wheel's version, single-sourced from PyPI metadata via `importlib.metadata.version(...)`. Resolves the GPU distribution name first, then the CPU name, then falls back to `"unknown"` on a broken install. Lets a tester confirm the wheel they just installed without grepping `pip show`.
 
@@ -1082,9 +1089,82 @@ for r in results[:3]:
 
 **First-run note**
 
-If you have not run MDv6 before, place the ONNX file under `~/.sparrow-engine/models/MDV6-yolov10-e/` next to its TOML manifest. The Python wheel does not auto-download models; manifests are bundled but ONNX weights must be staged manually (see §2.3 "What lands on disk" and `sparrow-engine/tools/examples/megadetector-v6.toml`).
+If you have not run MDv6 before, download it once with `sparrow_engine.download_model("MDV6-yolov10-e")` (§6.7). Inference calls never download implicitly.
 
 **Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/__init__.py` (`detect`, `visualize`, `export`); `_core.pyi` (`DetectResult`); `sparrow-engine/sparrow-engine-python/src/lib.rs` (export format whitelist); `sparrow-engine/tools/examples/megadetector-v6.toml` (model + threshold defaults).
+
+---
+
+### 6.7 Model zoo downloads
+
+```python
+import sparrow_engine as spe
+
+for m in spe.zoo_models():                     # the published catalog
+    print(m.id, m.domain, m.task, m.license, m.downloadable, m.default)
+
+spe.download_model("MDV6-yolov10-e")           # one model (old aliases also resolve)
+spe.download_models(["MDV6-yolov10-c", "AI4G-Amazon-V2"])
+spe.download_models()                          # default set: hosted desktop ONNX models
+spe.download_models(all_models=True)           # every hosted runtime package
+spe.list_models()                              # what is installed now
+```
+
+**Why**: notebooks and scripts need the model zoo without the bash downloader (`scripts/download_models.sh` needs bash ≥ 4, curl, unzip and md5sum, so it does not run on stock macOS or Windows).
+**What**: a pure-Python port of `download_models.sh` (standard library only) with the same selection rules, on-disk layout and install stamp. Models land in `SPARROW_ENGINE_MODEL_DIR` or `~/.sparrow-engine/models`, the directory the engine reads by default; pass `dest=` to install elsewhere (and the same path to `init(model_dir=...)`).
+**How**:
+
+| Step | Behavior |
+|---|---|
+| Catalog | `catalog=` path, else `SPARROW_CATALOG`, else `catalog.toml` from the pinned Zenodo record (`sparrow_engine.zoo.ZENODO_RECORD`, overridable with `record=` or `ZENODO_RECORD`). The remote catalog is MD5-checked. |
+| Selection | No ids: active, hosted, `format == "onnx"`, no precision `flavor`. `all_models=True`: every active hosted package. Explicit ids and old aliases are accepted. Unknown ids, candidates, and `link_only` / `pending_rights` entries raise `ZooError` (the message names the original source). |
+| Integrity | Each ZIP is checked against the MD5 published by the Zenodo record API. A ZIP without a published MD5 is refused unless `verify=False`. |
+| Re-runs | An installed model whose `.sparrow_zip_md5` stamp matches is skipped; a stale stamp triggers a re-download; an unstamped install is kept unless `force=True`. |
+| Atomicity | Each ZIP is unpacked in a `.stage.*` directory and moved into place only on success, so a failure leaves no partial model directory. |
+
+Progress goes to stderr; `quiet=True` silences it.
+
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/zoo.py`; `sparrow-engine/scripts/download_models.sh`; `sparrow-engine/scripts/catalog.toml`; tests `sparrow-engine/sparrow-engine-python/tests/test_zoo.py`.
+
+---
+
+### 6.8 Video and webcam inference
+
+```bash
+pip install 'sparrow-engine[video]'    # adds opencv-python-headless
+```
+
+```python
+import sparrow_engine as spe
+
+# Video file: about 1 frame per second, MegaDetector only
+for f in spe.detect_video("trail.mp4", "MDV6-yolov10-e", fps=1):
+    print(f.index, f"{f.timestamp_s:.1f}s", [(d.label, d.confidence) for d in f.result.detections])
+
+# Detector + classifier on every 10th frame (returns PipelineResult per frame)
+frames = spe.detect_video("trail.mp4", classifier="AI4G-Amazon-V2", every_n=10)
+
+# Webcam (device 0) or a stream URL such as "rtsp://..."; stop with break or max_frames
+for f in spe.detect_webcam(0, every_n=5, max_frames=100):
+    annotated = spe.draw_detections(f.frame, f.result)   # BGR ndarray, ready for display
+```
+
+**Why**: camera-trap video and live feeds are common inputs, and notebooks should not have to write their own frame-extraction loop.
+**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds.
+**How**:
+
+| Item | Behavior |
+|---|---|
+| Decoding | OpenCV `VideoCapture`, imported only when a video function is called. Without OpenCV the call raises `ImportError` naming the `[video]` extra. Any package providing `cv2` works. |
+| Sampling | `every_n` keeps every n-th frame; `fps` keeps about that many frames per second of video (falls back to every frame if the container reports no frame rate); give at most one. `max_frames` caps the frames run through the model. |
+| Batching | Video frames are written as JPEG (quality 95) to a private temporary directory and run `batch_size` at a time; files are deleted after each batch and the directory on exit. The webcam path runs one frame at a time for latency. |
+| Timestamps | Video: frame index ÷ container frame rate. Camera: seconds since capture started. |
+| Models | No `classifier` / `pipeline_id`: `detect(model=...)`. With `classifier`: `pipeline(detector=model or the default detector, classifier=...)`. With `pipeline_id`: the named pipeline. |
+| Resources | The capture is released when the iterator finishes, raises, or is closed (`break` out of a `for` loop). |
+
+The JPEG round trip adds a re-encode per frame; detection on decoded frames is equivalent in practice, but results can differ slightly from running the model on lossless extracted frames.
+
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/video.py`; `sparrow-engine/sparrow-engine-python/pyproject.toml` (`[project.optional-dependencies] video`); tests `sparrow-engine/sparrow-engine-python/tests/test_video.py`.
 
 ---
 
