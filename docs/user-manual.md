@@ -1165,8 +1165,8 @@ for f in spe.detect_webcam(0, every_n=5, max_frames=100):
 | Sampling | `every_n` keeps every n-th frame; `fps` keeps about that many frames per second of video (falls back to every frame if the container reports no frame rate); give at most one. `max_frames` caps the frames run through the model. |
 | Batching | Video frames are written as JPEG (quality 95) to a private temporary directory and run `batch_size` at a time; files are deleted after each batch and the directory on exit. The webcam path runs one frame at a time for latency. |
 | Timestamps | Video: frame index ÷ container frame rate. Camera: seconds since capture started. |
-| Models | No `classifier` / `pipeline_id`: `detect(model=...)`. With `classifier`: `pipeline(detector=model or the default detector, classifier=...)`. With `pipeline_id`: the named pipeline. |
-| Resources | The capture is released when the iterator finishes, raises, or is closed (`break` out of a `for` loop). |
+| Models | No `classifier` / `pipeline_id`: `detect(model=...)`. With `classifier`: `pipeline(detector=model or the default detector, classifier=...)`. With `pipeline_id`: the named pipeline, which sets its own detector, so `model` must be left unset. `max_detections` applies to detection only. These combinations raise `ValueError`. |
+| Resources | Arguments are checked before the source is opened. The capture is released when the iterator finishes, raises, or is closed (`break` out of a `for` loop). |
 
 The JPEG round trip adds a re-encode per frame; detection on decoded frames is equivalent in practice, but results can differ slightly from running the model on lossless extracted frames.
 

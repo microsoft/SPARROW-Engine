@@ -87,6 +87,20 @@ class _Runner:
     ) -> None:
         if pipeline_id is not None and classifier is not None:
             raise ValueError("pass either pipeline_id or classifier, not both")
+        if pipeline_id is not None and model is not None:
+            raise ValueError(
+                "pass either pipeline_id or model: a named pipeline already sets its detector"
+            )
+        self.use_pipeline = classifier is not None or pipeline_id is not None
+        if self.use_pipeline and max_detections is not None:
+            raise ValueError("max_detections applies to detection only, not to pipelines")
+        if self.use_pipeline and pipeline_id is None and model is None:
+            import sparrow_engine as spe
+
+            # Resolved once here, not per batch: the lookup lists the model catalog.
+            model = spe._resolve_default_model(
+                None, spe._DETECTION_MODEL_TYPES, spe._DEFAULT_DETECT_MODEL
+            )
         self.model = model
         self.classifier = classifier
         self.pipeline_id = pipeline_id
@@ -113,15 +127,10 @@ class _Runner:
                 raise RuntimeError(f"could not encode frame {index}")
             paths.append(str(path))
         try:
-            if self.classifier is not None or self.pipeline_id is not None:
-                detector = self.model
-                if detector is None and self.pipeline_id is None:
-                    detector = spe._resolve_default_model(
-                        None, spe._DETECTION_MODEL_TYPES, spe._DEFAULT_DETECT_MODEL
-                    )
+            if self.use_pipeline:
                 results = spe.pipeline(
                     paths,
-                    detector=detector,
+                    detector=self.model,
                     classifier=self.classifier,
                     threshold=self.threshold,
                     top_k=self.top_k,
@@ -168,22 +177,26 @@ def iter_video(
     per second of video; neither keeps every frame. ``max_frames`` caps the number of
     frames run through the model. Without ``classifier`` / ``pipeline_id`` each frame
     goes through :func:`sparrow_engine.detect`; with either, through
-    :func:`sparrow_engine.pipeline` (``model`` is then the detector).
+    :func:`sparrow_engine.pipeline`. With ``classifier``, ``model`` is the detector
+    (default: the catalog default detector). With ``pipeline_id``, leave ``model``
+    unset; the named pipeline sets its own detector. ``max_detections`` applies to
+    detection only. Invalid arguments raise ``ValueError`` before the video is opened.
     """
     cv2 = _cv2()
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
     if max_frames is not None and max_frames < 1:
         raise ValueError("max_frames must be >= 1")
+    _frame_step(every_n, fps, 0.0)  # validate sampling arguments before opening anything
     if not Path(path).is_file():
         raise FileNotFoundError(path)
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        raise RuntimeError(f"OpenCV could not open video: {path}")
-    source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-    step = _frame_step(every_n, fps, source_fps)
     runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
+    cap = cv2.VideoCapture(str(path))
     try:
+        if not cap.isOpened():
+            raise RuntimeError(f"OpenCV could not open video: {path}")
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        step = _frame_step(every_n, fps, source_fps)
         batch: list[tuple[int, float, Any]] = []
         index = taken = 0
         while max_frames is None or taken < max_frames:
@@ -243,12 +256,12 @@ def detect_webcam(
         raise ValueError("every_n must be >= 1")
     if max_frames is not None and max_frames < 1:
         raise ValueError("max_frames must be >= 1")
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        raise RuntimeError(f"OpenCV could not open camera source: {source!r}")
     runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
-    start = time.monotonic()
+    cap = cv2.VideoCapture(source)
     try:
+        if not cap.isOpened():
+            raise RuntimeError(f"OpenCV could not open camera source: {source!r}")
+        start = time.monotonic()
         index = taken = 0
         while max_frames is None or taken < max_frames:
             ok, frame = cap.read()
