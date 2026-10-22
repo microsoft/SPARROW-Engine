@@ -949,6 +949,10 @@ TFLite classifier is onboarded (RP-42-FU-1).
 | `classify(input, model, top_k=5, recursive=False, progress_callback=None)` | `list[ClassifyResult]`. `model` **required**. |
 | `detect_audio(input, model=None, threshold=None, recursive=False, stride_s=None, segment_duration_s=None, progress_callback=None)` | `list[AudioResult]`. `model` optional (CLI-aligned default `md-audiobirds-v1`). |
 | `pipeline(input, detector=None, classifier=None, threshold=None, top_k=5, recursive=False, progress_callback=None, *, pipeline_id=None)` | `list[PipelineResult]`. Supply `pipeline_id` or both `detector` + `classifier`. |
+| `detect_video(path, model=None, *, classifier=None, pipeline_id=None, threshold=None, max_detections=None, top_k=5, every_n=None, fps=None, max_frames=None, batch_size=16, keep_frames=False)` | `list[FrameResult]` — one per sampled frame (§6.8). Needs the `[video]` extra. |
+| `iter_video(path, model=None, **same_kwargs)` | `Iterator[FrameResult]` — streaming form of `detect_video` (§6.8). |
+| `detect_webcam(source=0, model=None, *, classifier=None, pipeline_id=None, threshold=None, max_detections=None, top_k=5, every_n=1, max_frames=None, keep_frames=True)` | `Iterator[FrameResult]` from a camera index or stream URL (§6.8). |
+| `draw_detections(frame, result, *, show_labels=True, color=(0, 255, 0), thickness=2)` | `np.ndarray` — copy of a BGR frame with boxes drawn (§6.8). |
 | `embed(input, model, *, recursive=False, progress_callback=None)` | `np.ndarray` (`[dim]` single / `[N, dim]` many, float32; fails closed). `model` **required**. |
 | `embed_with_meta(input, model, *, recursive=False, progress_callback=None)` | `EmbedResult` or `list[EmbedResult]` (keeps identity metadata). |
 | `embed_aligned(input, model, *, recursive=False, progress_callback=None)` | `list[Optional[np.ndarray]]` — one slot per input, `None` per failed file. |
@@ -1127,6 +1131,46 @@ spe.list_models()                              # what is installed now
 Progress goes to stderr; `quiet=True` silences it.
 
 **Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/zoo.py`; `sparrow-engine/scripts/download_models.sh`; `sparrow-engine/scripts/catalog.toml`; tests `sparrow-engine/sparrow-engine-python/tests/test_zoo.py`.
+
+---
+
+### 6.8 Video and webcam inference
+
+```bash
+pip install 'sparrow-engine[video]'    # adds opencv-python-headless
+```
+
+```python
+import sparrow_engine as spe
+
+# Video file: about 1 frame per second, MegaDetector only
+for f in spe.detect_video("trail.mp4", "MDV6-yolov10-e", fps=1):
+    print(f.index, f"{f.timestamp_s:.1f}s", [(d.label, d.confidence) for d in f.result.detections])
+
+# Detector + classifier on every 10th frame (returns PipelineResult per frame)
+frames = spe.detect_video("trail.mp4", classifier="AI4G-Amazon-V2", every_n=10)
+
+# Webcam (device 0) or a stream URL such as "rtsp://..."; stop with break or max_frames
+for f in spe.detect_webcam(0, every_n=5, max_frames=100):
+    annotated = spe.draw_detections(f.frame, f.result)   # BGR ndarray, ready for display
+```
+
+**Why**: camera-trap video and live feeds are common inputs, and notebooks should not have to write their own frame-extraction loop.
+**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds.
+**How**:
+
+| Item | Behavior |
+|---|---|
+| Decoding | OpenCV `VideoCapture`, imported only when a video function is called. Without OpenCV the call raises `ImportError` naming the `[video]` extra. Any package providing `cv2` works. |
+| Sampling | `every_n` keeps every n-th frame; `fps` keeps about that many frames per second of video (falls back to every frame if the container reports no frame rate); give at most one. `max_frames` caps the frames run through the model. |
+| Batching | Video frames are written as JPEG (quality 95) to a private temporary directory and run `batch_size` at a time; files are deleted after each batch and the directory on exit. The webcam path runs one frame at a time for latency. |
+| Timestamps | Video: frame index ÷ container frame rate. Camera: seconds since capture started. |
+| Models | No `classifier` / `pipeline_id`: `detect(model=...)`. With `classifier`: `pipeline(detector=model or the default detector, classifier=...)`. With `pipeline_id`: the named pipeline, which sets its own detector, so `model` must be left unset. `max_detections` applies to detection only. These combinations raise `ValueError`. |
+| Resources | Arguments are checked before the source is opened. The capture is released when the iterator finishes, raises, or is closed (`break` out of a `for` loop). |
+
+The JPEG round trip adds a re-encode per frame; detection on decoded frames is equivalent in practice, but results can differ slightly from running the model on lossless extracted frames.
+
+**Cite**: `sparrow-engine/sparrow-engine-python/python/sparrow_engine/video.py`; `sparrow-engine/sparrow-engine-python/pyproject.toml` (`[project.optional-dependencies] video`); tests `sparrow-engine/sparrow-engine-python/tests/test_video.py`.
 
 ---
 

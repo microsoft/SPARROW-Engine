@@ -249,6 +249,13 @@ from sparrow_engine.zoo import (
     download_models,
     zoo_models,
 )
+from sparrow_engine.video import (
+    FrameResult,
+    detect_video,
+    detect_webcam,
+    draw_detections,
+    iter_video,
+)
 
 __all__ = [
     # Version (single-sourced from wheel METADATA via importlib.metadata)
@@ -283,6 +290,12 @@ __all__ = [
     "download_model",
     "ZooModel",
     "ZooError",
+    # Video and camera inference (needs the [video] extra)
+    "FrameResult",
+    "detect_video",
+    "iter_video",
+    "detect_webcam",
+    "draw_detections",
     # Types (re-exported for isinstance checks and type annotations)
     "BBox",
     "Detection",
