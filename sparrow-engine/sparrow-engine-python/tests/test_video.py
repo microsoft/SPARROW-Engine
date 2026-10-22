@@ -153,11 +153,59 @@ def test_pipeline_id_keeps_detector_unset(clip, fake):
         {"batch_size": 0},
         {"max_frames": 0},
         {"classifier": "C", "pipeline_id": "P"},
+        {"model": "D", "pipeline_id": "P"},
+        {"classifier": "C", "max_detections": 5},
+        {"pipeline_id": "P", "max_detections": 5},
     ],
 )
 def test_bad_arguments(clip, fake, kwargs):
     with pytest.raises(ValueError):
         spe.detect_video(clip, **kwargs)
+
+
+class _SpyCapture:
+    opened: list["_SpyCapture"] = []
+
+    def __init__(self, *a):
+        self.released = False
+        _SpyCapture.opened.append(self)
+
+    def isOpened(self):
+        return False
+
+    def release(self):
+        self.released = True
+
+
+@pytest.mark.parametrize("kwargs", [{"every_n": 0}, {"model": "D", "pipeline_id": "P"}])
+def test_bad_arguments_open_no_capture(clip, fake, monkeypatch, kwargs):
+    _SpyCapture.opened = []
+    monkeypatch.setattr(cv2, "VideoCapture", _SpyCapture)
+    with pytest.raises(ValueError):
+        spe.detect_video(clip, **kwargs)
+    with pytest.raises(ValueError):
+        next(spe.detect_webcam(0, **kwargs))
+    assert _SpyCapture.opened == []
+
+
+def test_unopenable_capture_is_released(clip, fake, monkeypatch):
+    _SpyCapture.opened = []
+    monkeypatch.setattr(cv2, "VideoCapture", _SpyCapture)
+    with pytest.raises(RuntimeError):
+        spe.detect_video(clip)
+    with pytest.raises(RuntimeError):
+        next(spe.detect_webcam(0))
+    assert len(_SpyCapture.opened) == 2 and all(c.released for c in _SpyCapture.opened)
+
+
+def test_default_detector_resolved_once(clip, fake, monkeypatch):
+    lookups = []
+    monkeypatch.setattr(
+        spe, "_resolve_default_model", lambda *a: lookups.append(a) or "DEFAULT-DET"
+    )
+    frames = list(spe.detect_webcam(str(clip), classifier="C", max_frames=5))
+    assert len(frames) == 5 and len(fake.calls) == 5
+    assert len(lookups) == 1
 
 
 def test_missing_file(tmp_path, fake):

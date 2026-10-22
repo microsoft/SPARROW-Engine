@@ -2,8 +2,8 @@
 #
 # Phase 3.5 Wave 5 — clean-room install test orchestrator.
 #
-# Runs the 2×3 CPU install matrix (Ubuntu 22.04 + 24.04 × CLI + Python wheel
-# + pytorchwildlife shim wheel) inside throwaway Docker containers that have
+# Runs the 2×2 CPU install matrix (Ubuntu 22.04 + 24.04 × CLI + Python wheel)
+# inside throwaway Docker containers that have
 # NOTHING sparrow-engine-adjacent pre-installed. Exits non-zero on any cell failure.
 #
 # What it is NOT:
@@ -22,7 +22,6 @@
 #   ./scripts/clean_room_test.sh --no-build     # fail loudly if any artifact is missing
 #   ./scripts/clean_room_test.sh --only cli     # CLI-only across both OS
 #   ./scripts/clean_room_test.sh --only python  # Python wheel only
-#   ./scripts/clean_room_test.sh --only shim    # pytorchwildlife-compat only
 #   ./scripts/clean_room_test.sh --os 22        # Ubuntu 22.04 only
 #   ./scripts/clean_room_test.sh --os 24        # Ubuntu 24.04 only
 #
@@ -36,16 +35,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SPARROW_ENGINE_DIR="$REPO_ROOT/sparrow-engine"
-PW_COMPAT_DIR="$REPO_ROOT/pytorchwildlife-compat"
 RESULTS_MD="$REPO_ROOT/docs/review/phase3.5-clean-room/results.md"
 
 CLI_BIN="$SPARROW_ENGINE_DIR/target/release/spe"
 CLI_TARBALL_GLOB="$SPARROW_ENGINE_DIR/dist/sparrow-engine-cpu-*-linux-x86_64.tar.gz"
 PY_WHEEL_GLOB="$SPARROW_ENGINE_DIR/sparrow-engine-python/dist/sparrow_engine-*.whl"
-SHIM_WHEEL_GLOB="$PW_COMPAT_DIR/dist/pytorchwildlife-*.whl"
 
 MATRIX_OS=(22 24)
-MATRIX_ARTIFACT=(cli python shim)
+MATRIX_ARTIFACT=(cli python)
 
 BUILD_MISSING=1
 declare -A CELL_RESULT=()
@@ -78,8 +75,8 @@ if [[ -n "$ONLY_OS" ]]; then
 fi
 if [[ -n "$ONLY_ARTIFACT" ]]; then
   case "$ONLY_ARTIFACT" in
-    cli|python|shim) MATRIX_ARTIFACT=("$ONLY_ARTIFACT");;
-    *) echo "invalid --only: must be cli, python, or shim" >&2; exit 2;;
+    cli|python) MATRIX_ARTIFACT=("$ONLY_ARTIFACT");;
+    *) echo "invalid --only: must be cli or python" >&2; exit 2;;
   esac
 fi
 
@@ -173,27 +170,6 @@ ensure_python_wheel() {
   [[ -n "$wheel" ]] || FAIL "Python wheel build finished but nothing under $PY_WHEEL_GLOB"
 }
 
-ensure_shim_wheel() {
-  local wheel
-  wheel="$(find_first "$SHIM_WHEEL_GLOB")"
-  if [[ -n "$wheel" ]]; then
-    LOG "Shim wheel present: $wheel"
-    return
-  fi
-  (( BUILD_MISSING )) || FAIL "Shim wheel missing (glob $SHIM_WHEEL_GLOB); --no-build forbids build"
-  # Clear any stale wheels (e.g. a prior version bump) so find_first below
-  # picks the freshly-built wheel deterministically. Mirrors F-11 in
-  # ensure_python_wheel; without this, a stale shim wheel could be picked
-  # up and tested against a newer sparrow-engine wheel, papering over a co-bump miss.
-  # Scoped to *.whl only — uv build also writes *.tar.gz which we do NOT
-  # need to clear (sdists are harmless for the clean-room smoke).
-  rm -f "$PW_COMPAT_DIR/dist/pytorchwildlife-"*.whl
-  LOG "Building shim wheel (uv build)..."
-  ( cd "$PW_COMPAT_DIR" && uv build )
-  wheel="$(find_first "$SHIM_WHEEL_GLOB")"
-  [[ -n "$wheel" ]] || FAIL "Shim build finished but nothing under $SHIM_WHEEL_GLOB"
-}
-
 # ---------------------------------------------------------------------------
 # Image build
 # ---------------------------------------------------------------------------
@@ -211,7 +187,7 @@ ensure_image() {
 # ---------------------------------------------------------------------------
 # Smoke tests per artifact
 # ---------------------------------------------------------------------------
-# Each returns 0 on PASS, 2 on preflight SKIP (smoke_python/smoke_shim only;
+# Each returns 0 on PASS, 2 on preflight SKIP (smoke_python only;
 # wheel-ABI mismatch — see C1), non-zero (other) on FAIL.
 #
 # Smoke tests intentionally avoid model downloads and inference — we're
@@ -282,57 +258,6 @@ python3 -m venv /opt/venv
 '
 }
 
-smoke_shim() {
-  # $1 = image tag
-  # Returns: 0 on PASS, 2 on SKIP (wheel-ABI mismatch), non-zero on FAIL.
-  # Install sparrow-engine first (the shim's runtime dep), then the shim with
-  # --no-deps so pip doesn't try to hit PyPI for sparrow-engine. The shim's
-  # sparrow-engine==0.1.0 pin is bypassed here — see W3 in
-  # docs/review/phase3.5-clean-room/manual_test_plan.md §4 + the shim README
-  # for the co-bump-rule.
-  local tag="$1"
-  local wheel bongo_wheel
-  wheel="$(find_first "$SHIM_WHEEL_GLOB")"
-  bongo_wheel="$(find_first "$PY_WHEEL_GLOB")"
-  local wheel_name bongo_wheel_name
-  wheel_name="$(basename "$wheel")"
-  bongo_wheel_name="$(basename "$bongo_wheel")"
-  docker run --rm \
-    -e WHEEL_NAME="$wheel_name" \
-    -e SPARROW_ENGINE_WHEEL_NAME="$bongo_wheel_name" \
-    -v "$wheel:/clean_room/$wheel_name:ro" \
-    -v "$bongo_wheel:/clean_room/$bongo_wheel_name:ro" \
-    "$tag" \
-    bash -c '
-set -e
-# Preflight: wheel ABI tag vs container Python (C1). Mismatch = SKIP.
-# We check the sparrow-engine wheel here (the shim wheel is py3-none-any so always
-# compatible); if sparrow-engine is incompatible the shim cannot import sparrow_engine at runtime
-# anyway. Equality check now; relax once T-1 lands abi3.
-container_py=$(python3 -V 2>&1 | sed -nE "s/^Python ([0-9]+)\.([0-9]+).*/\1\2/p")
-if [[ "$SPARROW_ENGINE_WHEEL_NAME" =~ -cp([0-9]+)- ]]; then
-  wheel_py="${BASH_REMATCH[1]}"
-else
-  echo "[smoke] cannot parse cp tag from wheel name: $SPARROW_ENGINE_WHEEL_NAME" >&2
-  exit 1
-fi
-if [[ "$wheel_py" != "$container_py" ]]; then
-  echo "[smoke] wheel tag cp${wheel_py} vs container py${container_py} — rebuild sparrow-engine-python with abi3-py310 (T-1 ticket) to unify" >&2
-  exit 2
-fi
-python3 -m venv /opt/venv
-# ORT pin matches sparrow-engine-python/pyproject.toml Requires-Dist
-# (>=1.25.1,<1.26). The sparrow-engine wheel import-time
-# `_discover_ort_dylib()` shim sets ORT_DYLIB_PATH from the pip install,
-# so no manual libonnxruntime symlink workaround is needed here.
-/opt/venv/bin/pip install "onnxruntime>=1.25.1,<1.26" "/clean_room/$SPARROW_ENGINE_WHEEL_NAME"
-# Keep --no-deps: this local smoke intentionally bypasses the shim package
-# co-bump pin so the just-built sparrow-engine wheel is the runtime dependency.
-/opt/venv/bin/pip install --no-deps "/clean_room/$WHEEL_NAME"
-/opt/venv/bin/python -c "import pytorchwildlife; print(\"pytorchwildlife shim OK\")"
-'
-}
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -345,7 +270,6 @@ for a in "${MATRIX_ARTIFACT[@]}"; do
   case "$a" in
     cli)    ensure_cli_tarball;;
     python) ensure_python_wheel;;
-    shim)   ensure_shim_wheel; ensure_python_wheel;;  # shim needs sparrow-engine
   esac
 done
 
@@ -366,7 +290,6 @@ for os in "${MATRIX_OS[@]}"; do
     case "$a" in
       cli)    smoke_cli    "$tag" ;;
       python) smoke_python "$tag" ;;
-      shim)   smoke_shim   "$tag" ;;
     esac
     rc=$?
     set -e

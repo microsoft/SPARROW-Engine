@@ -2032,7 +2032,11 @@ fn visualize(
         let path = path_str.clone();
         let render_result = py.detach(
             move || -> std::result::Result<(Vec<u8>, image::ImageFormat), String> {
-                let img = image::open(&path).map_err(|e| format!("{e}"))?;
+                let img = image::ImageReader::open(&path)
+                    .and_then(|r| r.with_guessed_format())
+                    .map_err(|e| format!("{e}"))?
+                    .decode()
+                    .map_err(|e| format!("{e}"))?;
                 let opts = visualize_render_opts(model_type, show_labels);
                 let rendered = sparrow_engine::viz::render(&img, &annotations, &opts);
                 let fmt = match Path::new(&path)
