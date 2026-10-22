@@ -1418,7 +1418,9 @@ fn save_visualization(
     model_type: engine_dispatch::types::ModelType,
     show_labels: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let img = image::open(image_path)?;
+    let img = image::ImageReader::open(image_path)?
+        .with_guessed_format()?
+        .decode()?;
     let opts = engine_dispatch::viz::RenderOpts {
         model_type,
         show_labels,

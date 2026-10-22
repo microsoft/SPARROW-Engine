@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CPU detection, classification and `visualize()` now detect the image format
+  from the file content instead of the extension. A PNG saved as `.JPG`
+  (common in camera-trap exports, including the Pytorch-Wildlife demo images)
+  used to fail with "Illegal start bytes". The GPU path already sniffed the
+  content.
 - GPU JPEG decode now matches PIL exactly for 4:2:0 and 4:2:2 JPEGs.
   nvjpeg's interleaved output replicated chroma samples; decode now applies
   libjpeg-turbo's fancy chroma upsampling.
