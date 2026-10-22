@@ -39,8 +39,10 @@ class FrameResult:
 
     ``index`` is the 0-based frame number in the source stream. ``timestamp_s`` is
     the position in the video (file input) or seconds since capture started
-    (camera input). ``frame`` holds the decoded BGR image only when
-    ``keep_frames=True``.
+    (camera input). ``result.path`` is ``"<source>#frame=<index>"`` (for example
+    ``"clip.mp4#frame=42"`` or ``"camera:0#frame=42"``); the temporary JPEG used
+    for inference is already deleted. ``frame`` holds the decoded BGR image only
+    when ``keep_frames=True``.
     """
 
     index: int
@@ -78,6 +80,7 @@ class _Runner:
 
     def __init__(
         self,
+        source: str,
         model: Optional[str],
         classifier: Optional[str],
         pipeline_id: Optional[str],
@@ -87,6 +90,7 @@ class _Runner:
     ) -> None:
         if pipeline_id is not None and classifier is not None:
             raise ValueError("pass either pipeline_id or classifier, not both")
+        self.source = source
         self.model = model
         self.classifier = classifier
         self.pipeline_id = pipeline_id
@@ -142,7 +146,12 @@ class _Runner:
                 f"engine returned {len(results)} results for {len(batch)} frames"
             )
         return [
-            FrameResult(index, ts, res, frame if keep_frames else None)
+            FrameResult(
+                index,
+                ts,
+                res.with_path(f"{self.source}#frame={index}"),
+                frame if keep_frames else None,
+            )
             for (index, ts, frame), res in zip(batch, results, strict=True)
         ]
 
@@ -182,7 +191,7 @@ def iter_video(
         raise RuntimeError(f"OpenCV could not open video: {path}")
     source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     step = _frame_step(every_n, fps, source_fps)
-    runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
+    runner = _Runner(str(path), model, classifier, pipeline_id, threshold, max_detections, top_k)
     try:
         batch: list[tuple[int, float, Any]] = []
         index = taken = 0
@@ -246,7 +255,8 @@ def detect_webcam(
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"OpenCV could not open camera source: {source!r}")
-    runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
+    label = f"camera:{source}" if isinstance(source, int) else str(source)
+    runner = _Runner(label, model, classifier, pipeline_id, threshold, max_detections, top_k)
     start = time.monotonic()
     try:
         index = taken = 0

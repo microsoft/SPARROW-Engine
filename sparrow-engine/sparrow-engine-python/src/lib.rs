@@ -249,6 +249,7 @@ impl Detection {
 
 /// Full detection output for a single image.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
 pub struct DetectResult {
     /// Source file this result belongs to (as passed to the engine).
     #[pyo3(get)]
@@ -266,6 +267,14 @@ pub struct DetectResult {
 
 #[pymethods]
 impl DetectResult {
+    /// Return a copy of this result with `path` replaced (e.g. a video frame label).
+    fn with_path(&self, path: String) -> Self {
+        Self {
+            path,
+            ..self.clone()
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "DetectResult(path='{}', model_id='{}', image_size={:?}, detections={})",
@@ -464,6 +473,7 @@ impl PipelineDetection {
 
 /// Full pipeline output for a single image.
 #[pyclass(frozen, module = "sparrow_engine._sparrow_engine_core")]
+#[derive(Clone)]
 pub struct PipelineResult {
     /// Source file this result belongs to (as passed to the engine).
     #[pyo3(get)]
@@ -483,6 +493,14 @@ pub struct PipelineResult {
 
 #[pymethods]
 impl PipelineResult {
+    /// Return a copy of this result with `path` replaced (e.g. a video frame label).
+    fn with_path(&self, path: String) -> Self {
+        Self {
+            path,
+            ..self.clone()
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "PipelineResult(path='{}', pipeline_id='{}', image_size={:?}, detections={})",

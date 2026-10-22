@@ -46,6 +46,7 @@ class DetectResult:
     image_size: tuple[int, int]
     processing_time_ms: float
     detections: list[Detection]
+    def with_path(self, path: str) -> DetectResult: ...
     def __len__(self) -> int: ...
 
 class Classification:
@@ -112,6 +113,7 @@ class PipelineResult:
     processing_time_ms: float
     detections: list[PipelineDetection]
     stage_provenance: PipelineProvenance
+    def with_path(self, path: str) -> PipelineResult: ...
     def __len__(self) -> int: ...
 
 class AudioClass:

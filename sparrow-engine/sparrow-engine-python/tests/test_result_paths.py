@@ -88,3 +88,11 @@ def test_detect_results_carry_paths_and_skip_failures(images, tmp_path):
     sparrow_engine.export(results, "megadet", str(out), model_id=MODEL)
     files = [img["file"] for img in json.loads(out.read_text())["images"]]
     assert [os.path.basename(f) for f in files] == ["z.jpg", "m.jpg", "a.jpg"]
+
+
+def test_with_path_returns_relabelled_copy(images):
+    r = sparrow_engine.detect([str(images[0])], model=MODEL)[0]
+    c = r.with_path("clip.mp4#frame=3")
+    assert c.path == "clip.mp4#frame=3"
+    assert r.path == str(images[0])
+    assert (c.model_id, c.image_size, len(c)) == (r.model_id, r.image_size, len(r))

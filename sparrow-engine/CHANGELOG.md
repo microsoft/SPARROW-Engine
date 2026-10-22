@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per peak.
 - Added the `torch_bilinear` resize mode and ImageNet-normalized
   `rtdetr_topk` support on the GPU path, used by DroneMegaDetector.
+- Python: every per-file result (`DetectResult`, `ClassifyResult`,
+  `PipelineResult`, `AudioResult`, `AudioEventResult`) has a `path` field
+  naming its source file. Unreadable files are still skipped, so match results
+  by `path`, not by position. `visualize`, `visualize_audio` and `export`
+  accept results directly as well as `(path, result)` pairs.
+- Python: `DetectResult.with_path()` and `PipelineResult.with_path()` return a
+  copy with a different `path`. Video and webcam frame results use it:
+  `path` is `"<source>#frame=<index>"` (for example `clip.mp4#frame=42` or
+  `camera:0#frame=42`), not the deleted temporary frame JPEG.
+
+### Changed
+
+- Python: `detect`, `classify`, `pipeline` and `detect_audio` return results
+  for a list input in the caller's order. Before, the whole result list was
+  sorted by path. Directory and glob inputs are still sorted. Code that passed
+  an unsorted list and relied on sorted output must sort the input itself.
 
 ### Fixed
 
