@@ -32,6 +32,14 @@ def clip(tmp_path: Path) -> Path:
     return path
 
 
+class _FakeResult(SimpleNamespace):
+    def __init__(self, path, shade):
+        super().__init__(path=path, shade=shade, detections=[])
+
+    def with_path(self, path):
+        return _FakeResult(path, self.shade)
+
+
 class FakeEngine:
     """Records calls and returns one result per path carrying the frame's grey value."""
 
@@ -42,7 +50,7 @@ class FakeEngine:
         out = []
         for p in paths:
             img = cv2.imread(p)
-            out.append(SimpleNamespace(shade=float(img.mean()), detections=[]))
+            out.append(_FakeResult(p, float(img.mean())))
         return out
 
     def detect(self, paths, **kw):
@@ -82,6 +90,11 @@ def test_every_frame_in_order_and_batched(clip, fake):
     _assert_aligned(frames)
     assert [len(c[1]) for c in fake.calls] == [8, 8, 4]
     assert fake.calls[0][2] == {"model": "M", "threshold": 0.3, "max_detections": None}
+
+
+def test_frame_paths_name_source_and_index(clip, fake):
+    frames = spe.detect_video(clip, every_n=5)
+    assert [f.result.path for f in frames] == [f"{clip}#frame={i}" for i in (0, 5, 10, 15)]
 
 
 def test_temp_frames_removed(clip, fake):
@@ -211,6 +224,7 @@ def test_webcam_with_stream_source(clip, fake):
     frames = list(spe.detect_webcam(str(clip), every_n=4, max_frames=3))
     assert [f.index for f in frames] == [0, 4, 8]
     assert all(f.frame is not None for f in frames)
+    assert [f.result.path for f in frames] == [f"{clip}#frame={i}" for i in (0, 4, 8)]
     assert all(len(c[1]) == 1 for c in fake.calls)
     ts = [f.timestamp_s for f in frames]
     assert ts == sorted(ts) and ts[0] >= 0
@@ -242,3 +256,24 @@ def test_draw_detections_detect_and_pipeline():
     )
     out2 = spe.draw_detections(frame, SimpleNamespace(detections=[pdet]), color=(0, 0, 255))
     assert tuple(out2[50, 30]) == (0, 0, 255)  # bottom edge of the box
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        (0, "camera:0"),
+        ("rtsp://user:S3cret@cam.local:554/stream", "rtsp://cam.local:554/stream"),
+        ("rtsp://user@[fe80::1]/s?x=1", "rtsp://[fe80::1]/s?x=1"),
+        ("http://cam.local/feed", "http://cam.local/feed"),
+        ("/data/clip.mp4", "/data/clip.mp4"),
+    ],
+)
+def test_source_label_drops_credentials(source, label):
+    assert video._source_label(source) == label
+
+
+def test_unopenable_stream_error_hides_password(fake, monkeypatch):
+    monkeypatch.setattr(cv2, "VideoCapture", _SpyCapture)
+    with pytest.raises(RuntimeError) as err:
+        next(spe.detect_webcam("rtsp://user:S3cret@127.0.0.1:9/none", max_frames=1))
+    assert "S3cret" not in str(err.value)

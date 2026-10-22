@@ -41,10 +41,12 @@ class Detection:
     bbox: BBox
 
 class DetectResult:
+    path: str
     model_id: str
     image_size: tuple[int, int]
     processing_time_ms: float
     detections: list[Detection]
+    def with_path(self, path: str) -> DetectResult: ...
     def __len__(self) -> int: ...
 
 class Classification:
@@ -53,6 +55,7 @@ class Classification:
     confidence: float
 
 class ClassifyResult:
+    path: str
     model_id: str
     image_size: tuple[int, int]
     processing_time_ms: float
@@ -104,11 +107,13 @@ class PipelineDetection:
     failure: Optional[PipelineFailure]
 
 class PipelineResult:
+    path: str
     pipeline_id: str
     image_size: tuple[int, int]
     processing_time_ms: float
     detections: list[PipelineDetection]
     stage_provenance: PipelineProvenance
+    def with_path(self, path: str) -> PipelineResult: ...
     def __len__(self) -> int: ...
 
 class AudioClass:
@@ -123,6 +128,7 @@ class AudioSegment:
     classes: list[AudioClass]
 
 class AudioResult:
+    path: str
     model_id: str
     duration_s: float
     sample_rate: int
@@ -143,6 +149,7 @@ class AudioEvent:
     classes: list[AudioClass]
 
 class AudioEventResult:
+    path: str
     model_id: str
     duration_s: float
     analyzed_duration_s: float

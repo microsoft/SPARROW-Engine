@@ -965,9 +965,9 @@ TFLite classifier is onboarded (RP-42-FU-1).
 | `day_night(path)` | `dict`: `{"classification": "day"\|"night", "mean_brightness": float}` |
 | `verify_model(model_id, model_dir=None)` | `dict` with `"status"` (`"ok"`, `"no_checksum"`, `"size_mismatch"`, `"checksum_mismatch"`) |
 | `summarize(results)` | `dict` of detection statistics |
-| `visualize(items, output_dir=None, show_labels=False)` | `list[bytes]` (encoded image bytes; also writes to `output_dir` if set) |
+| `visualize(items, output_dir=None, show_labels=False)` | `list[bytes]` (encoded image bytes; also writes to `output_dir` if set). Items are results or `(path, result)` pairs |
 | `visualize_audio(items, output_dir=None, smooth=False, show_windows=False, show_ranges=True)` | `list[list[bytes]]` (per input → per-layer PNG bytes; also writes if `output_dir` set) |
-| `export(items, format, output=None, model_id=None)` | `str` (formatted content; also writes to `output` if set; `model_id` required for `megadet`) |
+| `export(items, format, output=None, model_id=None)` | `str` (formatted content; also writes to `output` if set; `model_id` required for `megadet`). Items are results or `(path, result)` pairs |
 | `zoo_models(*, catalog=None, record=None)` | `list[ZooModel]` — the Sparrow Model Zoo catalog (§6.7). Needs network unless `catalog` is a local file. |
 | `download_models(models=None, *, dest=None, all_models=False, force=False, verify=True, catalog=None, record=None, quiet=False)` | `list[Path]` — installed model directories (§6.7). |
 | `download_model(model, **kwargs)` | `Path` — one installed model directory (§6.7). |
@@ -1047,33 +1047,27 @@ image_dir = Path("./trail_cam_2024")
 out_dir = Path("./trail_cam_2024_out")
 out_dir.mkdir(parents=True, exist_ok=True)
 
-# Gather image paths (sorted for reproducible output ordering).
-# Supported extensions match the engine's image input set.
-exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
-paths = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in exts)
-
-# Run detection. `detect()` accepts a list[Path] (or a directory directly via
-# `recursive=True`). Returns one DetectResult per input image, in input order.
+# Run detection. `detect()` accepts a directory (sorted; add `recursive=True`
+# to walk subfolders), a glob, a file, or a list of paths (kept in list order).
+# Files that fail to decode are skipped with a warning, so always use
+# `r.path` to identify a result rather than its position.
 results = sparrow_engine.detect(
-    paths,
+    image_dir,
     model="MDV6-yolov10-e",
     threshold=0.20,
     max_detections=100,
 )
 
-# Pair each input path with its result. DetectResult does NOT carry the
-# source path, so `visualize` and `export` take list[tuple[path, result]].
-items = list(zip(paths, results))
-
-# Render bounding boxes onto each image and write into `out_dir`.
-sparrow_engine.visualize(items, output_dir=out_dir, show_labels=True)
+# Each result carries its source path, so `visualize` and `export` take the
+# results directly (`(path, result)` pairs are also accepted).
+sparrow_engine.visualize(results, output_dir=out_dir, show_labels=True)
 
 # Emit a flat CSV (one row per detection) suitable for spreadsheet review.
-sparrow_engine.export(items, format="csv", output=out_dir / "detections.csv")
+sparrow_engine.export(results, format="csv", output=out_dir / "detections.csv")
 
 # Inspect a single result programmatically.
-for path, r in items[:3]:
-    print(f"{path.name}: {len(r.detections)} dets, {r.processing_time_ms:.1f} ms")
+for r in results[:3]:
+    print(f"{Path(r.path).name}: {len(r.detections)} dets, {r.processing_time_ms:.1f} ms")
     for d in r.detections:
         print(f"  {d.label} ({d.confidence:.2f}) bbox={d.bbox.x_min:.3f},"
               f"{d.bbox.y_min:.3f},{d.bbox.x_max:.3f},{d.bbox.y_max:.3f}")
@@ -1091,7 +1085,7 @@ for path, r in items[:3]:
 
 **Result shape**
 
-`DetectResult` exposes `model_id`, `image_size`, `processing_time_ms`, and `detections: list[Detection]`. Each `Detection` carries `label: str`, `label_id: int`, `confidence: float`, and `bbox: BBox` with normalized `[0, 1]` `x_min/y_min/x_max/y_max`. Use `bbox.to_pixels(width, height)` for pixel coordinates. The input path is NOT a field on the result — track it externally via the `(path, result)` pair.
+`DetectResult` exposes `path`, `model_id`, `image_size`, `processing_time_ms`, and `detections: list[Detection]`. Each `Detection` carries `label: str`, `label_id: int`, `confidence: float`, and `bbox: BBox` with normalized `[0, 1]` `x_min/y_min/x_max/y_max`. Use `bbox.to_pixels(width, height)` for pixel coordinates. `path` is the source file as passed to the engine. `ClassifyResult`, `PipelineResult`, `AudioResult` and `AudioEventResult` carry the same field.
 
 **First-run note**
 
@@ -1156,7 +1150,7 @@ for f in spe.detect_webcam(0, every_n=5, max_frames=100):
 ```
 
 **Why**: camera-trap video and live feeds are common inputs, and notebooks should not have to write their own frame-extraction loop.
-**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds.
+**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds. `result.path` is `"<source>#frame=<index>"` (for example `clip.mp4#frame=42`, or `camera:0#frame=42` for a webcam index); the temporary frame JPEG used for inference is already deleted. Credentials in a stream URL are removed from the label (`rtsp://user:pw@cam/s` becomes `rtsp://cam/s`). Because a frame path is not a file, `visualize()` cannot load it; draw on `FrameResult.frame` with `draw_detections` instead (use `keep_frames=True` for files).
 **How**:
 
 | Item | Behavior |

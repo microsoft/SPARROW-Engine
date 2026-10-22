@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Optional, Union
+from urllib.parse import urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     import numpy as np
@@ -39,8 +40,10 @@ class FrameResult:
 
     ``index`` is the 0-based frame number in the source stream. ``timestamp_s`` is
     the position in the video (file input) or seconds since capture started
-    (camera input). ``frame`` holds the decoded BGR image only when
-    ``keep_frames=True``.
+    (camera input). ``result.path`` is ``"<source>#frame=<index>"`` (for example
+    ``"clip.mp4#frame=42"`` or ``"camera:0#frame=42"``); the temporary JPEG used
+    for inference is already deleted. ``frame`` holds the decoded BGR image only
+    when ``keep_frames=True``.
     """
 
     index: int
@@ -73,11 +76,31 @@ def _frame_step(every_n: Optional[int], fps: Optional[float], source_fps: float)
     return 1
 
 
+def _source_label(source: Union[int, str]) -> str:
+    """Label for camera results: ``camera:N`` for a device, else the URL without credentials.
+
+    Stream URLs such as ``rtsp://user:password@host/stream`` often carry a password, and the
+    label ends up in every result's ``path``, its repr and exported files.
+    """
+    if isinstance(source, int):
+        return f"camera:{source}"
+    parts = urlsplit(source)
+    if parts.username is None and parts.password is None:
+        return source
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=host))
+
+
 class _Runner:
     """Batch frames to temporary JPEGs and run one detect/pipeline call per batch."""
 
     def __init__(
         self,
+        source: str,
         model: Optional[str],
         classifier: Optional[str],
         pipeline_id: Optional[str],
@@ -101,6 +124,7 @@ class _Runner:
             model = spe._resolve_default_model(
                 None, spe._DETECTION_MODEL_TYPES, spe._DEFAULT_DETECT_MODEL
             )
+        self.source = source
         self.model = model
         self.classifier = classifier
         self.pipeline_id = pipeline_id
@@ -151,7 +175,12 @@ class _Runner:
                 f"engine returned {len(results)} results for {len(batch)} frames"
             )
         return [
-            FrameResult(index, ts, res, frame if keep_frames else None)
+            FrameResult(
+                index,
+                ts,
+                res.with_path(f"{self.source}#frame={index}"),
+                frame if keep_frames else None,
+            )
             for (index, ts, frame), res in zip(batch, results, strict=True)
         ]
 
@@ -190,7 +219,7 @@ def iter_video(
     _frame_step(every_n, fps, 0.0)  # validate sampling arguments before opening anything
     if not Path(path).is_file():
         raise FileNotFoundError(path)
-    runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
+    runner = _Runner(str(path), model, classifier, pipeline_id, threshold, max_detections, top_k)
     cap = cv2.VideoCapture(str(path))
     try:
         if not cap.isOpened():
@@ -256,11 +285,12 @@ def detect_webcam(
         raise ValueError("every_n must be >= 1")
     if max_frames is not None and max_frames < 1:
         raise ValueError("max_frames must be >= 1")
-    runner = _Runner(model, classifier, pipeline_id, threshold, max_detections, top_k)
+    label = _source_label(source)
+    runner = _Runner(label, model, classifier, pipeline_id, threshold, max_detections, top_k)
     cap = cv2.VideoCapture(source)
     try:
         if not cap.isOpened():
-            raise RuntimeError(f"OpenCV could not open camera source: {source!r}")
+            raise RuntimeError(f"OpenCV could not open camera source: {label!r}")
         start = time.monotonic()
         index = taken = 0
         while max_frames is None or taken < max_frames:
