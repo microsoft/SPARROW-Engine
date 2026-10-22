@@ -1150,7 +1150,7 @@ for f in spe.detect_webcam(0, every_n=5, max_frames=100):
 ```
 
 **Why**: camera-trap video and live feeds are common inputs, and notebooks should not have to write their own frame-extraction loop.
-**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds. `result.path` is `"<source>#frame=<index>"` (for example `clip.mp4#frame=42`, or `camera:0#frame=42` for a webcam index); the temporary frame JPEG used for inference is already deleted.
+**What**: thin wrappers over `detect` / `pipeline`. Each sampled frame becomes a `FrameResult(index, timestamp_s, result, frame)`; `result` is the same `DetectResult` or `PipelineResult` that an image would produce, with the same model defaults and thresholds. `result.path` is `"<source>#frame=<index>"` (for example `clip.mp4#frame=42`, or `camera:0#frame=42` for a webcam index); the temporary frame JPEG used for inference is already deleted. Credentials in a stream URL are removed from the label (`rtsp://user:pw@cam/s` becomes `rtsp://cam/s`). Because a frame path is not a file, `visualize()` cannot load it; draw on `FrameResult.frame` with `draw_detections` instead (use `keep_frames=True` for files).
 **How**:
 
 | Item | Behavior |

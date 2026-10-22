@@ -256,3 +256,24 @@ def test_draw_detections_detect_and_pipeline():
     )
     out2 = spe.draw_detections(frame, SimpleNamespace(detections=[pdet]), color=(0, 0, 255))
     assert tuple(out2[50, 30]) == (0, 0, 255)  # bottom edge of the box
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        (0, "camera:0"),
+        ("rtsp://user:S3cret@cam.local:554/stream", "rtsp://cam.local:554/stream"),
+        ("rtsp://user@[fe80::1]/s?x=1", "rtsp://[fe80::1]/s?x=1"),
+        ("http://cam.local/feed", "http://cam.local/feed"),
+        ("/data/clip.mp4", "/data/clip.mp4"),
+    ],
+)
+def test_source_label_drops_credentials(source, label):
+    assert video._source_label(source) == label
+
+
+def test_unopenable_stream_error_hides_password(fake, monkeypatch):
+    monkeypatch.setattr(cv2, "VideoCapture", _SpyCapture)
+    with pytest.raises(RuntimeError) as err:
+        next(spe.detect_webcam("rtsp://user:S3cret@127.0.0.1:9/none", max_frames=1))
+    assert "S3cret" not in str(err.value)

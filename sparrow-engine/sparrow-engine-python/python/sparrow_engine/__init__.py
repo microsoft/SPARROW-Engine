@@ -876,10 +876,10 @@ def summarize(results: list[DetectResult]) -> dict:
 
 
 def _pairs(items: list) -> list[tuple[str, object]]:
-    """Accept ``(path, result)`` tuples or results that carry ``.path``."""
+    """Accept ``(path, result)`` pairs (tuple or 2-item list) or results that carry ``.path``."""
     out = []
     for item in items:
-        if isinstance(item, tuple):
+        if isinstance(item, (tuple, list)) and len(item) == 2:
             p, r = item
         else:
             p, r = item.path, item

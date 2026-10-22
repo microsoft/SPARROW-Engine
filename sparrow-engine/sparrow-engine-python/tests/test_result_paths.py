@@ -51,6 +51,24 @@ def test_pairs_accepts_results_and_tuples():
     r = SimpleNamespace(path="/x/a.jpg")
     assert sparrow_engine._pairs([r]) == [("/x/a.jpg", r)]
     assert sparrow_engine._pairs([(Path("/x/b.jpg"), r)]) == [("/x/b.jpg", r)]
+    assert sparrow_engine._pairs([["/x/c.jpg", r]]) == [("/x/c.jpg", r)]
+
+
+def test_mixed_directories_and_files_keep_list_order(monkeypatch, tmp_path):
+    for d in ["dirA", "dirB"]:
+        (tmp_path / d).mkdir()
+        for n in ["2.jpg", "1.jpg"]:
+            (tmp_path / d / n).write_bytes(b"x")
+    (tmp_path / "x.jpg").write_bytes(b"x")
+    engine = RecordingEngine()
+    monkeypatch.setattr(sparrow_engine, "_get_engine", lambda: engine)
+
+    sparrow_engine.detect(
+        [str(tmp_path / "dirB"), str(tmp_path / "x.jpg"), str(tmp_path / "dirA")], model="m"
+    )
+
+    got = [str(Path(p).relative_to(tmp_path)) for p in engine.paths]
+    assert got == ["dirB/1.jpg", "dirB/2.jpg", "x.jpg", "dirA/1.jpg", "dirA/2.jpg"]
 
 
 MODEL = "MDV6-yolov10-c"
