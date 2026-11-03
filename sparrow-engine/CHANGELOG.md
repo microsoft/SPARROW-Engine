@@ -6,7 +6,11 @@ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## v0.1.31
+
+Python model download, video and webcam inference, per-result `path` with
+caller-ordered lists, content-based image decoding, and Model Zoo v0.31.0
+(OWL-D, DroneMegaDetector); the `pytorchwildlife` alias package is removed.
 
 ### Added
 
@@ -33,6 +37,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream URL (`rtsp://user:password@host/...`) are removed from the label. A
   frame path is not a file, so draw frame results with `draw_detections` on
   `FrameResult.frame` rather than passing them to `visualize`.
+- Python: model download from the Sparrow Model Zoo (Zenodo), no CLI or shell
+  script needed. `download_model(model, **kwargs) -> Path` installs one model;
+  `download_models(models=None, *, dest=None, all_models=False, force=False,
+  verify=True, catalog=None, record=None, quiet=False) -> list[Path]` installs
+  several. `models` takes model ids or old aliases. `None` selects the default
+  set (hosted desktop ONNX models without a precision flavor), and
+  `all_models=True` selects every hosted runtime package. Each model is unpacked
+  into `<dest>/<model id>/`. `dest` defaults to `SPARROW_ENGINE_MODEL_DIR`, or
+  `~/.sparrow-engine/models` when that variable is unset, which is the directory
+  the engine reads; if you call `init(model_dir=...)`, pass the same path. With
+  `verify=True` each ZIP is checked against the MD5 that the Zenodo record API
+  publishes, and the checksum is recorded in the installed directory.
+  - A model that is already installed is skipped unless `force=True`.
+  - With `verify=True`, a copy whose recorded checksum differs from the
+    catalog's is downloaded again.
+  - A copy with no recorded checksum is kept as it is.
+
+  Unknown ids, link-only or pending-rights entries, network errors and failed
+  checksums raise `ZooError`; a failed model leaves no partial directory.
+  `zoo_models()` lists the catalog entries. Progress goes to stderr
+  (`quiet=True` silences it).
+- Python: video and live-camera inference. `iter_video(path, model=None, ...)`
+  yields a `FrameResult` (`index`, `timestamp_s`, `result`, optional `frame`)
+  per sampled frame, one batch at a time; `detect_video(...)` returns them all
+  as a list; `detect_webcam(source=0, model=None, ...)` streams from a device
+  index or a stream URL such as `rtsp://...`. Frames go through `detect`, or
+  through `pipeline` when `classifier` or `pipeline_id` is given. Sampling:
+  `every_n` or `fps` (not both; `detect_webcam` takes `every_n` only),
+  `max_frames`, and `batch_size` for files. `draw_detections` draws a result on
+  a frame. Argument rules, checked before the video or camera is opened:
+  `model` and `pipeline_id` cannot be combined (a named pipeline sets its own
+  detector), `classifier` and `pipeline_id` cannot be combined, and
+  `max_detections` is rejected on the classifier/pipeline path. These functions
+  need OpenCV, installed with the `video` extra
+  (`pip install 'sparrow-engine[video]'` or `'sparrow-engine-gpu[video]'`,
+  which adds `opencv-python-headless>=4.8`); without it they raise
+  `ImportError` with that hint.
 
 ### Changed
 
