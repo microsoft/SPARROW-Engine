@@ -41,7 +41,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use sparrow_engine_core::catalog;
 use sparrow_engine_core::preprocess_audio::{
     compute_segment_offsets, load_audio_at_sample_rate, mel_spectrogram, segment_time_range,
-    AudioPreprocessConfig, MelFilterbank,
+    stride_samples_from_seconds, AudioPreprocessConfig, MelFilterbank,
 };
 use sparrow_engine_types::manifest::{
     self, InferenceStrategy, ModelManifest, Normalization, PostprocessMethod,
@@ -225,10 +225,12 @@ impl EngineInner {
         let duration_s = total as f32 / target_sr as f32;
 
         let segment_samples = (segment_duration_s * target_sr as f32).round() as usize;
-        let stride_samples = ((segment_stride_s * target_sr as f32).round() as usize).max(1);
         if segment_samples == 0 {
             bail!("segment_duration_s resolves to zero samples for model '{}'", model.id);
         }
+        let stride_samples =
+            stride_samples_from_seconds(segment_stride_s, target_sr, segment_samples)
+                .map_err(|e| anyhow!("{e}"))?;
         let filterbank = MelFilterbank::new(&config).map_err(|e| anyhow!("{e}"))?;
 
         let is_detector = matches!(
