@@ -6,6 +6,35 @@ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.1.32
+
+Security fixes from a Microsoft Security repository scan (#21).
+
+### Security
+
+- Installers (`sparrow-engine-install.sh` / `.ps1`, CWE-345): the CLI archive
+  is verified against the canonical GitHub release `.sha256`, or against an
+  operator pin in `SPARROW_ENGINE_SHA256`. A mirror's own sidecar is never
+  trusted. `SPARROW_ENGINE_RELEASE_BASE` and `SPARROW_ENGINE_HELPER_BASE` must
+  be `https://` unless `SPARROW_ENGINE_ALLOW_INSECURE_BASE=1` is set, and curl
+  refuses https→http redirects. **Mirror users:** set `SPARROW_ENGINE_SHA256`,
+  or allow the installer to reach `github.com` for the checksum; air-gapped
+  installs are covered in the user manual §2.7.
+- `pw-tools convert model` (CWE-502): checkpoints load with
+  `torch.load(weights_only=True)`. Loading a fully pickled module now needs
+  `--trust-pickle`, used only for files you trust.
+- Audio detection (CWE-770): a `stride` giving more than 64× window overlap
+  (`stride < window / 64`) is rejected on the CPU, GPU and mobile paths, which
+  bounds the work one request can trigger.
+- Release workflow (CWE-494): uv and rustup are downloaded at pinned versions
+  and checked against SHA-256 rather than piped from `curl` into `sh`.
+
+### Fixed
+
+- `sparrow-engine-install.sh`: an error raised while resolving the release or
+  helper base URL was ignored and the install continued with an empty URL. It
+  now stops the install.
+
 ## v0.1.31
 
 Python model download, video and webcam inference, per-result `path` with
