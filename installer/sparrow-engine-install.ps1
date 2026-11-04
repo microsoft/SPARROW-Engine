@@ -60,7 +60,9 @@ $Script:SentinelStart      = '# >>> sparrow-engine >>>'
 $Script:SentinelEnd        = '# <<< sparrow-engine <<<'
 # Default release base = public GH Releases asset URL (Phase E B-02 fix; was
 # `file:///%TEMP%/sparrow-engine-release/v{ver}/` dev placeholder). Honors
-# `$env:SPARROW_ENGINE_RELEASE_BASE` for staging mirrors / internal proxies.
+# `$env:SPARROW_ENGINE_RELEASE_BASE` for staging mirrors / internal proxies
+# (https only unless SPARROW_ENGINE_ALLOW_INSECURE_BASE=1). The archive digest
+# always comes from this default base or $env:SPARROW_ENGINE_SHA256.
 $Script:DefaultReleaseBase = "https://github.com/microsoft/SPARROW-Engine/releases/download/v$Script:SparrowEngineVersion/"
 # Helper-script base = immutable raw-tag path. Helper scripts (probe.ps1,
 # probe_gpu_quality.ps1) live in the tagged source tree, NOT as release
@@ -98,7 +100,8 @@ function Get-ScriptDir {
 # from the release URL into $Script:HelperCacheDir (piped install via
 # `iex (irm <url>)`). Phase E B-01 fix: piped invocation previously failed
 # because $PSScriptRoot is empty when invoked as a script block.
-# The fetch path uses Get-ReleaseBase which honors $env:SPARROW_ENGINE_RELEASE_BASE.
+# The fetch path uses Get-HelperBase which honors $env:SPARROW_ENGINE_HELPER_BASE
+# (https only unless SPARROW_ENGINE_ALLOW_INSECURE_BASE=1).
 # Returns the absolute resolved path; throws via Die on failure.
 function Resolve-Helper {
     param([Parameter(Mandatory)][string]$Name)
@@ -218,10 +221,29 @@ function Resolve-Mode {
 
 # ----- Release URL -------------------------------------------------------
 
+# Reject non-https override bases unless the operator explicitly opts in.
+# Integrity of the CLI archive never depends on the mirror (see
+# Resolve-ExpectedSha256), but helper scripts are executed, so transport
+# security on a custom base is still enforced.
+function Assert-BaseUrl {
+    param([string]$Var, [string]$Url)
+    if ($Url -match '^https://.+') { return }
+    if ($env:SPARROW_ENGINE_ALLOW_INSECURE_BASE -eq '1') {
+        Write-Warn2 "$Var=$Url is not https (allowed by SPARROW_ENGINE_ALLOW_INSECURE_BASE=1)"
+        return
+    }
+    Die 1 "$Var must be an https:// URL (got '$Url'); set SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 to allow http:// or file:// mirrors."
+}
+
 function Get-ReleaseBase {
     # Returns the URL prefix. Defaults to the public GH Releases asset URL
     # (Phase E B-02 fix). Operator override via $env:SPARROW_ENGINE_RELEASE_BASE.
-    $base = if ($env:SPARROW_ENGINE_RELEASE_BASE) { $env:SPARROW_ENGINE_RELEASE_BASE } else { $Script:DefaultReleaseBase }
+    if ($env:SPARROW_ENGINE_RELEASE_BASE) {
+        Assert-BaseUrl -Var 'SPARROW_ENGINE_RELEASE_BASE' -Url $env:SPARROW_ENGINE_RELEASE_BASE
+        $base = $env:SPARROW_ENGINE_RELEASE_BASE
+    } else {
+        $base = $Script:DefaultReleaseBase
+    }
     if (-not $base.EndsWith('/')) { $base += '/' }
     return $base
 }
@@ -230,7 +252,12 @@ function Get-HelperBase {
     # Returns the URL prefix for helper scripts (probe.ps1, probe_gpu_quality.ps1).
     # Distinct from Get-ReleaseBase: helpers live in the tagged source tree,
     # not as release assets. E-R2-1 fix. Override via $env:SPARROW_ENGINE_HELPER_BASE.
-    $base = if ($env:SPARROW_ENGINE_HELPER_BASE) { $env:SPARROW_ENGINE_HELPER_BASE } else { $Script:DefaultHelperBase }
+    if ($env:SPARROW_ENGINE_HELPER_BASE) {
+        Assert-BaseUrl -Var 'SPARROW_ENGINE_HELPER_BASE' -Url $env:SPARROW_ENGINE_HELPER_BASE
+        $base = $env:SPARROW_ENGINE_HELPER_BASE
+    } else {
+        $base = $Script:DefaultHelperBase
+    }
     if (-not $base.EndsWith('/')) { $base += '/' }
     return $base
 }
@@ -349,13 +376,37 @@ function Invoke-DownloadWithRetry {
 }
 
 function Test-Sha256 {
-    param([string]$File, [string]$SidecarFile)
-    $expectedLine = (Get-Content -LiteralPath $SidecarFile -ErrorAction Stop | Select-Object -First 1)
-    $expected = ($expectedLine -split '\s+')[0]
-    $actual = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLower()
-    if ($expected.ToLower() -ne $actual) {
-        Die 6 "sha256 mismatch on ${File}: expected $expected, got $actual."
+    param([string]$File, [string]$Expected)
+    $Expected = $Expected.ToLower()
+    if ($Expected -notmatch '^[0-9a-f]{64}$') {
+        Die 6 "expected sha256 for ${File} is not a 64-hex digest."
     }
+    $actual = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLower()
+    if ($Expected -ne $actual) {
+        Die 6 "sha256 mismatch on ${File}: expected $Expected, got $actual (artifact corrupt or tampered)."
+    }
+}
+
+# Return the trusted expected sha256 for archive $Archive. Source of truth:
+#   1. $env:SPARROW_ENGINE_SHA256 (operator pin, e.g. for air-gapped mirrors);
+#   2. the .sha256 sidecar on the canonical GitHub release over https.
+# The digest is never taken from SPARROW_ENGINE_RELEASE_BASE: a sidecar served
+# next to the artifact by the same mirror cannot authenticate it (CWE-345).
+function Resolve-ExpectedSha256 {
+    param([string]$Archive, [string]$StagingDir)
+    if ($env:SPARROW_ENGINE_SHA256) {
+        $pin = $env:SPARROW_ENGINE_SHA256.Trim().ToLower()
+        if ($pin -notmatch '^[0-9a-f]{64}$') {
+            Die 6 'SPARROW_ENGINE_SHA256 must be a 64-hex sha256 digest.'
+        }
+        Write-Info 'using pinned sha256 from SPARROW_ENGINE_SHA256'
+        return $pin
+    }
+    $shaUrl = "$Script:DefaultReleaseBase$Archive.sha256"
+    $shaPath = Join-Path $StagingDir "$Archive.sha256"
+    Invoke-DownloadWithRetry -Url $shaUrl -OutFile $shaPath
+    $line = Get-Content -LiteralPath $shaPath -ErrorAction Stop | Select-Object -First 1
+    return ([string]$line).Trim() -split '\s+' | Select-Object -First 1
 }
 
 # ----- Mode dispatch -----------------------------------------------------
@@ -407,17 +458,19 @@ function Install-CliFlavor {
     $base = Get-ReleaseBase
     $tarball = "sparrow-engine-$ResolvedFlavor-$Script:SparrowEngineVersion-$($oa.Os)-$($oa.Arch).zip"
     $url = "$base$tarball"
-    $sha = "$url.sha256"
 
-    if ($DryRun) { Write-Info "[dry-run] would download $url + verify sha256 + extract to $Script:InstallRoot"; return }
+    if ($DryRun) {
+        $shaSource = if ($env:SPARROW_ENGINE_SHA256) { 'pinned SPARROW_ENGINE_SHA256' } else { "$Script:DefaultReleaseBase$tarball.sha256" }
+        Write-Info "[dry-run] would download $url + verify sha256 against $shaSource + extract to $Script:InstallRoot"
+        return
+    }
     $staging = Join-Path $env:TEMP ("sparrow-engine-stage-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     try {
         $tarballPath = Join-Path $staging $tarball
-        $shaPath = "$tarballPath.sha256"
         Invoke-DownloadWithRetry -Url $url -OutFile $tarballPath
-        Invoke-DownloadWithRetry -Url $sha -OutFile $shaPath
-        Test-Sha256 -File $tarballPath -SidecarFile $shaPath
+        $expected = Resolve-ExpectedSha256 -Archive $tarball -StagingDir $staging
+        Test-Sha256 -File $tarballPath -Expected $expected
         if (Test-Path -LiteralPath $Script:InstallRoot) {
             $bak = "$Script:InstallRoot.bak"
             if (Test-Path -LiteralPath $bak) { Remove-Item -Recurse -Force -LiteralPath $bak }
@@ -528,6 +581,10 @@ function Invoke-Main {
         Write-Host "Usage: sparrow-engine-install.ps1 [-Pip|-Cli|-Docker] [-Flavor cpu|gpu|auto]"
         Write-Host "       [-Reinstall|-Reprobe|-Uninstall] [-ForceRcOverwrite]"
         Write-Host "       [-ProbeOnly] [-DryRun] [-Yes] [-Version X.Y.Z] [-Retries N]"
+        Write-Host ""
+        Write-Host "Environment: SPARROW_ENGINE_RELEASE_BASE / SPARROW_ENGINE_HELPER_BASE (https:// only),"
+        Write-Host "             SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 (allow http:// or file:// bases),"
+        Write-Host "             SPARROW_ENGINE_SHA256=<hex> (pin the archive digest for mirrors)."
         Write-Host ""
         Write-Host "See docs/user-manual.md (section 2, Installation) for full reference."
         return

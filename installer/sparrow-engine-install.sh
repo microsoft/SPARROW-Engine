@@ -124,8 +124,14 @@ Environment:
   SPARROW_ENGINE_INSTALL_FLAVOR=cpu|gpu       Override the probe. Must match an explicit
                                               --flavor cpu|gpu (conflict => exit 3);
                                               --flavor auto ignores it.
-  SPARROW_ENGINE_RELEASE_BASE=<url>           Override release URL prefix
+  SPARROW_ENGINE_RELEASE_BASE=<url>           Override release URL prefix (https:// only)
                                      (default: ${SPARROW_ENGINE_RELEASE_BASE_DEFAULT})
+                                     The archive is still verified against the
+                                     sha256 published on the GitHub release.
+  SPARROW_ENGINE_SHA256=<hex>                 Pin the expected archive sha256 (needed when
+                                              the mirror's version is not on GitHub)
+  SPARROW_ENGINE_HELPER_BASE=<url>            Override helper-script URL prefix (https:// only)
+  SPARROW_ENGINE_ALLOW_INSECURE_BASE=1        Allow http:// or file:// release/helper bases
   SPARROW_ENGINE_VERSION=X.Y.Z                Override target version
   SPARROW_ENGINE_NO_MODIFY_PATH=1              Skip rc-file edits
 
@@ -238,7 +244,7 @@ resolve_flavor() {
         # locate_helper to support both disk install (adjacent on disk) and
         # piped install (`curl ... | sh`) — see locate_helper definition.
         local probe_path
-        probe_path=$(locate_helper probe.sh)
+        probe_path=$(locate_helper probe.sh) || exit $?
 
         # Source the probe; it defines probe_cuda which echoes "cpu" or "gpu"
         # AND exports SPARROW_ENGINE_DETECTED_FLAVOR + SPARROW_ENGINE_DETECTED_PROBE_REASON.
@@ -300,7 +306,7 @@ gpu_quality_check() {
         return 0
     fi
     local probeq_path
-    probeq_path=$(locate_helper probe_gpu_quality.sh)
+    probeq_path=$(locate_helper probe_gpu_quality.sh) || exit $?
     # shellcheck source=installer/probe_gpu_quality.sh
     # shellcheck disable=SC1091
     . "$probeq_path"
@@ -454,6 +460,23 @@ install_python_wheel() {
 # -----------------------------------------------------------------------------
 # cli mode (tarball)
 # -----------------------------------------------------------------------------
+# Reject non-https override bases unless the operator explicitly opts in.
+# Integrity of the CLI archive never depends on the mirror (see
+# resolve_expected_sha256), but helper scripts are executed, so transport
+# security on a custom base is still enforced.
+validate_base_url() {
+    local var=$1
+    local url=$2
+    case "$url" in
+        https://?*) return 0 ;;
+    esac
+    if [ "${SPARROW_ENGINE_ALLOW_INSECURE_BASE:-0}" = "1" ]; then
+        warn "$var=$url is not https (allowed by SPARROW_ENGINE_ALLOW_INSECURE_BASE=1)"
+        return 0
+    fi
+    die 1 "$var must be an https:// URL (got '$url'); set SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 to allow http:// or file:// mirrors"
+}
+
 release_base() {
     local rb="${SPARROW_ENGINE_RELEASE_BASE:-}"
     if [ -z "$rb" ]; then
@@ -461,6 +484,8 @@ release_base() {
         # file:///tmp/... dev placeholder). Honors operator override via
         # SPARROW_ENGINE_RELEASE_BASE for staging mirrors / internal proxies.
         rb="$SPARROW_ENGINE_RELEASE_BASE_DEFAULT"
+    else
+        validate_base_url SPARROW_ENGINE_RELEASE_BASE "$rb"
     fi
     # Strip trailing slashes for consistent join.
     printf '%s' "${rb%/}"
@@ -473,6 +498,8 @@ helper_base() {
     local hb="${SPARROW_ENGINE_HELPER_BASE:-}"
     if [ -z "$hb" ]; then
         hb="$SPARROW_ENGINE_HELPER_BASE_DEFAULT"
+    else
+        validate_base_url SPARROW_ENGINE_HELPER_BASE "$hb"
     fi
     printf '%s' "${hb%/}"
 }
@@ -525,12 +552,14 @@ locate_helper() {
     if ! command -v curl >/dev/null 2>&1; then
         die 8 "$name not found on disk and curl unavailable for fallback fetch"
     fi
-    hb=$(helper_base)
+    hb=$(helper_base) || exit $?
     url="$hb/$name"
     ua="sparrow-engine-install/${SPARROW_ENGINE_VERSION} (${OS:-unknown}/${ARCH:-unknown})"
     mkdir -p "$SPARROW_ENGINE_HELPER_CACHE"
     say "fetching $name from $url" >&2
-    if ! curl -fsSL -A "$ua" --connect-timeout 10 --max-time 60 \
+    local proto=()
+    case "$url" in https://*) proto=(--proto '=https' --proto-redir '=https') ;; esac
+    if ! curl -fsSL ${proto[@]+"${proto[@]}"} -A "$ua" --connect-timeout 10 --max-time 60 \
               -o "$cache_path.tmp" "$url"; then
         rm -f "$cache_path.tmp"
         die 4 "failed to fetch $name from $url (piped install fallback; download install.sh + probe.sh + probe_gpu_quality.sh from the same tag and run from disk if your network blocks raw.githubusercontent.com)"
@@ -552,11 +581,15 @@ download_with_retry() {
         die 8 "curl not found on PATH (required for --cli mode)"
     fi
 
+    # An https URL must never be downgraded by a redirect.
+    local proto=()
+    case "$url" in https://*) proto=(--proto '=https' --proto-redir '=https') ;; esac
+
     while [ "$attempt" -le "$retries" ]; do
         local code rc
         # `-fL` follow redirects, fail on 4xx/5xx; `-w` capture status code.
         # `--retry 0` to keep retry policy in our hands.
-        code=$(curl -fL -A "$ua" --connect-timeout 10 --max-time 600 \
+        code=$(curl -fL ${proto[@]+"${proto[@]}"} -A "$ua" --connect-timeout 10 --max-time 600 \
                     --retry 0 \
                     -o "$out" -w '%{http_code}' \
                     "$url" 2>/dev/null) || rc=$?
@@ -597,7 +630,10 @@ verify_sha256() {
         die 8 "no sha256 tool found (need sha256sum or shasum)"
     fi
     local expected actual
-    expected=$(awk '{print $1}' "$sidecar")
+    expected=$(awk 'NR==1 {print tolower($1)}' "$sidecar")
+    if [ "${#expected}" -ne 64 ] || ! is_sha256_hex "$expected"; then
+        die 6 "expected sha256 from $sidecar is not a 64-hex digest"
+    fi
     if command -v sha256sum >/dev/null 2>&1; then
         actual=$(sha256sum -b "$file" | awk '{print $1}')
     else
@@ -608,10 +644,42 @@ verify_sha256() {
     fi
 }
 
+is_sha256_hex() {
+    case "$1" in
+        "" | *[!0-9a-f]*) return 1 ;;
+    esac
+    return 0
+}
+
+# Write the trusted expected digest for $1 (archive name) to file $2.
+# Source of truth, in order:
+#   1. SPARROW_ENGINE_SHA256 (operator pin, e.g. for air-gapped mirrors);
+#   2. the .sha256 sidecar on the canonical GitHub release over https.
+# The digest is never taken from SPARROW_ENGINE_RELEASE_BASE: a sidecar served
+# next to the artifact by the same mirror cannot authenticate it (CWE-345).
+resolve_expected_sha256() {
+    local archive=$1
+    local out=$2
+    local pin="${SPARROW_ENGINE_SHA256:-}"
+    if [ -n "$pin" ]; then
+        pin=$(printf '%s' "$pin" | tr 'A-F' 'a-f')
+        if [ "${#pin}" -ne 64 ] || ! is_sha256_hex "$pin"; then
+            die 6 "SPARROW_ENGINE_SHA256 must be a 64-hex sha256 digest"
+        fi
+        say "using pinned sha256 from SPARROW_ENGINE_SHA256"
+        printf '%s  %s\n' "$pin" "$archive" >"$out"
+        return 0
+    fi
+    local canonical="${SPARROW_ENGINE_RELEASE_BASE_DEFAULT}/${archive}.sha256"
+    say "downloading $canonical"
+    download_with_retry "$canonical" "$out"
+}
+
 install_cli_binary() {
     local cli_flavor=$1
-    local rb tarball sha_file url sha_url stage
-    rb=$(release_base)
+    local rb tarball sha_file url stage
+    # main runs under `|| exit 1`, which disables set -e; propagate die from $(...) explicitly.
+    rb=$(release_base) || exit $?
 
     # Flavor / OS gating: macOS-GPU is unsupported (no CUDA on macOS).
     if [ "$cli_flavor" = "gpu" ] && [ "$OS" = "macos" ]; then
@@ -621,11 +689,14 @@ install_cli_binary() {
     tarball="sparrow-engine-${cli_flavor}-${SPARROW_ENGINE_VERSION}-${OS}-${ARCH}.tar.gz"
     sha_file="${tarball}.sha256"
     url="${rb}/${tarball}"
-    sha_url="${rb}/${sha_file}"
 
     if [ "$dry_run" -eq 1 ]; then
         say "[dry-run] would fetch $url"
-        say "[dry-run] would verify $sha_url"
+        if [ -n "${SPARROW_ENGINE_SHA256:-}" ]; then
+            say "[dry-run] would verify against pinned SPARROW_ENGINE_SHA256"
+        else
+            say "[dry-run] would verify against ${SPARROW_ENGINE_RELEASE_BASE_DEFAULT}/${sha_file}"
+        fi
         say "[dry-run] would extract into $SPARROW_ENGINE_PREFIX"
         return 0
     fi
@@ -639,8 +710,7 @@ install_cli_binary() {
 
     say "downloading $url"
     download_with_retry "$url" "$stage/$tarball"
-    say "downloading $sha_url"
-    download_with_retry "$sha_url" "$stage/$sha_file"
+    resolve_expected_sha256 "$tarball" "$stage/$sha_file"
 
     say "verifying sha256"
     verify_sha256 "$stage/$tarball" "$stage/$sha_file"

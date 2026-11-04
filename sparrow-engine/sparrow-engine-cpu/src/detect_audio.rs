@@ -302,13 +302,11 @@ fn prepare_audio_detection(
             ..
         } => {
             let segment_samples = *window_samples as usize;
-            let stride_samples = (segment_stride_s * sample_rate as f32).round() as usize;
-            if stride_samples == 0 {
-                return Err(SparrowEngineError::InvalidManifest(
-                    "stride_samples = 0; segment_stride_s × sample_rate rounded down to zero"
-                        .to_string(),
-                ));
-            }
+            let stride_samples = preprocess_audio::stride_samples_from_seconds(
+                segment_stride_s,
+                sample_rate,
+                segment_samples,
+            )?;
 
             // Surface the silent-ignore: raw_audio models bake the window length
             // into the ONNX (e.g. Perch 2: [batch, 160000] is the Conformer's

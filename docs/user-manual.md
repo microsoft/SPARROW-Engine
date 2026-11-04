@@ -201,7 +201,7 @@ curl -fsSL https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/
 iwr -useb https://raw.githubusercontent.com/microsoft/SPARROW-Engine/refs/tags/v0.1.31/installer/sparrow-engine-install.ps1 | iex
 ```
 
-Under the stdin-pipe form the wrapper detects that `$0` is the shell name and skips the on-disk lookup; it fetches `probe.sh` + `probe_gpu_quality.sh` from the matching `refs/tags/v<ver>/installer/` raw URL into `${XDG_CACHE_HOME:-~/.cache}/sparrow-engine/v<ver>/` (Linux/macOS) or `%LOCALAPPDATA%\sparrow-engine\cache\v<ver>\` (Windows) on first invocation. Override the helper URL via `SPARROW_ENGINE_HELPER_BASE` for internal mirrors.
+Under the stdin-pipe form the wrapper detects that `$0` is the shell name and skips the on-disk lookup; it fetches `probe.sh` + `probe_gpu_quality.sh` from the matching `refs/tags/v<ver>/installer/` raw URL into `${XDG_CACHE_HOME:-~/.cache}/sparrow-engine/v<ver>/` (Linux/macOS) or `%LOCALAPPDATA%\sparrow-engine\cache\v<ver>\` (Windows) on first invocation. Override the helper URL via `SPARROW_ENGINE_HELPER_BASE` for internal mirrors (must be `https://` unless `SPARROW_ENGINE_ALLOW_INSECURE_BASE=1`).
 
 ---
 
@@ -342,9 +342,16 @@ ONLINE machine:                        OFFLINE machine:
 
 **Why**: many camera-trap deployments are in field sites with no internet.
 **What**: a documented manual path that copies a tarball or `docker save` archive onto the offline host.
-**How**: download once from a connected machine; transfer via USB; the wrapper accepts a local `file://` URL via `SPARROW_ENGINE_RELEASE_BASE`.
+**How**: download once from a connected machine; transfer via USB; point the wrapper at the local copy with a `file://` URL in `SPARROW_ENGINE_RELEASE_BASE`. Non-https bases are refused unless `SPARROW_ENGINE_ALLOW_INSECURE_BASE=1` is set. The archive is checked against the sha256 published on the GitHub release, never against a sidecar from the mirror itself; an offline host cannot reach GitHub, so pin the digest you copied from the release page with `SPARROW_ENGINE_SHA256`:
 
-**Cite**: `installer/sparrow-engine-install.{sh,ps1}` (`SPARROW_ENGINE_RELEASE_BASE` / `file://` handling).
+```bash
+SPARROW_ENGINE_RELEASE_BASE=file:///media/usb/sparrow-engine \
+SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 \
+SPARROW_ENGINE_SHA256=<64-hex digest from the release .sha256 file> \
+  sh installer/sparrow-engine-install.sh --cli
+```
+
+**Cite**: `installer/sparrow-engine-install.{sh,ps1}` (`SPARROW_ENGINE_RELEASE_BASE`, `SPARROW_ENGINE_ALLOW_INSECURE_BASE`, `SPARROW_ENGINE_SHA256` handling).
 
 ---
 

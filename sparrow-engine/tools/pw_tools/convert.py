@@ -13,6 +13,7 @@ Post-conversion:
 from __future__ import annotations
 
 import logging
+import pickle
 import shutil
 import tempfile
 from pathlib import Path
@@ -40,6 +41,7 @@ def convert_to_onnx(
     use_dynamo: bool = True,
     optimize: bool = True,
     half: bool = False,
+    trust_pickle: bool = False,
 ) -> Path:
     """Convert *source_path* to ONNX and write to *output_path*.
 
@@ -66,7 +68,7 @@ def convert_to_onnx(
     output_names = output_names or ["output0"]
 
     console.print(f"[bold cyan]Loading model[/] from {src}")
-    model, is_torchscript = _load_model(src)
+    model, is_torchscript = _load_model(src, trust_pickle=trust_pickle)
 
     console.print(f"[bold cyan]Exporting to ONNX[/]  opset={opset}  dynamo={use_dynamo and not is_torchscript}")
 
@@ -133,28 +135,50 @@ def convert_to_onnx(
 # ---------------------------------------------------------------------------
 
 
-def _load_model(src: Path) -> tuple[nn.Module | torch.jit.ScriptModule, bool]:
+def _load_model(
+    src: Path, trust_pickle: bool = False
+) -> tuple[nn.Module | torch.jit.ScriptModule, bool]:
     """Return (model, is_torchscript).
 
-    Heuristic: try torch.jit.load first; if it fails with a RuntimeError
-    (wrong format), try torch.load with weights_only=False as a plain
-    checkpoint.  Models loaded via torch.load are assumed to be
-    nn.Module instances already stored in eval mode.
+    TorchScript archives are tried first. Otherwise the file is read with
+    ``torch.load(weights_only=True)``, PyTorch's restricted unpickler, which
+    cannot run code embedded in the file. A pickled ``nn.Module`` needs the
+    full unpickler, which executes arbitrary code from the file while it
+    loads; that path runs only when *trust_pickle* is True.
     """
-    # Try TorchScript first
+    # Try TorchScript first. A non-TorchScript file raises RuntimeError
+    # (zip archive without TorchScript constants) or ValueError.
     try:
         model = torch.jit.load(str(src), map_location="cpu")
         model.eval()
         logger.info("Loaded as TorchScript model")
         return model, True
-    except Exception:
-        pass
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Not a TorchScript archive (%s); trying torch.load", exc)
 
-    # Try plain checkpoint / serialised nn.Module
-    try:
-        obj = torch.load(str(src), map_location="cpu", weights_only=False)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load model from {src}: {exc}") from exc
+    if trust_pickle:
+        logger.warning(
+            "Loading %s with the full pickle loader (weights_only=False). "
+            "This executes code stored in the file; use it only for files from a trusted source.",
+            src,
+        )
+        try:
+            obj = torch.load(str(src), map_location="cpu", weights_only=False)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load model from {src}: {exc}") from exc
+    else:
+        try:
+            obj = torch.load(str(src), map_location="cpu", weights_only=True)
+        except pickle.UnpicklingError as exc:
+            raise RuntimeError(
+                f"{src} is not a TorchScript archive and contains Python objects that the safe "
+                "loader (torch.load weights_only=True) refuses to unpickle. Loading it would run "
+                "code stored in the file. Export the model to TorchScript (torch.jit.script / "
+                "torch.jit.trace) and convert that file, or, if you trust the file's source, "
+                "re-run with --trust-pickle."
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load model from {src}: {exc}") from exc
 
     if isinstance(obj, nn.Module):
         obj.eval()

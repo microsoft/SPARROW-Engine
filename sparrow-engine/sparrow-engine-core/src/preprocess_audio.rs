@@ -378,23 +378,75 @@ pub fn validate_audio_window_params(
         )));
     }
     let segment_samples = segment_samples_f.round() as usize;
-    let stride_samples = stride_samples_f.round() as usize;
     if segment_samples == 0 {
         return Err(SparrowEngineError::InvalidManifest(
             "segment duration results in 0 samples".to_string(),
         ));
     }
-    if stride_samples == 0 {
-        return Err(SparrowEngineError::InvalidManifest(
-            "segment stride results in 0 samples".to_string(),
-        ));
-    }
+    let stride_samples = stride_samples_from_seconds(stride_s, sample_rate, segment_samples)?;
     if segment_samples < n_fft as usize {
         return Err(SparrowEngineError::InvalidManifest(format!(
             "segment_samples ({segment_samples}) must be >= n_fft ({n_fft}) — adjust segment_duration_s or n_fft in the audio manifest"
         )));
     }
     Ok((segment_samples, stride_samples))
+}
+
+/// Maximum number of sliding windows that may cover any one sample.
+///
+/// Bounds the per-request window count to `MAX_AUDIO_WINDOW_OVERLAP` times the
+/// non-overlapping count, so window work grows linearly with clip length
+/// instead of with `1 / stride` (a 1-sample stride would otherwise produce
+/// one mel + ORT window per input sample).
+pub const MAX_AUDIO_WINDOW_OVERLAP: usize = 64;
+
+/// Convert a stride in seconds to samples and enforce the window-overlap cap.
+///
+/// Every audio path (CPU/GPU mel and raw, mobile) resolves runtime and
+/// manifest strides through this function so the cap cannot be bypassed.
+pub fn stride_samples_from_seconds(
+    stride_s: f32,
+    sample_rate: u32,
+    segment_samples: usize,
+) -> Result<usize> {
+    if !stride_s.is_finite() || stride_s <= 0.0 {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "stride_s must be finite and > 0, got {stride_s}"
+        )));
+    }
+    let stride_samples_f = (stride_s * sample_rate as f32).round();
+    if !stride_samples_f.is_finite() || stride_samples_f > usize::MAX as f32 {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "stride_s * sample_rate must produce a finite sample count, got {stride_samples_f}"
+        )));
+    }
+    let stride_samples = stride_samples_f as usize;
+    if stride_samples == 0 {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "stride_s ({stride_s}) × sample_rate ({sample_rate}) rounds to 0 samples"
+        )));
+    }
+    validate_stride_samples(segment_samples, stride_samples)?;
+    Ok(stride_samples)
+}
+
+/// Reject a stride that would put more than [`MAX_AUDIO_WINDOW_OVERLAP`]
+/// windows over any one sample.
+pub fn validate_stride_samples(segment_samples: usize, stride_samples: usize) -> Result<()> {
+    if stride_samples == 0 {
+        return Err(SparrowEngineError::InvalidManifest(
+            "segment stride results in 0 samples".to_string(),
+        ));
+    }
+    if segment_samples.div_ceil(stride_samples) > MAX_AUDIO_WINDOW_OVERLAP {
+        let min_stride = segment_samples.div_ceil(MAX_AUDIO_WINDOW_OVERLAP);
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "stride of {stride_samples} samples is too small for a {segment_samples}-sample window: \
+             at most {MAX_AUDIO_WINDOW_OVERLAP} windows may overlap, so the stride must be at least \
+             {min_stride} samples"
+        )));
+    }
+    Ok(())
 }
 
 /// Enumerate sliding-window start offsets over `total_samples`.
@@ -419,10 +471,13 @@ pub fn compute_segment_offsets(
     while offset < total_samples {
         offsets.push(offset);
         let remaining = total_samples - offset;
-        if remaining <= segment_samples {
+        if remaining <= segment_samples || stride_samples == 0 {
             break;
         }
-        offset += stride_samples;
+        offset = match offset.checked_add(stride_samples) {
+            Some(next) => next,
+            None => break,
+        };
     }
     offsets
 }
@@ -1445,6 +1500,38 @@ mod tests {
         assert!(validate_audio_window_params(1.0, 1.0, 0.5, 0, 1024).is_err());
         assert!(validate_audio_window_params(1.0, 1.0, 0.5, 48_000, 0).is_err());
         assert!(validate_audio_window_params(1.0, 1.0, 0.5, 48_000, 1).is_err());
+    }
+
+    #[test]
+    fn tiny_stride_is_rejected_before_windowing() {
+        // CWE-770 report: stride 0.00002 s at 48 kHz rounds to 1 sample, which
+        // previously produced one window per input sample.
+        let err = validate_audio_window_params(1.0, 0.000_02, 0.5, 48_000, 1024).unwrap_err();
+        assert!(err.to_string().contains("at least 750 samples"), "{err}");
+        assert!(stride_samples_from_seconds(0.000_02, 48_000, 160_000).is_err());
+        assert!(stride_samples_from_seconds(f32::INFINITY, 48_000, 48_000).is_err());
+        assert!(stride_samples_from_seconds(-0.3, 48_000, 48_000).is_err());
+    }
+
+    #[test]
+    fn stride_cap_accepts_shipped_and_boundary_strides() {
+        // audiobirds.toml: 1.0 s window, 0.3 s stride.
+        assert_eq!(
+            validate_audio_window_params(1.0, 0.3, 0.5, 48_000, 1024).unwrap(),
+            (48_000, 14_400)
+        );
+        assert!(validate_stride_samples(48_000, 750).is_ok());
+        assert!(validate_stride_samples(48_000, 749).is_err());
+        assert!(validate_stride_samples(48_000, 0).is_err());
+        // Strides longer than the window (gaps) stay legal.
+        assert_eq!(stride_samples_from_seconds(2.0, 48_000, 48_000).unwrap(), 96_000);
+    }
+
+    #[test]
+    fn compute_segment_offsets_terminates_on_huge_stride() {
+        let offsets = compute_segment_offsets(usize::MAX, 1, usize::MAX - 1);
+        assert_eq!(offsets, vec![0, usize::MAX - 1]);
+        assert_eq!(compute_segment_offsets(10, 1, 0), vec![0]);
     }
 
     #[test]

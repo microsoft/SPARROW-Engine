@@ -182,13 +182,14 @@ impl RawAudioModel {
             } => (segment_duration_s, segment_stride_s),
             _ => (segment_samples as f32 / sample_rate as f32, 0.3),
         };
-        let stride_samples = (default_stride_s * sample_rate as f32).round() as usize;
-        if stride_samples == 0 {
-            return Err(SparrowEngineError::InvalidManifest(format!(
-                "manifest '{}': default stride_s × sample_rate rounded down to zero",
-                manifest.id
-            )));
-        }
+        let stride_samples = preprocess_audio::stride_samples_from_seconds(
+            default_stride_s,
+            sample_rate,
+            segment_samples,
+        )
+        .map_err(|e| {
+            SparrowEngineError::InvalidManifest(format!("manifest '{}': {e}", manifest.id))
+        })?;
         // Suppress unused warning; preserved for future per-call validation.
         let _ = default_segment_duration_s;
 
@@ -441,13 +442,11 @@ impl RawAudioModel {
         // matches CPU semantics in `prepare_audio_detection` at
         // `sparrow-engine-cpu/src/detect_audio.rs:236-247`.
         let stride_samples = if let Some(stride_s) = opts.stride_s {
-            let s = (stride_s * self.sample_rate as f32).round() as usize;
-            if s == 0 {
-                return Err(SparrowEngineError::InvalidManifest(
-                    "stride_s × sample_rate rounded down to zero".to_string(),
-                ));
-            }
-            s
+            preprocess_audio::stride_samples_from_seconds(
+                stride_s,
+                self.sample_rate,
+                segment_samples,
+            )?
         } else {
             self.stride_samples
         };

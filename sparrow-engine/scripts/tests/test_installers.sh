@@ -119,6 +119,10 @@ chmod +x "$TEST_ROOT/build/$FX_ROOT/bin/spe"
 tar -czf "$RELDIR/$FX_ROOT.tar.gz" -C "$TEST_ROOT/build" "$FX_ROOT"
 sha256sum -b "$RELDIR/$FX_ROOT.tar.gz" >"$RELDIR/$FX_ROOT.tar.gz.sha256"
 FILE_BASE="file://$RELDIR"
+# A file:// mirror needs the explicit insecure-base opt-in, and its own sidecar
+# is never trusted, so fixture installs pin the digest (offline, no GitHub).
+FX_SHA="$(awk '{print $1}' "$RELDIR/$FX_ROOT.tar.gz.sha256")"
+FIXTURE_TRUST=(SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 SPARROW_ENGINE_SHA256="$FX_SHA")
 
 echo "[6] shell installer rejects a --flavor / env-var disagreement with exit 3"
 expect_rc 3 "shell conflict env=gpu --flavor cpu" -- \
@@ -301,7 +305,7 @@ mkdir -p "$p10"
 printf '{\n  "flavor": "gpu",\n  "mode": "cli",\n  "version": "%s"\n}\n' "$cli_version" >"$p10/installed.json"
 expect_rc 12 "cross-flavor refusal exit 12" -- \
     env HOME="$TEST_ROOT/h10" SPARROW_ENGINE_PREFIX="$p10" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu -y
 grep -q '"flavor"' "$p10/installed.json" && grep -q 'gpu' "$p10/installed.json" ||
     fail "cross-flavor refusal must not rewrite the existing state file"
@@ -313,7 +317,7 @@ printf '%s\nexport PATH="/manually/edited/path:$PATH"\n%s\n' \
     '# >>> sparrow-engine >>>' '# <<< sparrow-engine <<<' >"$h11/.bashrc"
 expect_rc 13 "rc-edit exit 13" -- \
     env HOME="$h11" SPARROW_ENGINE_PREFIX="$TEST_ROOT/p11" \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu -y
 grep -q '/manually/edited/path' "$h11/.bashrc" ||
     fail "exit-13 path must not overwrite the manually edited rc block"
@@ -324,21 +328,21 @@ mkdir -p "$h12"
 # Fresh CPU install via the local fixture (NO_MODIFY_PATH keeps rc files untouched).
 expect_rc 0 "fresh cpu install (file:// fixture)" -- \
     env HOME="$h12" SPARROW_ENGINE_PREFIX="$p12" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu -y
 [[ -x "$p12/bin/spe" ]] || fail "fresh install did not place bin/spe"
 grep -q 'cpu' "$p12/installed.json" || fail "fresh install did not record cpu state"
 # Same-flavor re-invocation with no --reinstall = soft no-op (exit 0, no download).
 expect_rc 0 "same-flavor no-op (no --reinstall)" -- \
     env HOME="$h12" SPARROW_ENGINE_PREFIX="$p12" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu -y
 grep -qi 'already installed' "$TEST_ROOT/last.out" ||
     fail "same-flavor no-op message missing"
 # Same-flavor --reinstall force-overwrites (exit 0).
 expect_rc 0 "same-flavor --reinstall" -- \
     env HOME="$h12" SPARROW_ENGINE_PREFIX="$p12" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu --reinstall -y
 # Cross-flavor switch WITH --reprobe (gpu state -> cpu; cpu path skips GPU quality).
 p12b="$TEST_ROOT/p12b"; h12b="$TEST_ROOT/h12b"
@@ -346,16 +350,76 @@ mkdir -p "$h12b" "$p12b"
 printf '{\n  "flavor": "gpu",\n  "mode": "cli",\n  "version": "%s"\n}\n' "$cli_version" >"$p12b/installed.json"
 expect_rc 0 "cross-flavor reprobe switch (gpu->cpu)" -- \
     env HOME="$h12b" SPARROW_ENGINE_PREFIX="$p12b" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu --reprobe -y
 grep -q 'cpu' "$p12b/installed.json" || fail "reprobe did not switch state to cpu"
 # Idempotency: re-running the now-current flavor is a no-op (exit 0).
 expect_rc 0 "reprobe idempotency (no-op)" -- \
     env HOME="$h12b" SPARROW_ENGINE_PREFIX="$p12b" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
-        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
         bash "$SH_INSTALLER" --cli --flavor cpu -y
 grep -qi 'already installed' "$TEST_ROOT/last.out" ||
     fail "reprobe idempotency no-op message missing"
+
+echo "[12a] release mirror is not a trust anchor: non-https base refused, mirror sidecar ignored (CWE-345)"
+# Non-https base without the explicit opt-in is refused before any download.
+expect_rc 1 "file:// base without SPARROW_ENGINE_ALLOW_INSECURE_BASE" -- \
+    env -u SPARROW_ENGINE_ALLOW_INSECURE_BASE HOME="$TEST_ROOT/sec-ha" SPARROW_ENGINE_PREFIX="$TEST_ROOT/sec-pa" \
+        SPARROW_ENGINE_NO_MODIFY_PATH=1 SPARROW_ENGINE_SHA256="$FX_SHA" \
+        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        bash "$SH_INSTALLER" --cli --flavor cpu -y
+grep -q 'must be an https:// URL' "$TEST_ROOT/last.out" ||
+    fail "non-https release base refusal message missing"
+[[ ! -e "$TEST_ROOT/sec-pa/bin/spe" ]] || fail "refused mirror still installed a binary"
+expect_rc 1 "http:// release base without opt-in (dry-run)" -- \
+    env -u SPARROW_ENGINE_ALLOW_INSECURE_BASE HOME="$TEST_ROOT/sec-hb" SPARROW_ENGINE_PREFIX="$TEST_ROOT/sec-pb" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
+        SPARROW_ENGINE_RELEASE_BASE="http://mirror.invalid/rel" SPARROW_ENGINE_VERSION="$cli_version" \
+        bash "$SH_INSTALLER" --cli --flavor cpu --dry-run -y
+# Tampered mirror: archive and a matching mirror sidecar are both attacker-
+# controlled. The pinned digest wins, so the install must fail with exit 6.
+EVILDIR="$TEST_ROOT/evil-release"
+mkdir -p "$EVILDIR" "$TEST_ROOT/evil/$FX_ROOT/bin"
+printf '#!/bin/sh\necho pwned\n' >"$TEST_ROOT/evil/$FX_ROOT/bin/spe"
+chmod +x "$TEST_ROOT/evil/$FX_ROOT/bin/spe"
+tar -czf "$EVILDIR/$FX_ROOT.tar.gz" -C "$TEST_ROOT/evil" "$FX_ROOT"
+sha256sum -b "$EVILDIR/$FX_ROOT.tar.gz" >"$EVILDIR/$FX_ROOT.tar.gz.sha256"
+expect_rc 6 "tampered mirror with self-consistent sidecar" -- \
+    env HOME="$TEST_ROOT/sec-hc" SPARROW_ENGINE_PREFIX="$TEST_ROOT/sec-pc" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
+        "${FIXTURE_TRUST[@]}" SPARROW_ENGINE_RELEASE_BASE="file://$EVILDIR" SPARROW_ENGINE_VERSION="$cli_version" \
+        bash "$SH_INSTALLER" --cli --flavor cpu -y
+grep -q 'sha256 mismatch' "$TEST_ROOT/last.out" || fail "tampered mirror did not report a sha256 mismatch"
+[[ ! -e "$TEST_ROOT/sec-pc/bin/spe" ]] || fail "tampered mirror archive was extracted"
+expect_rc 6 "malformed SPARROW_ENGINE_SHA256 pin" -- \
+    env HOME="$TEST_ROOT/sec-hd" SPARROW_ENGINE_PREFIX="$TEST_ROOT/sec-pd" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
+        SPARROW_ENGINE_ALLOW_INSECURE_BASE=1 SPARROW_ENGINE_SHA256=not-a-digest \
+        SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" SPARROW_ENGINE_VERSION="$cli_version" \
+        bash "$SH_INSTALLER" --cli --flavor cpu -y
+# Dry-run names the canonical GitHub sidecar, never the mirror's.
+expect_rc 0 "dry-run sidecar source" -- \
+    env -u SPARROW_ENGINE_SHA256 HOME="$TEST_ROOT/sec-he" SPARROW_ENGINE_PREFIX="$TEST_ROOT/sec-pe" SPARROW_ENGINE_NO_MODIFY_PATH=1 \
+        SPARROW_ENGINE_RELEASE_BASE="https://mirror.invalid/rel" SPARROW_ENGINE_VERSION="$cli_version" \
+        bash "$SH_INSTALLER" --cli --flavor cpu --dry-run -y
+grep -q "verify against https://github.com/microsoft/SPARROW-Engine/releases/download/v$cli_version/" "$TEST_ROOT/last.out" ||
+    fail "dry-run does not verify against the canonical GitHub sidecar"
+if command -v pwsh >/dev/null 2>&1; then
+    ps_win="$TEST_ROOT/win12a"
+    mkdir -p "$ps_win/localappdata" "$ps_win/userprofile" "$ps_win/systemroot" "$ps_win/temp"
+    ps_env=(LOCALAPPDATA="$ps_win/localappdata" USERPROFILE="$ps_win/userprofile"
+            SystemRoot="$ps_win/systemroot" TEMP="$ps_win/temp" TMP="$ps_win/temp"
+            PROCESSOR_ARCHITECTURE=AMD64)
+    expect_rc 1 "PowerShell file:// base without opt-in" -- \
+        env -u SPARROW_ENGINE_ALLOW_INSECURE_BASE "${ps_env[@]}" SPARROW_ENGINE_RELEASE_BASE="$FILE_BASE" \
+            pwsh -NoProfile -NonInteractive -File "$PS_INSTALLER" -Cli -Flavor cpu -DryRun -Yes
+    grep -q 'must be an https:// URL' "$TEST_ROOT/last.out" ||
+        fail "PowerShell non-https release base refusal message missing"
+    expect_rc 0 "PowerShell dry-run sidecar source" -- \
+        env -u SPARROW_ENGINE_SHA256 "${ps_env[@]}" SPARROW_ENGINE_RELEASE_BASE="https://mirror.invalid/rel" \
+            pwsh -NoProfile -NonInteractive -File "$PS_INSTALLER" -Cli -Flavor cpu -DryRun -Yes
+    grep -q "against https://github.com/microsoft/SPARROW-Engine/releases/download/v" "$TEST_ROOT/last.out" ||
+        fail "PowerShell dry-run does not verify against the canonical GitHub sidecar"
+else
+    echo "SKIP: pwsh not installed; PowerShell release-base checks unavailable"
+fi
 
 echo "[13] installer help points at docs/user-manual.md (not the nonexistent docs/install.md)"
 sh_help="$(bash "$SH_INSTALLER" --help)"
@@ -457,4 +521,4 @@ if grep -Fqi 'version metadata missing' <<<"$probe_reason"; then
     fail "canonical uv target still reports missing cuDNN version metadata"
 fi
 
-echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), reinstall/reprobe idempotency, help-path (docs/user-manual.md), exit-code table match, shell/PowerShell exit-code parity, Homebrew-template gates, and canonical cuDNN target detection"
+echo "PASS: installer version, repository, mode, truncation, flavor-conflict (exit 3, shell + PowerShell), required-tool (8), GPU-quality (11), cross-flavor (12), rc-edit (13), reinstall/reprobe idempotency, release-mirror trust (CWE-345), help-path (docs/user-manual.md), exit-code table match, shell/PowerShell exit-code parity, Homebrew-template gates, and canonical cuDNN target detection"

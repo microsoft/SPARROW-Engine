@@ -17,8 +17,8 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, Context, Result};
 
 use sparrow_engine_core::preprocess_audio::{
-    compute_segment_offsets, load_audio_at_sample_rate, segment_time_range, AudioPreprocessConfig,
-    MelFilterbank,
+    compute_segment_offsets, load_audio_at_sample_rate, segment_time_range,
+    stride_samples_from_seconds, AudioPreprocessConfig, MelFilterbank,
 };
 use sparrow_engine_types::manifest::{
     self, InferenceStrategy, PipelineRole, PostprocessMethod,
@@ -343,10 +343,12 @@ pub(crate) fn run_pipeline(
         bail!("window_sec ({window_sec}) resolves to too many samples");
     }
     let segment_samples = segment_samples_f as usize;
-    let stride_samples = (((window_sec - overlap_sec) * target_sr as f32).round() as usize).max(1);
     if segment_samples == 0 {
         bail!("window_sec resolves to zero samples");
     }
+    let stride_samples =
+        stride_samples_from_seconds(window_sec - overlap_sec, target_sr, segment_samples)
+            .map_err(|e| anyhow!("{e}"))?;
 
     let mut detector_backend = pipeline.detector.backend.borrow_mut();
     let mut classifier_backend = pipeline
