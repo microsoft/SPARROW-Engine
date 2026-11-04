@@ -79,6 +79,14 @@ def convert_model(
     ),
     optimize: bool = typer.Option(True, "--optimize/--no-optimize", help="Run ORT graph optimization pass."),
     half: bool = typer.Option(False, "--half", help="Convert to FP16 after export (requires onnxconverter-common)."),
+    trust_pickle: bool = typer.Option(
+        False,
+        "--trust-pickle",
+        help=(
+            "Allow loading a pickled nn.Module with torch.load(weights_only=False). "
+            "This runs code stored in the file; use only for files from a trusted source."
+        ),
+    ),
 ) -> None:
     """Convert a PyTorch or TorchScript model to ONNX.
 
@@ -106,6 +114,7 @@ def convert_model(
         use_dynamo=use_dynamo,
         optimize=optimize,
         half=half,
+        trust_pickle=trust_pickle,
     )
 
 
