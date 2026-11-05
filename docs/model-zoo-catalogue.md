@@ -1,31 +1,31 @@
 # Sparrow Engine — Model Zoo Catalogue
 
-**82 catalog entries total; 82 active catalog entries.**
+**91 catalog entries total; 91 active catalog entries.**
 
-**54 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**63 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 43 hosted · 11 hosted-restricted · 28 link-only · 0 pending-rights.
+**Active catalog routing (published/hosted vs non-mirrored):** 46 hosted · 17 hosted-restricted · 28 link-only · 0 pending-rights.
 
-> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **82 catalog entries**. Published-release reference: Zenodo record [`23492166`](https://zenodo.org/records/23492166) (v0.31.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
+> Auto-generated from [`sparrow-engine/scripts/catalog.toml`](../sparrow-engine/scripts/catalog.toml) — the single source of truth. **91 catalog entries**. Published-release reference: Zenodo record [`23965349`](https://zenodo.org/records/23965349) (v0.32.0, concept DOI [`10.5281/zenodo.20348978`](https://doi.org/10.5281/zenodo.20348978)).
 
 This is a **multi-license catalogue**: each model has its own recorded weight terms. Published hosted packages include runtime artifacts; link-only and pending-rights packages contain compliance metadata and original-source links, not runnable weights.
 
 ## Catalogue summary
 
-**82 catalog entries** · 74 ONNX · 5 TFLite · 2 cascade · 1 ensemble · 45 commercial-use allowed · 19 non-commercial · 18 commercial-use unverified.
+**91 catalog entries** · 83 ONNX · 5 TFLite · 2 cascade · 1 ensemble · 50 commercial-use allowed · 23 non-commercial · 18 commercial-use unverified.
 
 Format and task totals cover all catalog entries, including unpublished candidates and metadata-only entries; they are not download counts.
 
-**Current published availability:** 43 hosted · 11 hosted-restricted · 28 link-only.
+**Current published availability:** 46 hosted · 17 hosted-restricted · 28 link-only.
 
 | Area | Detectors | Classifiers | Encoders | Cascades | Total |
 |---|---:|---:|---:|---:|---:|
-| Camera Trap | 21 | 27 | 0 | 0 | 48 |
+| Camera Trap | 21 | 36 | 0 | 0 | 57 |
 | Acoustics | 5 | 7 | 0 | 1 | 13 |
 | Overhead | 8 | 1 | 0 | 1 | 10 |
 | Marine Imagery | 6 | 0 | 0 | 0 | 6 |
 | General | 0 | 1 | 4 | 0 | 5 |
-| **Total** | **40** | **36** | **4** | **2** | **82** |
+| **Total** | **40** | **45** | **4** | **2** | **91** |
 
 ## Reading this catalogue
 
@@ -104,6 +104,15 @@ Models are grouped by **domain** (camera trap, acoustics, overhead, marine image
 | terai-nepal | `terai-nepal` | AddaxAI, MEWC | onnx | Classifier | South Asia — Terai lowlands, Nepal | Alexander Merdian-Tarko / TeraiNet | Third-party | MIT | Active / published | Hosted | allowed |
 | tasmanian-vertebrates-MEWC | `tasmanian-vertebrates` | AddaxAI, MEWC | onnx | Classifier | Australia — Tasmania | Barry Brook / MEWC / University of Tasmania | Third-party | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 | peruvian-amazon-SDZWA | `peruvian-amazon-sdzwa` | AddaxAI | onnx | Classifier | South America — Peruvian Amazon | Mathias Tobler / San Diego Zoo Wildlife Alliance | Third-party | UNVERIFIED | Active (link-only) | Link-only | unverified |
+| western-usa-v1-SDZWA | `western-usa-v1` | AddaxAI | onnx | Classifier | North America — Western USA | Kyra Swanson and Raine Wen / San Diego Zoo Wildlife Alliance<br>owner: San Diego Zoo Wildlife Alliance | Third-party | MIT | Active / published | Hosted | allowed |
+| nz-invasives-v2-ADS | `nz-invasives-v2` | AddaxAI | onnx | Classifier | New Zealand — New Zealand | Addax Data Science<br>owner: New Zealand Department of Conservation | Third-party | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| subarctic-canada-ADS | `subarctic-canada` | AddaxAI | onnx | Classifier | North America — Subarctic and low Arctic Canada (Churchill, Manitoba) | Addax Data Science<br>owner: Churchill Fox Project | Third-party | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| southern-california-irc-v3-6 | `southern-california-irc` | AddaxAI | onnx | Classifier | North America — Orange County, Southern California, USA | Irvine Ranch Conservancy | Third-party | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| congo-basin-cameroon-cbnet-v1 | `congo-basin-cameroon` | AddaxAI | onnx | Classifier | Central Africa — Congo Basin, Cameroon | Alexander Merdian-Tarko | Third-party | MIT | Active / published | Hosted | allowed |
+| deep-forest-vision-v2-MNHN-OFVI | `deep-forest-vision-v2` | AddaxAI | onnx | Classifier | Central Africa — African tropical forests | Hugo Magaldi / One Forest Vision initiative<br>owner: MNHN and One Forest Vision partners | Third-party | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| deepfaune-europe-v1.5-CNRS | `deepfaune-europe-v1-5` | AddaxAI | onnx | Classifier | Europe — Europe | DeepFaune consortium (CNRS and OFB)<br>owner: The DeepFaune initiative (CNRS) | Third-party | CC-BY-SA-4.0 | Active / published | Hosted-restricted | allowed |
+| deepfaune-europe-v1.4-CNRS | `deepfaune-europe-v1-4` | AddaxAI | onnx | Classifier | Europe — Europe | DeepFaune consortium (CNRS and OFB)<br>owner: The DeepFaune initiative (CNRS) | Third-party | CC-BY-SA-4.0 | Active / published | Hosted-restricted | allowed |
+| small-animal-topdown-v1-DMO | `small-animal-topdown` | AddaxAI | onnx | Classifier | North America — California, USA (trained on CDFW California Small Animals) | Dan Morris | Third-party | Apache-2.0 | Active / published | Hosted | allowed |
 
 ## Acoustics — Detector
 
@@ -270,3 +279,12 @@ Citations, original sources, and stable rights records from the catalog:
 - **`batdetect2-uk-v2`** — macaodha/batdetect2 v2.0.0b3; https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d Rights holder: BatDetect2 contributors; rights record: `batdetect2-v2.0.0b3-cc-by-nc-4.0`. [Original source](<https://github.com/macaodha/batdetect2/tree/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d>) [Licence source](<https://github.com/macaodha/batdetect2/blob/9e2697458d3b3b03c30ccd7e49ed5409c8ac330d/LICENSE.md>)
 - **`OWL-D`** — Chacón et al. Overhead Wildlife Locator (OWL): Benchmarking Weakly Supervised Learning for Aerial Wildlife Surveys. arXiv:2606.13911. https://arxiv.org/abs/2606.13911. Weights: Zenodo 20802844 (OWL-D.pth). Source (MIT): https://github.com/microsoft/MegaDetector-Overhead/tree/975cc76a9ae618088159efe1f1fe611124e13b3e. DINOv3 backbone under the DINOv3 License (copy shipped in LICENSE.md). Rights holder: Microsoft AI for Good Lab (AI4G); rights record: `model-zoo-rights-adjudication-v1#76`. [Original source](<https://zenodo.org/api/records/20802844>) [Licence source](<https://zenodo.org/api/records/20802844>)
 - **`DroneMegaDetector`** — Elchik, Longmore, Morris, Weinstein, Veitch-Michaelis, Knops, Richards, Wich. DroneMegaDetector. bioRxiv 2026.10.12.758430. https://doi.org/10.64898/2026.10.12.758430. Weights: release v1.1 DroneMegaDetector_RFDETRMedium_2026.10.04.pth; source https://github.com/ConservationDronesAI/DroneMegaDetector/tree/04f7acb0e0ce1df56882c0403228e170b72a50e5. Exported with rfdetr 1.11.2 (Apache-2.0). Rights holder: ConservationDrones; rights record: `model-zoo-rights-adjudication-v1#77`. [Original source](<https://github.com/ConservationDronesAI/DroneMegaDetector/tree/04f7acb0e0ce1df56882c0403228e170b72a50e5>) [Licence source](<https://github.com/ConservationDronesAI/DroneMegaDetector/blob/04f7acb0e0ce1df56882c0403228e170b72a50e5/LICENSE>)
+- **`western-usa-v1`** — San Diego Zoo Wildlife Alliance (Kyra Swanson, Raine Wen). Western USA v1 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/WUSA-SDZWA-v1 Rights holder: San Diego Zoo Wildlife Alliance; rights record: `addax-zoo-2026-11#WUSA-SDZWA-v1`. [Original source](<https://github.com/conservationtechlab>) [Licence source](<https://opensource.org/license/mit>)
+- **`nz-invasives-v2`** — Addax Data Science for the New Zealand Department of Conservation (National Eradication Team, project 2025-12-NZI). New Zealand invasives v2 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/NZI-ADS-v2 Rights holder: New Zealand Department of Conservation; rights record: `addax-zoo-2026-11#NZI-ADS-v2`. [Original source](<https://huggingface.co/Addax-Data-Science/NZI-ADS-v2>) [Licence source](<https://creativecommons.org/licenses/by-nc-sa/4.0/>)
+- **`subarctic-canada`** — Addax Data Science for the Churchill Fox Project. Subarctic and low Arctic (Canada) classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/ARC-ADS-v1. Project citation: https://doi.org/10.1016/j.gecco.2022.e02310 Rights holder: Churchill Fox Project; rights record: `addax-zoo-2026-11#ARC-ADS-v1`. [Original source](<https://www.churchillfoxproject.org>) [Licence source](<https://creativecommons.org/licenses/by-nc/4.0/>)
+- **`southern-california-irc`** — Irvine Ranch Conservancy. IRC Species Classification Model v3.6 (GitHub release v3.6.1). https://github.com/Monitoring-Research-IRC/irc-species-classification-model (see its Citation section). Redistributed by Addax Data Science: https://huggingface.co/Addax-Data-Science/SOCAL-IRC-v3-6 Rights holder: Irvine Ranch Conservancy; rights record: `addax-zoo-2026-11#SOCAL-IRC-v3-6`. [Original source](<https://github.com/Monitoring-Research-IRC/irc-species-classification-model>) [Licence source](<https://creativecommons.org/licenses/by-nc/4.0/>)
+- **`congo-basin-cameroon`** — Alexander Merdian-Tarko. CBNet (CongoBasinNet) v1 species classifier. https://alexvmt.github.io/. Redistributed by Addax Data Science: https://huggingface.co/Addax-Data-Science/CONGO-CMR-v1 Rights holder: Alexander Merdian-Tarko; rights record: `addax-zoo-2026-11#CONGO-CMR-v1`. [Original source](<https://alexvmt.github.io/>) [Licence source](<https://opensource.org/license/mit>)
+- **`deep-forest-vision-v2`** — MNHN-OFVI. AFR-DFV-v2 / DeepForestVision v2 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v2; original project: https://github.com/MNHN-OFVI/DeepForestVision Rights holder: MNHN and One Forest Vision partners; rights record: `addax-zoo-2026-11#AFR-DFV-v2`. [Original source](<https://github.com/MNHN-OFVI/DeepForestVision>) [Licence source](<https://creativecommons.org/licenses/by-nc-sa/4.0/>)
+- **`deepfaune-europe-v1-5`** — DeepFaune v1.5 classifier, Rigoudy et al. 2023, DOI 10.1007/s10344-023-01742-7; Hugging Face model repository: https://huggingface.co/Addax-Data-Science/EUR-DF-v1-5; official weights: https://pbil.univ-lyon1.fr/software/download/deepfaune/v1.5/ Rights holder: The DeepFaune initiative (CNRS); rights record: `addax-zoo-2026-11#EUR-DF-v1-5`. [Original source](<https://plmlab.math.cnrs.fr/deepfaune/software>) [Licence source](<https://creativecommons.org/licenses/by-sa/4.0/>)
+- **`deepfaune-europe-v1-4`** — DeepFaune v1.4 classifier, Rigoudy et al. 2023, DOI 10.1007/s10344-023-01742-7; Hugging Face model repository: https://huggingface.co/Addax-Data-Science/EUR-DF-v1-4; official weights: https://pbil.univ-lyon1.fr/software/download/deepfaune/v1.4/ Rights holder: The DeepFaune initiative (CNRS); rights record: `addax-zoo-2026-11#EUR-DF-v1-4`. [Original source](<https://plmlab.math.cnrs.fr/deepfaune/software>) [Licence source](<https://creativecommons.org/licenses/by-sa/4.0/>)
+- **`small-animal-topdown`** — Dan Morris. Small animal classifier (EVA-02, California Small Animals). https://github.com/agentmorris/small-animal-classifier. Redistributed by Addax Data Science: https://huggingface.co/Addax-Data-Science/SAC-DMO-v1. Training data: California Small Animals, California Department of Fish and Wildlife, via LILA BC (https://lila.science/datasets/california-small-animals/). Rights holder: Dan Morris; rights record: `addax-zoo-2026-11#SAC-DMO-v1`. [Original source](<https://github.com/agentmorris/small-animal-classifier>) [Licence source](<https://github.com/agentmorris/small-animal-classifier/blob/main/LICENSE>)
