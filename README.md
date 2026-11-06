@@ -17,7 +17,7 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/23965349/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/23992557/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
@@ -228,7 +228,7 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.23965349](https://doi.org/10.5281/zenodo.23965349) (v0.32.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.23992557](https://doi.org/10.5281/zenodo.23992557) (v0.33.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
 Download the 43 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
@@ -286,11 +286,11 @@ redistributed runtime payloads.
 
 **91 catalog entries total; 91 active catalog entries.**
 
-**63 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**77 active published/hosted entries** · **0 unpublished candidates** · **14 active link-only entries** · **0 active pending-rights entries**.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 46 hosted · 17 hosted-restricted · 28 link-only · 0 pending-rights.
+**Active catalog routing (published/hosted vs non-mirrored):** 52 hosted · 25 hosted-restricted · 14 link-only · 0 pending-rights.
 
-**Current published availability:** 46 hosted · 17 hosted-restricted · 28 link-only.
+**Current published availability:** 52 hosted · 25 hosted-restricted · 14 link-only.
 
 | Area | Catalog entries (all statuses) |
 |---|---:|
@@ -340,28 +340,28 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `Deepfaune-Europe` | Deepfaune-Europe | DeepFaune | onnx | CC-BY-SA-4.0 | Active / published | Hosted-restricted | allowed |
 | `Deepfaune-New-England` | Deepfaune-New-England | DeepFaune | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `SpeciesNet-Crop` | SpeciesNet-Crop | SpeciesNet | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
-| `southwest-usa-v3` | southwest-usa-v3-SDZWA | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
-| `peruvian-andes` | peruvian-andes-SDZWA | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
-| `sub-saharan-drylands` | sub-saharan-drylands-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active (link-only) | Link-only | non-commercial |
+| `southwest-usa-v3` | southwest-usa-v3-SDZWA | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
+| `peruvian-andes` | peruvian-andes-SDZWA | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
+| `sub-saharan-drylands` | sub-saharan-drylands-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `manas-panthera` | manas-panthera | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
-| `gifu-japan` | gifu-japan-GifuUniversity | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
-| `hawaii-puaa` | hawaii-puaa-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active (link-only) | Link-only | non-commercial |
-| `central-india` | central-india-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active (link-only) | Link-only | non-commercial |
-| `top-end-savanna` | top-end-savanna-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active (link-only) | Link-only | non-commercial |
+| `gifu-japan` | gifu-japan-GifuUniversity | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
+| `hawaii-puaa` | hawaii-puaa-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `central-india` | central-india-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `top-end-savanna` | top-end-savanna-Addax | AddaxAI, SpeciesNet | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `parks-victoria` | parks-victoria-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Active / published | Hosted | allowed |
-| `sw-borderlands` | sw-borderlands-Addax | AddaxAI, SpeciesNet | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
-| `ahdrift` | ahdrift-OSU-ColumbusZoo-Addax | AddaxAI, SpeciesNet | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
+| `sw-borderlands` | sw-borderlands-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Active / published | Hosted | allowed |
+| `ahdrift` | ahdrift-OSU-ColumbusZoo-Addax | AddaxAI, SpeciesNet | onnx | Apache-2.0 | Active / published | Hosted | allowed |
 | `deep-forest-vision` | deep-forest-vision-MNHN-OFVI | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `awc135` | awc135-AWC | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
-| `namibian` | namibian-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active (link-only) | Link-only | non-commercial |
-| `iran` | iran-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active (link-only) | Link-only | non-commercial |
-| `nz-invasives` | nz-invasives-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active (link-only) | Link-only | non-commercial |
+| `namibian` | namibian-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `iran` | iran-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `nz-invasives` | nz-invasives-Addax | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `queensland` | queensland-WildObs | AddaxAI, SpeciesNet | onnx | CC-BY-4.0 | Active / published | Hosted | allowed |
-| `nz-species` | nz-species-wekaResearch | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | non-commercial |
-| `tropicam-ai` | tropicam-ai-MNCN-CSIC | AddaxAI | onnx | CONFLICTING | Active (link-only) | Link-only | non-commercial |
+| `nz-species` | nz-species-wekaResearch | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `tropicam-ai` | tropicam-ai-MNCN-CSIC | AddaxAI | onnx | CC-BY-NC-ND-4.0 | Active (link-only) | Link-only | non-commercial |
 | `terai-nepal` | terai-nepal | AddaxAI, MEWC | onnx | MIT | Active / published | Hosted | allowed |
 | `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
-| `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
+| `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
 | `western-usa-v1` | western-usa-v1-SDZWA | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
 | `nz-invasives-v2` | nz-invasives-v2-ADS | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `subarctic-canada` | subarctic-canada-ADS | AddaxAI | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
