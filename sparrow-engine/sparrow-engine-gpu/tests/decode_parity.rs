@@ -129,6 +129,12 @@ fn nvjpeg_vs_image_crate_pixel_parity_within_epsilon() {
             DecodeBranch::Nvjpeg => nvjpeg_decoded += 1,
             DecodeBranch::CpuFallback => fallback_decoded += 1,
             DecodeBranch::ForcedCpuFallback => forced_fallback_decoded += 1,
+            DecodeBranch::Nvjpeg2k | DecodeBranch::Nvtiff => {
+                panic!(
+                    "{path:?} was decoded as {:?}, not as a JPEG",
+                    decoded.branch
+                )
+            }
         }
         let gpu_img = decoded.image;
 

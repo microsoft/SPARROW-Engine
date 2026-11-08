@@ -40,6 +40,8 @@ The `sparrow-engine-gpu` formula ships ~256 MB of `libonnxruntime` + ORT CUDA pr
 | cuFFT | bundled with CUDA toolkit | `nvidia-cufft-cu12` | audio FFT (MD_AudioBirds_V1) |
 | nvJPEG | bundled with CUDA toolkit | `nvidia-nvjpeg-cu12` | GPU JPEG decode |
 
+Optional: nvJPEG2000 ≥0.8 (`nvidia-nvjpeg2k-cu12`) and nvTIFF ≥0.8 (`nvidia-nvtiff-cu12`) add GPU decoding of JPEG 2000 and TIFF images. The wrapper below does not search for them; set `SPARROW_ENGINE_NVJPEG2K_LIBRARY_PATH` / `SPARROW_ENGINE_NVTIFF_LIBRARY_PATH` to their absolute paths (see `docs/user-manual.md §2.5`).
+
 After installing the libraries (system or pip), the brew-installed `spe-gpu` wrapper auto-discovers them from common host locations — no `LD_LIBRARY_PATH` setup needed for production users. Search order (first hit wins):
 
 1. `SPARROW_ENGINE_CUDA_LIB_DIR` (user override; honored as-is)

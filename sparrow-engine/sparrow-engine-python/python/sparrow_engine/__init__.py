@@ -123,8 +123,39 @@ def _preload_cuda_runtime_sidecars() -> None:
             pass
 
 
+def _configure_nvjpeg2k_nvtiff_paths() -> None:
+    """Point GPU JPEG 2000 / TIFF decoding at the optional pip packages
+    `nvidia-nvjpeg2k-cu12` / `nvidia-nvtiff-cu12`, if installed.
+
+    The native module loads nvJPEG2000 / nvTIFF on first use from
+    `SPARROW_ENGINE_NVJPEG2K_LIBRARY_PATH` / `SPARROW_ENGINE_NVTIFF_LIBRARY_PATH`.
+    A user-set value is left alone. Silent on failure.
+    """
+    if _runtime_flavor() != "gpu":
+        return
+
+    from importlib.resources import files
+
+    windows = sys.platform == "win32"
+    for env_var, pkg, filename in (
+        ("SPARROW_ENGINE_NVJPEG2K_LIBRARY_PATH", "nvidia.nvjpeg2k",
+         "nvjpeg2k_0.dll" if windows else "libnvjpeg2k.so.0"),
+        ("SPARROW_ENGINE_NVTIFF_LIBRARY_PATH", "nvidia.nvtiff",
+         "nvtiff_0.dll" if windows else "libnvtiff.so.0"),
+    ):
+        if os.environ.get(env_var):
+            continue
+        try:
+            candidate = files(pkg) / ("bin" if windows else "lib") / filename
+            if candidate.is_file():
+                os.environ[env_var] = str(candidate)
+        except (ModuleNotFoundError, FileNotFoundError, OSError, TypeError):
+            pass
+
+
 _preload_nvjpeg_sidecar()
 _preload_cuda_runtime_sidecars()
+_configure_nvjpeg2k_nvtiff_paths()
 
 
 # -------------------------------------------------------------------------
