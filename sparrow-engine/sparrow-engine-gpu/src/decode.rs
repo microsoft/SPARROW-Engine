@@ -17,6 +17,10 @@
 //!    orientation tag via `image`'s metadata and, if non-trivial,
 //!    fall back to CPU decode (which honours the tag) to avoid
 //!    rotating on GPU.
+//! 4. JPEG 2000 (JP2 / J2K) and TIFF bytes are recognised by their magic
+//!    numbers and decoded by nvJPEG2000 / nvTIFF instead. Both libraries are
+//!    loaded on first use. The CPU fallback cannot decode these formats, so
+//!    their errors (including a missing library) are returned as-is.
 
 use std::sync::Arc;
 
@@ -27,6 +31,8 @@ use sparrow_engine_types::PixelFormat;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeBranch {
     Nvjpeg,
+    Nvjpeg2k,
+    Nvtiff,
     CpuFallback,
     ForcedCpuFallback,
 }
@@ -49,7 +55,8 @@ pub struct DecodedGpuImage {
 /// Decode JPEG bytes to a GPU-resident HWC RGB u8 buffer.
 ///
 /// Tries nvjpeg first; falls back to CPU decode (`image` crate) +
-/// `cudaMemcpy` for inputs nvjpeg cannot handle.
+/// `cudaMemcpy` for inputs nvjpeg cannot handle. JPEG 2000 and TIFF bytes
+/// are decoded by nvJPEG2000 / nvTIFF instead.
 ///
 /// `stream` is the CUDA stream used for both nvjpeg async decode and the
 /// fallback HtoD copy.
@@ -64,6 +71,9 @@ pub fn decode_jpeg_with_branch(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result
             image: decode_via_cpu_fallback(stream, bytes)?,
             branch: DecodeBranch::ForcedCpuFallback,
         });
+    }
+    if let Some(decoded) = decode_jpeg2000_or_tiff(stream, bytes) {
+        return decoded;
     }
     if let Ok(image) = decode_via_nvjpeg(stream, bytes) {
         return Ok(DecodedGpuImage {
@@ -292,6 +302,289 @@ pub(crate) unsafe fn nvjpeg_decode_rgb(
             width: w,
             height: h,
         })
+    }
+}
+
+/// Decode JPEG 2000 (JP2 / J2K) or TIFF bytes with nvJPEG2000 / nvTIFF.
+///
+/// Returns `None` for any other format, so callers continue with nvjpeg.
+pub(crate) fn decode_jpeg2000_or_tiff(
+    stream: &Arc<CudaStream>,
+    bytes: &[u8],
+) -> Option<Result<DecodedGpuImage>> {
+    let (image, branch) = if is_jpeg2000(bytes) {
+        (decode_via_nvjpeg2k(stream, bytes), DecodeBranch::Nvjpeg2k)
+    } else if is_tiff(bytes) {
+        (decode_via_nvtiff(stream, bytes), DecodeBranch::Nvtiff)
+    } else {
+        return None;
+    };
+    Some(image.map(|image| DecodedGpuImage { image, branch }))
+}
+
+/// JP2 signature box, or a raw J2K codestream (SOC + SIZ markers).
+fn is_jpeg2000(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\0\0\0\x0CjP  \r\n\x87\n") || bytes.starts_with(&[0xFF, 0x4F, 0xFF, 0x51])
+}
+
+/// Classic TIFF or BigTIFF header, in either byte order.
+fn is_tiff(bytes: &[u8]) -> bool {
+    [b"II*\0", b"MM\0*", b"II+\0", b"MM\0+"]
+        .iter()
+        .any(|magic| bytes.starts_with(*magic))
+}
+
+/// nvJPEG2000 path. Supports images whose components are all unsigned
+/// 8-bit at full resolution. Greyscale is replicated to RGB and channels
+/// after the third (alpha) are dropped.
+fn decode_via_nvjpeg2k(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage> {
+    use nvjpeg2k_sys::*;
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    let lib = nvjpeg2k().map_err(|e| SparrowEngineError::ImageDecode(e.into()))?;
+    bind_context(stream)?;
+
+    // SAFETY: every status is checked, out-pointers are live locals, and the
+    // stream is synchronised before the guards destroy the nvJPEG2000 objects.
+    let (out, width, height, channels) = unsafe {
+        let mut handle = null_mut();
+        check(
+            "nvjpeg2kCreateSimple",
+            (lib.nvjpeg2kCreateSimple)(&mut handle),
+        )?;
+        let _handle = DestroyOnDrop(move || (lib.nvjpeg2kDestroy)(handle));
+        let mut state = null_mut();
+        check(
+            "nvjpeg2kDecodeStateCreate",
+            (lib.nvjpeg2kDecodeStateCreate)(handle, &mut state),
+        )?;
+        let _state = DestroyOnDrop(move || (lib.nvjpeg2kDecodeStateDestroy)(state));
+        let mut jstream = null_mut();
+        check(
+            "nvjpeg2kStreamCreate",
+            (lib.nvjpeg2kStreamCreate)(&mut jstream),
+        )?;
+        let _jstream = DestroyOnDrop(move || (lib.nvjpeg2kStreamDestroy)(jstream));
+        check(
+            "nvjpeg2kStreamParse",
+            (lib.nvjpeg2kStreamParse)(handle, bytes.as_ptr(), bytes.len(), 0, 0, jstream),
+        )?;
+
+        let mut info = nvjpeg2kImageInfo_t::default();
+        check(
+            "nvjpeg2kStreamGetImageInfo",
+            (lib.nvjpeg2kStreamGetImageInfo)(jstream, &mut info),
+        )?;
+        let (w, h) = (info.image_width, info.image_height);
+        for c in 0..info.num_components {
+            let mut ci = nvjpeg2kImageComponentInfo_t::default();
+            check(
+                "nvjpeg2kStreamGetImageComponentInfo",
+                (lib.nvjpeg2kStreamGetImageComponentInfo)(jstream, &mut ci, c),
+            )?;
+            if ci.precision != 8
+                || ci.sgn != 0
+                || ci.component_width != w
+                || ci.component_height != h
+            {
+                return Err(SparrowEngineError::ImageDecode(format!(
+                    "unsupported JPEG 2000 component {c}: {}-bit, signed={}, {}x{} in a {w}x{h} image \
+                     (only unsigned 8-bit full-resolution components are supported)",
+                    ci.precision, ci.sgn, ci.component_width, ci.component_height
+                )));
+            }
+        }
+        let channels = info.num_components as usize;
+        let mut out = alloc_image(stream, w, h, channels)?;
+
+        let mut params = null_mut();
+        check(
+            "nvjpeg2kDecodeParamsCreate",
+            (lib.nvjpeg2kDecodeParamsCreate)(&mut params),
+        )?;
+        let _params = DestroyOnDrop(move || (lib.nvjpeg2kDecodeParamsDestroy)(params));
+        // Convert YCC colour spaces to RGB, matching PIL / OpenJPEG output.
+        check(
+            "nvjpeg2kDecodeParamsSetRGBOutput",
+            (lib.nvjpeg2kDecodeParamsSetRGBOutput)(params, 1),
+        )?;
+        check(
+            "nvjpeg2kDecodeParamsSetOutputFormat",
+            (lib.nvjpeg2kDecodeParamsSetOutputFormat)(params, NVJPEG2K_FORMAT_INTERLEAVED),
+        )?;
+        let status = {
+            let (ptr, _sync) = out.device_ptr_mut(stream);
+            let mut plane = ptr as *mut c_void;
+            let mut pitch = w as usize * channels;
+            let mut image = nvjpeg2kImage_t {
+                pixel_data: &mut plane,
+                pitch_in_bytes: &mut pitch,
+                pixel_type: NVJPEG2K_UINT8,
+                num_components: info.num_components,
+            };
+            (lib.nvjpeg2kDecodeImage)(
+                handle,
+                state,
+                jstream,
+                params,
+                &mut image,
+                stream.cu_stream() as cudaStream_t,
+            )
+        };
+        // Wait even on failure so the guards never destroy objects in use.
+        synchronize(stream)?;
+        check("nvjpeg2kDecodeImage", status)?;
+        (out, w, h, channels)
+    };
+
+    if channels == 3 {
+        return Ok(GpuImage {
+            data: out,
+            width,
+            height,
+        });
+    }
+    let host = stream
+        .clone_dtoh(&out)
+        .map_err(|e| SparrowEngineError::Ort(format!("cudarc clone_dtoh: {e}")))?;
+    synchronize(stream)?;
+    let rgb: Vec<u8> = host
+        .chunks_exact(channels)
+        .flat_map(|px| {
+            if channels < 3 {
+                [px[0]; 3]
+            } else {
+                [px[0], px[1], px[2]]
+            }
+        })
+        .collect();
+    let data = stream
+        .clone_htod(&rgb)
+        .map_err(|e| SparrowEngineError::Ort(format!("cudarc clone_htod: {e}")))?;
+    synchronize(stream)?;
+    Ok(GpuImage {
+        data,
+        width,
+        height,
+    })
+}
+
+/// nvTIFF path. Decodes the first image of the file; the TIFF orientation
+/// tag is not applied.
+fn decode_via_nvtiff(stream: &Arc<CudaStream>, bytes: &[u8]) -> Result<GpuImage> {
+    use nvtiff_sys::*;
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    let lib = nvtiff().map_err(|e| SparrowEngineError::ImageDecode(e.into()))?;
+    bind_context(stream)?;
+    let cu_stream = stream.cu_stream() as cudaStream_t;
+
+    // SAFETY: every status is checked, out-pointers are live locals, and the
+    // stream is synchronised before the guards destroy the nvTIFF objects.
+    unsafe {
+        let mut tiff = null_mut();
+        check(
+            "nvtiffStreamOpen",
+            (lib.nvtiffStreamOpen)(bytes.as_ptr(), bytes.len(), &mut tiff),
+        )?;
+        let _tiff = DestroyOnDrop(move || (lib.nvtiffStreamClose)(tiff));
+        let mut info = nvtiffImageInfo_t::default();
+        check(
+            "nvtiffStreamGetImageInfo",
+            (lib.nvtiffStreamGetImageInfo)(tiff, 0, &mut info),
+        )?;
+        let (w, h) = (info.image_width, info.image_height);
+        let mut out = alloc_image(stream, w, h, 3)?;
+
+        let mut decoder = null_mut();
+        check(
+            "nvtiffDecoderCreateSimple",
+            (lib.nvtiffDecoderCreateSimple)(&mut decoder, cu_stream),
+        )?;
+        let _decoder = DestroyOnDrop(move || (lib.nvtiffDecoderDestroy)(decoder, cu_stream));
+        let mut params = null_mut();
+        check(
+            "nvtiffDecodeParamsCreate",
+            (lib.nvtiffDecodeParamsCreate)(&mut params),
+        )?;
+        let _params = DestroyOnDrop(move || (lib.nvtiffDecodeParamsDestroy)(params));
+        check(
+            "nvtiffDecodeParamsSetOutputFormat",
+            (lib.nvtiffDecodeParamsSetOutputFormat)(params, NVTIFF_OUTPUT_RGB_I_UINT8),
+        )?;
+        let status = {
+            let (ptr, _sync) = out.device_ptr_mut(stream);
+            let mut plane = ptr as *mut c_void;
+            let mut pitch = w as usize * 3;
+            let mut image = nvtiffImage_t {
+                plane_data: &mut plane,
+                plane_pitch_bytes: &mut pitch,
+                num_planes: 1,
+            };
+            (lib.nvtiffDecode)(tiff, decoder, params, &mut image, cu_stream)
+        };
+        // Wait even on failure so the guards never destroy objects in use.
+        synchronize(stream)?;
+        check("nvtiffDecode", status)?;
+        Ok(GpuImage {
+            data: out,
+            width: w,
+            height: h,
+        })
+    }
+}
+
+/// nvJPEG2000 and nvTIFF use the CUDA runtime, which decodes on the
+/// calling thread's current context.
+fn bind_context(stream: &Arc<CudaStream>) -> Result<()> {
+    stream
+        .context()
+        .bind_to_thread()
+        .map_err(|e| SparrowEngineError::Ort(format!("cudarc bind_to_thread: {e}")))
+}
+
+fn synchronize(stream: &Arc<CudaStream>) -> Result<()> {
+    stream
+        .synchronize()
+        .map_err(|e| SparrowEngineError::Ort(format!("cudarc stream.synchronize: {e}")))
+}
+
+/// Zeroed device buffer for a `w` x `h` image with `channels` u8 samples
+/// per pixel. Rejects empty images and sizes that overflow `usize`.
+fn alloc_image(stream: &Arc<CudaStream>, w: u32, h: u32, channels: usize) -> Result<CudaSlice<u8>> {
+    let len = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|n| n.checked_mul(channels))
+        .filter(|&n| n > 0)
+        .ok_or_else(|| {
+            SparrowEngineError::ImageDecode(format!(
+                "unsupported image size {w}x{h} with {channels} channels"
+            ))
+        })?;
+    stream
+        .alloc_zeros::<u8>(len)
+        .map_err(|e| SparrowEngineError::Ort(format!("cudarc alloc_zeros: {e}")))
+}
+
+/// Maps a nvJPEG2000 / nvTIFF status (0 is success in both) to a `Result`.
+fn check(call: &str, status: std::ffi::c_int) -> Result<()> {
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(SparrowEngineError::ImageDecode(format!(
+            "{call} failed: status={status}"
+        )))
+    }
+}
+
+/// Calls a nvJPEG2000 / nvTIFF destroy function on drop, ignoring its status.
+struct DestroyOnDrop<F: FnMut() -> std::ffi::c_int>(F);
+
+impl<F: FnMut() -> std::ffi::c_int> Drop for DestroyOnDrop<F> {
+    fn drop(&mut self) {
+        (self.0)();
     }
 }
 
@@ -597,6 +890,23 @@ mod tests {
                 PixelFormat::Rgba | PixelFormat::Bgra => 4,
             };
             assert_eq!(bpp, expected_bpp, "bpp for {fmt:?}");
+        }
+    }
+
+    #[test]
+    fn jpeg2000_and_tiff_are_sniffed_by_magic_bytes() {
+        assert!(is_jpeg2000(b"\0\0\0\x0CjP  \r\n\x87\n\0\0\0\x14ftypjp2 "));
+        assert!(is_jpeg2000(&[0xFF, 0x4F, 0xFF, 0x51, 0x00, 0x2F]));
+        for magic in [&b"II*\0"[..], b"MM\0*", b"II+\0", b"MM\0+"] {
+            assert!(is_tiff(magic) && !is_jpeg2000(magic));
+        }
+        for other in [
+            &[0xFF, 0xD8, 0xFF, 0xE0][..],
+            b"\x89PNG\r\n\x1a\n",
+            b"II*",
+            b"",
+        ] {
+            assert!(!is_jpeg2000(other) && !is_tiff(other));
         }
     }
 }

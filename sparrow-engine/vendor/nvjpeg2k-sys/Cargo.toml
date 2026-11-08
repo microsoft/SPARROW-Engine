@@ -1,0 +1,9 @@
+[package]
+name = "nvjpeg2k-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal runtime-loaded bindings for NVIDIA nvJPEG2000 decode"
+publish = false
+
+[dependencies]
+libloading = "0.9.0"
