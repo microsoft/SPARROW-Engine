@@ -2452,7 +2452,7 @@ rights_status = "verified"
 rights_record = "addax-zoo-2026-11#WUSA-SDZWA-v1"
 rights_holder = "San Diego Zoo Wildlife Alliance"
 license_source_url = "https://opensource.org/license/mit"
-original_source_url = "https://github.com/conservationtechlab"
+original_source_url = "https://github.com/conservationtechlab/animl-py"
 conversion_permission = "verified"
 restrictions = ["attribution"]
 framework_licenses = []
@@ -2604,6 +2604,8 @@ framework_licenses = []
 reference = "MNHN-OFVI. AFR-DFV-v2 / DeepForestVision v2 classifier. Hugging Face model repository: https://huggingface.co/Addax-Data-Science/AFR-DFV-v2; original project: https://github.com/MNHN-OFVI/DeepForestVision"
 owner = "MNHN and One Forest Vision partners"
 
+# deepfaune-europe-v1-5 carries the DINOv3 License restrictions (custom_agreement, prohibited_uses,
+# trade_controls, flow_down) because its backbone is Meta DINOv3; v1-4 and earlier use DINOv2 (Apache-2.0).
 [[model]]
 id = "deepfaune-europe-v1-5"
 domain = "camera_trap"

@@ -24,7 +24,7 @@ cd -
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.31.0 with 82 archives: 54 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.32.0 with 91 entries: 63 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -230,7 +230,7 @@ Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Z
 
 **Zenodo DOI**: [10.5281/zenodo.23965349](https://doi.org/10.5281/zenodo.23965349) (v0.32.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 43 default hosted desktop ONNX models into
+Download the 52 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
 without arguments. The current published hosted set also holds 5 mobile TFLite
@@ -278,8 +278,8 @@ the source of truth used by `download_models.sh`. The
 [full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
 developer/owner details, and source citations.
 
-All 82 rows are active in v0.31.0. Hosted and hosted-restricted rows download
-from Zenodo record `23492166`; link-only rows remain discoverable without
+All 91 rows are active in v0.32.0. Hosted and hosted-restricted rows download
+from Zenodo record `23965349`; link-only rows remain discoverable without
 redistributed runtime payloads.
 
 <!-- BEGIN GENERATED MODEL ZOO INDEX -->
