@@ -42,7 +42,7 @@ __all__ = [
 # Zenodo record of the model zoo this package release targets. Must equal
 # `[zenodo] record` in sparrow-engine/scripts/catalog.toml (enforced by
 # tests/test_zoo.py). Override per call with `record=` or via `ZENODO_RECORD`.
-ZENODO_RECORD = "23965349"
+ZENODO_RECORD = "23992557"
 
 _HOSTED = frozenset({"hosted", "hosted_restricted"})
 _INSTALL_MARKERS = ("manifest.toml", "pipeline.toml", "ensemble.toml")
