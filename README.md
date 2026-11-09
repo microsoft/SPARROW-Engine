@@ -17,14 +17,14 @@ spe device                              # {"device":"cpu"}  or  {"device":"cuda:
 
 # One-time: download a model from the Zenodo bundle (brew doesn't ship models)
 mkdir -p ~/.sparrow-engine/models && cd ~/.sparrow-engine/models
-curl -fLO https://zenodo.org/records/23492166/files/camera_trap__detector__MDV6-yolov10-e.zip
+curl -fLO https://zenodo.org/records/23965349/files/camera_trap__detector__MDV6-yolov10-e.zip
 unzip -q camera_trap__detector__MDV6-yolov10-e.zip && rm camera_trap__detector__MDV6-yolov10-e.zip
 cd -
 
 spe detect /path/to/photos --model MDV6-yolov10-e --recursive --export-format megadet --export-output detections.json
 ```
 
-Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.31.0 with 82 archives: 54 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
+Both formulas can coexist (separate binaries `spe` + `spe-gpu`; shared model cache at `~/.sparrow-engine/models/`). The current public model zoo is v0.32.0 with 91 entries: 63 downloadable runtime packages and 28 link-only metadata packages. The example above pulls MegaDetector v6 (general camera-trap detection); see the [Model zoo](#model-zoo) section below for the full catalog. See `docs/user-manual.md §2.4` for the other install paths.
 
 #### GPU host prerequisites
 
@@ -228,9 +228,9 @@ Validated on a 512 MB Raspberry Pi Zero 2W: both fp16 Orca `.tflite` models use 
 
 Sparrow Engine doesn't ship model artifacts in the repo. They live in a public Zenodo record so the repo stays small and operators can pull just the models they need.
 
-**Zenodo DOI**: [10.5281/zenodo.23492166](https://doi.org/10.5281/zenodo.23492166) (v0.31.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
+**Zenodo DOI**: [10.5281/zenodo.23965349](https://doi.org/10.5281/zenodo.23965349) (v0.32.0) — concept DOI [10.5281/zenodo.20348978](https://doi.org/10.5281/zenodo.20348978) always resolves to the latest version.
 
-Download the 43 default hosted desktop ONNX models into
+Download the 52 default hosted desktop ONNX models into
 `~/.sparrow-engine/models`, the default directory used by `spe`,
 `sparrow-engine-server`, and the Python wheel, by running the downloader
 without arguments. The current published hosted set also holds 5 mobile TFLite
@@ -278,30 +278,30 @@ the source of truth used by `download_models.sh`. The
 [full catalogue](docs/model-zoo-catalogue.md) adds geography, behavior,
 developer/owner details, and source citations.
 
-All 82 rows are active in v0.31.0. Hosted and hosted-restricted rows download
-from Zenodo record `23492166`; link-only rows remain discoverable without
+All 91 rows are active in v0.32.0. Hosted and hosted-restricted rows download
+from Zenodo record `23965349`; link-only rows remain discoverable without
 redistributed runtime payloads.
 
 <!-- BEGIN GENERATED MODEL ZOO INDEX -->
 
-**82 catalog entries total; 82 active catalog entries.**
+**91 catalog entries total; 91 active catalog entries.**
 
-**54 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
+**63 active published/hosted entries** · **0 unpublished candidates** · **28 active link-only entries** · **0 active pending-rights entries**.
 
-**Active catalog routing (published/hosted vs non-mirrored):** 43 hosted · 11 hosted-restricted · 28 link-only · 0 pending-rights.
+**Active catalog routing (published/hosted vs non-mirrored):** 46 hosted · 17 hosted-restricted · 28 link-only · 0 pending-rights.
 
-**Current published availability:** 43 hosted · 11 hosted-restricted · 28 link-only.
+**Current published availability:** 46 hosted · 17 hosted-restricted · 28 link-only.
 
 | Area | Catalog entries (all statuses) |
 |---|---:|
-| Camera Trap | 48 |
+| Camera Trap | 57 |
 | Acoustics | 13 |
 | Overhead | 10 |
 | Marine Imagery | 6 |
 | General | 5 |
-| **Total** | **82** |
+| **Total** | **91** |
 
-Catalog formats (including candidates): **74 ONNX**, **5 TFLite**, **2 cascade descriptor**, **1 recording-level ensemble**.
+Catalog formats (including candidates): **83 ONNX**, **5 TFLite**, **2 cascade descriptor**, **1 recording-level ensemble**.
 
 Area and format totals include unpublished candidates and metadata-only entries. Only active hosted/hosted-restricted rows indicate published runtime artifacts; link-only and pending-rights rows do not provide mirrored weights. Each model retains its recorded licence terms.
 
@@ -331,7 +331,7 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `MDV6-apa-rtdetr-c` | MDV6-apa-rtdetr-c | MegaDetector | onnx · v6 | Apache-2.0 | Active / published | Hosted | allowed |
 | `MDV6-apa-rtdetr-e` | MDV6-apa-rtdetr-e | MegaDetector | onnx · v6 | Apache-2.0 | Active / published | Hosted | allowed |
 
-#### Camera Trap — Classifiers (27)
+#### Camera Trap — Classifiers (36)
 
 | Model ID | Display name | Family | Format | Licence | Status | Hosting | Commercial use |
 |---|---|---|---|---|---|---|---|
@@ -362,6 +362,15 @@ Area and format totals include unpublished candidates and metadata-only entries.
 | `terai-nepal` | terai-nepal | AddaxAI, MEWC | onnx | MIT | Active / published | Hosted | allowed |
 | `tasmanian-vertebrates` | tasmanian-vertebrates-MEWC | AddaxAI, MEWC | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
 | `peruvian-amazon-sdzwa` | peruvian-amazon-SDZWA | AddaxAI | onnx | UNVERIFIED | Active (link-only) | Link-only | unverified |
+| `western-usa-v1` | western-usa-v1-SDZWA | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
+| `nz-invasives-v2` | nz-invasives-v2-ADS | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `subarctic-canada` | subarctic-canada-ADS | AddaxAI | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `southern-california-irc` | southern-california-irc-v3-6 | AddaxAI | onnx | CC-BY-NC-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `congo-basin-cameroon` | congo-basin-cameroon-cbnet-v1 | AddaxAI | onnx | MIT | Active / published | Hosted | allowed |
+| `deep-forest-vision-v2` | deep-forest-vision-v2-MNHN-OFVI | AddaxAI | onnx | CC-BY-NC-SA-4.0 | Active / published | Hosted-restricted | non-commercial |
+| `deepfaune-europe-v1-5` | deepfaune-europe-v1.5-CNRS | AddaxAI | onnx | CC-BY-SA-4.0 | Active / published | Hosted-restricted | allowed |
+| `deepfaune-europe-v1-4` | deepfaune-europe-v1.4-CNRS | AddaxAI | onnx | CC-BY-SA-4.0 | Active / published | Hosted-restricted | allowed |
+| `small-animal-topdown` | small-animal-topdown-v1-DMO | AddaxAI | onnx | Apache-2.0 | Active / published | Hosted | allowed |
 
 #### Acoustics — Detectors (5)
 
