@@ -576,6 +576,7 @@ spe device  →  prints "cuda:0"   ← compile-time check only
 **Why**: different consumers need different surfaces. A scientist wants the CLI; a notebook wants Python; Sparrow Web wants HTTP; Sparrow Local wants native DLL.
 **What**: five surfaces sharing one engine.
 **How**: each surface depends on either `sparrow-engine-cpu` or `sparrow-engine-gpu` via a Cargo feature flag (`--features cpu` or `--features gpu`, mutually exclusive, default = cpu).
+**Examples**: [SPARROW Playground](https://github.com/microsoft/SPARROW-Playground) has runnable examples for the Python package (`notebooks/`), the CLI (`interfaces/cli/`), the HTTP server and its client (`notebooks/11_http_server.ipynb`), and the C library (`interfaces/c/`).
 
 ---
 
@@ -944,6 +945,8 @@ TFLite classifier is onboarded (RP-42-FU-1).
 **How**: PyO3 0.29 builds the Rust → Python bridge; the GIL is released during inference (`py.allow_threads`).
 
 **Plain words**: "GIL" (Global Interpreter Lock) is the Python rule that only one thread can run Python bytecode at a time. Releasing it during inference means other threads keep working.
+
+**Examples**: [SPARROW Playground](https://github.com/microsoft/SPARROW-Playground) has notebooks for each function below (quickstart, model zoo, detection, classification, audio, embeddings, export, video and webcam) and small scripts you can copy into your own code.
 
 ---
 

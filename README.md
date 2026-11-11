@@ -4,6 +4,11 @@ A Rust ML inference engine for camera-trap and bioacoustic data.
 Drop-in for MegaDetector v6, DeepFaune, HerdNet, OWL-T, SpeciesNet, and
 MD_AudioBirds_V1; model-agnostic via TOML manifests.
 
+**Examples and notebooks:** [SPARROW Playground](https://github.com/microsoft/SPARROW-Playground)
+has runnable notebooks and scripts that use Sparrow Engine on camera-trap
+images, video, webcam and audio, through the Python package, the `spe` CLI,
+the HTTP server and the C library.
+
 ## Quickstart
 
 ### Easiest: Homebrew (macOS arm64 / brew-Linux x86_64)

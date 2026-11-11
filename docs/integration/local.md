@@ -27,7 +27,7 @@ co-deployed (the CUDA EP fails without cuDNN). See
 ## Call lifecycle
 
 ```
-engine = sparrow_engine_engine_new(device, model_dir)   // once per process
+engine = sparrow_engine_engine_new(config_json)         // once per process; {"device":"auto","model_dir":"..."}
   sparrow_engine_load_model(engine, ...)                // or _load_model_by_id
     result = sparrow_engine_detect(engine, ...)         // or classify/embed/...
     // read result fields …
@@ -61,7 +61,7 @@ null-safe.
 
 ```csharp
 [DllImport("sparrow_engine")]
-static extern IntPtr sparrow_engine_engine_new(string device, string modelDir);
+static extern IntPtr sparrow_engine_engine_new(string configJson);  // {"device":"auto","model_dir":"..."}
 
 [DllImport("sparrow_engine")]
 static extern void sparrow_engine_engine_free(IntPtr engine);
@@ -72,7 +72,9 @@ static extern IntPtr sparrow_engine_last_error();
 ```
 
 Marshal the opaque `IntPtr` engine handle straight through; never interpret it.
-Match each result-returning call with its `_free`. Reference smoke tests live
+Match each result-returning call with its `_free`. A complete C example (detect on one image) lives in
+[SPARROW Playground `interfaces/c/`](https://github.com/microsoft/SPARROW-Playground/tree/main/interfaces/c).
+Reference smoke tests live
 at `sparrow-engine/tests/cs_pinvoke_smoke/` and
 `sparrow-engine/tests/csharp_ffi_test/`.
 
