@@ -72,3 +72,7 @@ model.
 
 See the user manual (`docs/user-manual.md`) in the sparrow-engine repository for
 the full model catalog, device selection, and the CLI / server surfaces.
+
+For runnable notebooks and example scripts (detection, classification, audio,
+embeddings, export, video and webcam), see
+[SPARROW Playground](https://github.com/microsoft/SPARROW-Playground).
