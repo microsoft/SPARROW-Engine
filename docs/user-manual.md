@@ -576,7 +576,7 @@ spe device  →  prints "cuda:0"   ← compile-time check only
 **Why**: different consumers need different surfaces. A scientist wants the CLI; a notebook wants Python; Sparrow Web wants HTTP; Sparrow Local wants native DLL.
 **What**: five surfaces sharing one engine.
 **How**: each surface depends on either `sparrow-engine-cpu` or `sparrow-engine-gpu` via a Cargo feature flag (`--features cpu` or `--features gpu`, mutually exclusive, default = cpu).
-**Examples**: [SPARROW Playground](https://github.com/microsoft/SPARROW-Playground) has runnable examples for the Python package (`notebooks/`), the CLI (`interfaces/cli/`), the HTTP server and its client (`notebooks/11_http_server.ipynb`), and the C library (`interfaces/c/`).
+**Examples**: [SPARROW Playground](https://github.com/microsoft/SPARROW-Playground) has runnable examples for the Python package (`notebooks/`), the CLI (`interfaces/cli/`), the HTTP server and its client (`notebooks/16_http_server.ipynb`), and the C library (`interfaces/c/`).
 
 ---
 
