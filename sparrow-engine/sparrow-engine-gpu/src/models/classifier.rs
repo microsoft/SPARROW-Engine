@@ -195,6 +195,9 @@ impl JpegDecoder {
         if std::env::var("SPARROW_ENGINE_GPU_FORCE_CPU_DECODE").as_deref() == Ok("1") {
             return decode_via_cpu_fallback(stream, bytes);
         }
+        if let Some(decoded) = crate::decode::decode_jpeg2000_or_tiff(stream, bytes) {
+            return decoded.map(|decoded| decoded.image);
+        }
         match self.decode_via_nvjpeg(stream, bytes) {
             Ok(img) => return Ok(img),
             Err(e) => {

@@ -1,0 +1,9 @@
+[package]
+name = "nvtiff-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal runtime-loaded bindings for NVIDIA nvTIFF decode"
+publish = false
+
+[dependencies]
+libloading = "0.9.0"

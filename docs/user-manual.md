@@ -306,6 +306,23 @@ python -c "import sparrow_engine; sparrow_engine.Engine(...)"
 | `RuntimeError: libnvjpeg major version <N> found; sparrow-engine-gpu requires CUDA 12.` | `IncompatibleMajor`: a CUDA 11/13 nvjpeg library was found. | Install CUDA 12 nvjpeg and remove or override the wrong-major library. |
 | `RuntimeError: libnvjpeg loaded but missing symbol '<name>'; CUDA installation appears corrupt or pre-CUDA-12.0.` | `SymbolMissing`: `dlopen` succeeded, but a required nvjpeg symbol was absent. | Reinstall the CUDA 12 nvjpeg package or the `nvidia-nvjpeg-cu12` sidecar wheel. |
 
+#### Optional — JPEG 2000 and TIFF
+
+JPEG 2000 (`.jp2` / `.j2k`) and TIFF images are decoded on the GPU by NVIDIA nvJPEG2000 and nvTIFF (each 0.8 or newer, for CUDA 12), recognised by their content. Both libraries are loaded on first use, so other formats work without them.
+
+```bash
+pip install nvidia-nvjpeg2k-cu12 nvidia-nvtiff-cu12
+```
+
+`import sparrow_engine` finds these pip packages. Otherwise (for example with `spe-gpu`), set `SPARROW_ENGINE_NVJPEG2K_LIBRARY_PATH` / `SPARROW_ENGINE_NVTIFF_LIBRARY_PATH` to the libraries' absolute paths; when unset, they are loaded by name (`libnvjpeg2k.so.0` / `libnvtiff.so.0`, on Windows `nvjpeg2k_0.dll` / `nvtiff_0.dll`) from the system library search path.
+
+Limits:
+
+- There is no CPU fallback for these formats, so they also fail with `SPARROW_ENGINE_GPU_FORCE_CPU_DECODE=1`.
+- JPEG 2000: every component must be unsigned 8-bit at full resolution.
+- TIFF: only the first image is decoded, and the orientation tag is ignored. Deflate-compressed TIFF also needs NVIDIA nvCOMP, and JPEG-compressed TIFF needs nvJPEG. Bilevel (1-bit) TIFF is not supported.
+- Directory and glob inputs pick up `.tif` / `.tiff` but not `.jp2` / `.j2k` files; pass JPEG 2000 files by name.
+
 ---
 
 ### 2.6 Exit codes you might see

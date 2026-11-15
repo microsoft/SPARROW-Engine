@@ -26,7 +26,8 @@ serde_json = "1"
 #   1. Bump version in sparrow-engine-gpu/Cargo.toml + this section's `version` fields.
 #   2. From sparrow-engine/: `cargo vendor` (writes ALL deps).
 #   3. Trim vendor/ to just {cudarc, nvjpeg-sys, libloading, cfg-if,
-#      windows-link}.
+#      windows-link}, then restore the hand-written path crates that
+#      `cargo vendor` deleted: `git checkout -- vendor/nvjpeg2k-sys vendor/nvtiff-sys`.
 #   4. `cargo build -p sparrow-engine-gpu --release --offline` to confirm cudarc /
 #      nvjpeg-sys come from vendor (other deps may still need the cargo
 #      cache; that's fine — full hermeticity is intentionally not the goal).

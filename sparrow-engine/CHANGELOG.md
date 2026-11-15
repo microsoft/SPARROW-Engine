@@ -6,6 +6,17 @@ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- GPU flavor: JPEG 2000 (`.jp2` / `.j2k`) and TIFF images are decoded on the
+  GPU with NVIDIA nvJPEG2000 and nvTIFF (0.8 or newer, CUDA 12). Both are
+  optional and loaded on first use: `pip install nvidia-nvjpeg2k-cu12
+  nvidia-nvtiff-cu12`, or set `SPARROW_ENGINE_NVJPEG2K_LIBRARY_PATH` /
+  `SPARROW_ENGINE_NVTIFF_LIBRARY_PATH`. Limits are listed in the user manual
+  §2.5.
+
 ## v0.1.32
 
 Security fixes from a Microsoft Security repository scan (#21).

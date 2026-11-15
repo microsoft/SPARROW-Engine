@@ -51,6 +51,10 @@ sparrow-engine-core  = { path = "../sparrow-engine-core" }
 # here too for explicitness.
 cudarc = { version = "=0.19.4", features = ["cuda-12080", "cufft", "cublas"] }
 nvjpeg-sys = "=0.1.0"
+# Hand-written, runtime-loaded bindings for JPEG 2000 / TIFF decode. The
+# libraries are optional: only JPEG 2000 / TIFF inputs need them.
+nvjpeg2k-sys = { path = "../vendor/nvjpeg2k-sys" }
+nvtiff-sys = { path = "../vendor/nvtiff-sys" }
 
 # Image decode CPU fallback (when nvjpeg cannot decode a non-baseline JPEG /
 # corrupt input); reuses the same versions as sparrow-engine-cpu (Cargo's resolver
