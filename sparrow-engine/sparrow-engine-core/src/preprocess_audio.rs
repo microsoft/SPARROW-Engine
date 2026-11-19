@@ -400,6 +400,15 @@ pub fn validate_audio_window_params(
 /// one mel + ORT window per input sample).
 pub const MAX_AUDIO_WINDOW_OVERLAP: usize = 64;
 
+/// Maximum samples in one audio window (2^24, 64 MiB of `f32`).
+///
+/// Window buffers (padding, probe tensors, mel frames) are sized from the
+/// segment length, which a request may override; without this cap a large
+/// `segment_duration_s` with an equal stride passes the overlap cap and
+/// requests an attacker-chosen allocation. The largest shipped window is
+/// 160 000 samples (5 s @ 32 kHz); 2^24 is ~349 s @ 48 kHz or ~65 s @ 256 kHz.
+pub const MAX_AUDIO_SEGMENT_SAMPLES: usize = 1 << 24;
+
 /// Convert a stride in seconds to samples and enforce the window-overlap cap.
 ///
 /// Every audio path (CPU/GPU mel and raw, mobile) resolves runtime and
@@ -430,9 +439,15 @@ pub fn stride_samples_from_seconds(
     Ok(stride_samples)
 }
 
-/// Reject a stride that would put more than [`MAX_AUDIO_WINDOW_OVERLAP`]
-/// windows over any one sample.
+/// Reject a window longer than [`MAX_AUDIO_SEGMENT_SAMPLES`], or a stride that
+/// would put more than [`MAX_AUDIO_WINDOW_OVERLAP`] windows over any one sample.
 pub fn validate_stride_samples(segment_samples: usize, stride_samples: usize) -> Result<()> {
+    if segment_samples > MAX_AUDIO_SEGMENT_SAMPLES {
+        return Err(SparrowEngineError::InvalidManifest(format!(
+            "segment of {segment_samples} samples exceeds the {MAX_AUDIO_SEGMENT_SAMPLES}-sample \
+             window limit — reduce segment_duration_s"
+        )));
+    }
     if stride_samples == 0 {
         return Err(SparrowEngineError::InvalidManifest(
             "segment stride results in 0 samples".to_string(),
@@ -1525,6 +1540,21 @@ mod tests {
         assert!(validate_stride_samples(48_000, 0).is_err());
         // Strides longer than the window (gaps) stay legal.
         assert_eq!(stride_samples_from_seconds(2.0, 48_000, 48_000).unwrap(), 96_000);
+    }
+
+    #[test]
+    fn oversized_segment_is_rejected_before_allocation() {
+        // CWE-789 rescan: stride == segment satisfies the overlap cap, so a huge
+        // segment_duration_s previously reached `vec![0.0; segment_samples]`.
+        let err = validate_audio_window_params(1.0e6, 1.0e6, 0.5, 48_000, 1024).unwrap_err();
+        assert!(err.to_string().contains("segment"), "{err}");
+        assert!(stride_samples_from_seconds(1.0, 48_000, usize::MAX).is_err());
+        let max = MAX_AUDIO_SEGMENT_SAMPLES;
+        assert!(validate_stride_samples(max + 1, max + 1).is_err());
+        assert!(validate_stride_samples(max, max).is_ok());
+        // Largest shipped windows: Perch 2 (5 s @ 32 kHz) and bats (0.5 s @ 256 kHz).
+        assert!(validate_audio_window_params(5.0, 5.0, 0.5, 32_000, 1024).is_ok());
+        assert!(validate_audio_window_params(0.5, 0.5, 0.5, 256_000, 1024).is_ok());
     }
 
     #[test]
