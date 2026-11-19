@@ -241,7 +241,7 @@ Download the 66 default hosted desktop ONNX models into
 without arguments. The current published hosted set also holds 5 mobile TFLite
 models, 2 cascade descriptors, 1 recording-level ensemble package, and 3 opt-in ONNX models.
 Together with 28 link-only entries and 0 release-candidate entries, they form
-the complete **82-entry** catalog.
+the complete **91-entry** catalog.
 Non-default published entries are fetched when named explicitly or with
 `--all`. Link-only entries remain discoverable and report the original source
 or rights-holder contact route:
@@ -275,7 +275,7 @@ descriptors (`manifest.toml`, `pipeline.toml`, or `ensemble.toml`) plus their
 declared assets. Link-only entries fail with the original source URL; aliases,
 `--force`, `--no-verify`, and record overrides cannot bypass that routing.
 
-### Published 82-entry model-zoo catalogue
+### Published 91-entry model-zoo catalogue
 
 The index below is generated from
 [`sparrow-engine/scripts/catalog.toml`](sparrow-engine/scripts/catalog.toml),
